@@ -45,7 +45,7 @@ conn.commit()
 # प्राथमिक डिझाईन सेटअप
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-# २. साइडबार - मास्टर सेटिंग्ज
+# २. साइडबार - मास्टर設置ग्ज
 st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, महाराष्ट्र.")
@@ -114,7 +114,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जма रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
+            cash_paid = st.number_input("जमा रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -136,17 +136,15 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 
                 # ---- 80mm Thermal Print Format ----
                 st.write("---")
-                st.subheader("📟 Print Preview (Ctrl+P दाबून प्रिंट करा)")
+                st.subheader("📟 Print Preview")
                 
                 logo_str = "👑<br>" if show_shop_logo else ""
                 hallmark_str = "<br>[ BIS 916 HALLMARK ]" if show_hallmark_logo else ""
-                
-                # जुन्या मोडीची लाईन ठरवणे
                 old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{old_value:.2f}</td></tr>" if old_value > 0 else ""
-                # वायदा तारीख लाईन ठरवणे
                 due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख / Due Date: {reminder_date}</div><div style='border-top: 1px dashed #000; margin: 5px 0;'></div>" if balance_amount > 0 else ""
 
-  bill_html = f"""
+                # दुरुस्त केलेला HTML आणि इंडेंटेशन
+                bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', Courier, monospace; font-size: 12px; border: 1px solid #ccc; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size:16px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center;">{shop_address}</div>
@@ -167,12 +165,22 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         <tr><td>GST ({gst_select}%):</td><td style="text-align: right;">₹{gst_amt:.2f}</td></tr>
                         <tr style="font-weight: bold;"><td>एकूण बिल (Total):</td><td style="text-align: right;">₹{grand_total:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td>जमा रोकड (Paid):</td><td style="text-align: right;">₹{cash_paid:.2f}</td></tr>
+                        <tr><td>जма रोकड (Paid):</td><td style="text-align: right;">₹{cash_paid:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size:13px;"><td>बाकी उधारी (Balance):</td><td style="text-align: right;">₹{balance_amount:.2f}</td></tr>
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     {due_date_div}
                     <div style="text-align: center; font-style: italic;">{bill_note}{hallmark_str}</div>
-                    <br><br>
                 </div>
-"""
+                """
+                # बिलाचे HTML प्रिव्ह्यू दाखवण्यासाठी
+                st.markdown(bill_html, unsafe_allow_html=True)
+
+# बाकीचे मेनू ऑप्शन्स रिकामे ठेवू नयेत म्हणून (जेणेकरून एरर येणार नाही)
+elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Management":
+    st.title("📦 स्टॉक मॅनेजमेंट / Stock Management")
+    st.info("इथे तुम्ही नवीन स्टॉक जोडू शकता (हा कोड अजून पूर्ण करायचा आहे).")
+
+elif choice == "📊 ग्राहक उधारी व इतिहास / Customer Ledger":
+    st.title("📊 ग्राहक उधारी व इतिहास / Customer Ledger")
+    st.info("इथे ग्राहकांची उधारी दिसेल (हा कोड अजून पूर्ण करायचा आहे).")
