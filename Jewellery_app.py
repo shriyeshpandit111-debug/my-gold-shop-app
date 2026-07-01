@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 
 # १. डेटाबेस सेटअप
-conn = sqlite3.connect("jewellery_final_erp.db", check_same_thread=False)
+conn = sqlite3.connect("jewellery_erp_fixed.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -59,7 +59,7 @@ gold_22k_rate = st.sidebar.number_input("22K सोने दर (22K Gold Rate)
 gold_18k_rate = st.sidebar.number_input("18K सोने दर (18K Gold Rate):", value=5625.0)
 silver_rate = st.sidebar.number_input("चांदी दर (Silver Rate):", value=90.0)
 
-# मुख्य मेनू नेव्हिगेशन (दोन्ही भाषेत)
+# मुख्य मेनू नेव्हिगेशन
 menu = ["🧾 नवीन बिल काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
 choice = st.radio("मुख्य मेनू निवडा / Select Menu:", menu, horizontal=True)
 
@@ -71,7 +71,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("👤 ग्राहकाची माहिती / Customer Info")
-        cust_name = st.text_input("ग्राहकाचे नाव (Customer Name) [मराठी/Eng]:", help="तुम्ही मराठी किंवा इंग्लिशमध्ये नाव टाईप करू शकता")
+        cust_name = st.text_input("ग्राहकाचे नाव (Customer Name) [मराठी/Eng]:")
         cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No):")
         bill_note = st.text_input("बिलाच्या खालील टीप (Terms & Notes):", value="नियम: घडणावळ परत मिळणार नाही. हॉलमार्क गॅरंटी.")
         
@@ -83,10 +83,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             st.warning("⚠️ स्टॉकमध्ये एकही दागिना उपलब्ध नाही! कृपया आधी स्टॉक मॅनेजमेंटमध्ये आयटम जोडा.")
             selected_item_id = None
         else:
-            item_options = {}
-            for idx, row in df_avail.iterrows():
-                item_options[row['id']] = f"{row['item_name']} - {row['metal_type']} ({row['company_name']}) [Stock: {row['stock_grams']}g]"
-            
+            item_options = {row['id']: f"{row['item_name']} - {row['metal_type']} ({row['company_name']}) [Stock: {row['stock_grams']}g]" for idx, row in df_avail.iterrows()}
             selected_item_id = st.selectbox("दागिना निवडा (Select Item):", options=list(item_options.keys()), format_func=lambda x: item_options[x])
 
     if selected_item_id:
@@ -117,7 +114,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जमा रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
+            cash_paid = st.number_input("जма रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -135,7 +132,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
-                st.success("✅ बिल यशस्वीरित्या सेव्ह झाले! / Bill Saved Successfully!")
+                st.success("✅ बिल यशस्वीरित्या सेव्ह झाले!")
                 
                 # ---- 80mm Thermal Print Format ----
                 st.write("---")
@@ -144,6 +141,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 logo_str = "👑<br>" if show_shop_logo else ""
                 hallmark_str = "<br>[ BIS 916 HALLMARK ]" if show_hallmark_logo else ""
                 
+                # जुन्या मोडीची लाईन ठरवणे
+                old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{old_value:.2f}</td></tr>" if old_value > 0 else ""
+                # वायदा तारीख लाईन ठरवणे
+                due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख / Due Date: {reminder_date}</div><div style='border-top: 1px dashed #000; margin: 5px 0;'></div>" if balance_amount > 0 else ""
+
                 bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', Courier, monospace; font-size: 12px; border: 1px solid #ccc; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size:16px;">{logo_str}{shop_name}</div>
@@ -164,12 +166,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         <tr><td>मजुरी (Labour):</td><td style="text-align: right;">₹{making_charge:.2f}</td></tr>
                         <tr><td>GST ({gst_select}%):</td><td style="text-align: right;">₹{gst_amt:.2f}</td></tr>
                         <tr style="font-weight: bold;"><td>एकूण बिल (Total):</td><td style="text-align: right;">₹{grand_total:.2f}</td></tr>
-                        {"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹"+str(old_value)+".00</td></tr>" if old_value > 0 else ""}
+                        {old_gold_tr}
                         <tr><td>जमा रोकड (Paid):</td><td style="text-align: right;">₹{cash_paid:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size:13px;"><td>बाकी उधारी (Balance):</td><td style="text-align: right;">₹{balance_amount:.2f}</td></tr>
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
-                    {"<div style='font-weight: bold;'>वायदा तारीख / Due Date: "+str(reminder_date)+"</div><div style='border-top: 1px dashed #000; margin: 5px 0;'></div>" if balance_amount > 0 else ""}
+                    {due_date_div}
                     <div style="text-align: center; font-style: italic;">{bill_note}{hallmark_str}</div>
                     <br><br>
-                    <table style="width:100%;"><tr><td>ग्राहक सही (Sign)</td><td style="text-align: right;">मालक सही (Sign)</td></tr></table>
