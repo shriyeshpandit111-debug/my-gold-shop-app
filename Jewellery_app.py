@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 
 # ==============================================================================
-# १. डेटाबेस सेटअप (Database Setup)
+# १. डेटाベース सेटअप (Database Setup)
 # ==============================================================================
 conn = sqlite3.connect("jewellery_erp_fixed.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -52,7 +52,7 @@ st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="
 
 st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
-shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, महाराष्ट्र.")
+shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Maharashtra.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
 show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark लोगो दाखवा? (Show Hallmark Logo)", value=True)
 show_shop_logo = st.sidebar.checkbox("बिलावर दुकानाचा लोगो दाखवा? (Show Shop Logo)", value=True)
@@ -67,7 +67,6 @@ silver_rate = st.sidebar.number_input("चांदी दर (Silver Rate):", v
 menu = ["🧾 नवीन बिल काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
 choice = st.radio("मुख्य मेनू निवडा / Select Menu:", menu, horizontal=True)
 
-# Session State मधे बिलाचा डेटा सेव्ह ठेवण्यासाठी जेणेकरून प्रिंट लेआउट बदलताना डेटा उडणार नाही
 if "last_bill" not in st.session_state:
     st.session_state.last_bill = None
 
@@ -135,7 +134,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जма रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
+            cash_paid = st.number_input("जमा रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -145,21 +144,18 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             if cust_name == "" or cust_phone == "":
                 st.error("❌ ग्राहकाचे नाव आणि मोबाईल नंबर भरणे अनिवार्य आहे!")
             elif weight <= 0:
-                st.error("❌ कृपया दागिन्याचे वजन ० पेक्षा जास्त टाका!")
+                st.error("❌ कृपया दागिन्याचे वजन ०पेक्षा जास्त टाका!")
             else:
                 today_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # बिलाची नोंद
                 cursor.execute("""
                 INSERT INTO billing_v3 (date, customer_name, customer_phone, item_name, metal_type, company_name, weight, rate_per_gm, making_charge, gst_percent, old_value, grand_total, cash_paid, balance_amount, reminder_date, bill_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (today_now, cust_name, cust_phone, i_name, f"{m_cat} ({m_type})", c_name, weight, live_rate, making_charge, gst_select, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
                 
-                # स्टॉक वजा करणे
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
                 
-                # डेटा स्टेट मध्ये ठेवणे प्रिंटिंग पर्यायांसाठी
                 st.session_state.last_bill = {
                     "today_now": today_now, "cust_name": cust_name, "cust_phone": cust_phone,
                     "i_name": i_name, "m_cat": m_cat, "m_type": m_type, "c_name": c_name,
@@ -170,19 +166,16 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 }
                 st.success("✅ बिल यशस्वीरित्या सेव्ह झाले!")
 
-        # --- बिलाचे विविध प्रिंटिंग फॉरमॅट्स विभाग ---
         if st.session_state.last_bill:
             b = st.session_state.last_bill
             st.write("---")
             st.subheader("🖨️ प्रिंट आणि शेअर पर्याय (Print & Share Options)")
             
-            # व्हॉट्सॲप बटन
             wp_text = f"*✨ {shop_name} ✨*\nप्रिय *{b['cust_name']}*, आपले बिल:\n💰 एकूण बिल: *₹{b['grand_total']:,.2f}*\n💵 जमा: ₹{b['cash_paid']:,.2f}\n🔴 बाकी: *₹{b['balance_amount']:,.2f}*"
             encoded_text = urllib.parse.quote(wp_text)
             whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
             st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 10px; border-radius: 5px; border:none; width:100%; font-weight:bold; cursor:pointer;">📲 WhatsApp वर बिल पाठवा</button></a>', unsafe_allow_html=True)
             
-            # प्रिंट टाईप सिलेक्शन
             print_style = st.radio("बिलाचा आकार निवडा (Select Print Size):", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
             
             logo_str = "👑<br>" if show_shop_logo else ""
@@ -190,7 +183,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""
             due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख: {b['reminder_date']}</div>" if b['balance_amount'] > 0 else ""
 
-            # १. thermal प्रिंट फॉरमॅट
             if print_style == "80mm Thermal Paper":
                 bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', monospace; font-size: 12px; border: 1px solid #000; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
@@ -219,7 +211,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 """
                 st.markdown(bill_html, unsafe_allow_html=True)
                 
-            # २. A4 साईझ प्रिंट फॉरमॅट
             elif print_style == "A4 Size Paper":
                 bill_html = f"""
                 <div style="width: 100%; max-width: 750px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 30px; background: #fff; color: #000; margin: 0 auto;">
@@ -244,7 +235,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">{b['weight']}g</td>
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['live_rate']:.2f}</td>
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['making_charge']:.2f}</td>
-                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{(b['metal_total']+b['making_charge'] film):.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{(b['metal_total']+b['making_charge']):.2f}</td>
                         </tr>
                     </table>
                     <table style="width: 40%; margin-left: 60%; margin-top: 20px; border-collapse: collapse;">
@@ -260,7 +251,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 """
                 st.markdown(bill_html, unsafe_allow_html=True)
                 
-            # ३. Manual/Plain प्रिंट फॉरमॅट (कच्चे बिल - विना टॅक्स)
             elif print_style == "Manual Layout (No Tax/Plain)":
                 bill_html = f"""
                 <div style="width: 100%; max-width: 500px; font-family: 'Courier New', monospace; border: 1px solid #888; padding: 20px; background: #fafafa; color: #000; margin: 0 auto;">
@@ -285,7 +275,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             st.info("💡 प्रिटींगसाठी कीबोर्डवर Ctrl + P दाबा आणि हव्या त्या प्रिंटरवर प्रिंट करा.")
 
 # ==============================================================================
-# विभाग २: कॅटेगरी वाईज स्टॉक मॅनेजमेंट (आणि सर्च पर्याय)
+# विभाग २: स्टॉक मॅनेजमेंट
 # ==============================================================================
 elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Management":
     st.title("📦 स्टॉक मॅनेजमेंट आणि प्रगत शोध")
@@ -319,14 +309,12 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
     with tab2:
         st.subheader("🔍 स्टॉक शोध पर्याय")
         
-        # सर्च फिल्टर्स
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             search_item = st.text_input("📦 दागिन्याच्या नावाने शोधा (Search by Item Name):")
         with col_f2:
             search_cat = st.selectbox("कॅटेगरीनुसार फिल्टर:", ["सर्व (All)", "Gold", "Silver"])
             
-        # SQL Query तयार करणे
         query_s = "SELECT id AS 'ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'दागिना', company_name AS 'कंपनी', stock_grams AS 'वजन (ग्रॅम)', alert_limit AS 'अलर्ट लिमिट' FROM items_stock WHERE 1=1"
         params_s = []
         
@@ -345,25 +333,22 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
             st.dataframe(df_stock, use_container_width=True)
 
 # ==============================================================================
-# विभाग ३: ग्राहक उधारी व इतिहास (आणि ग्राहक/दागिना वाईज सर्च)
+# विभाग ३: ग्राहक उधारी व इतिहास
 # ==============================================================================
 elif choice == "📊 ग्राहक उधारी व इतिहास / Customer Ledger":
     st.title("📊 ग्राहक उधारी व इतिहास लेजर")
     st.write("---")
     
-    # सर्व डेटा आधी लोड करूया जेणेकरून मॅट्रिक्स बरोबर दिसतील
     df_all_ledger = pd.read_sql_query("SELECT grand_total, cash_paid, balance_amount FROM billing_v3", conn)
     
     if df_all_ledger.empty:
         st.info("ℹ️ अजून एकही बिलाची नोंद नाही.")
     else:
-        # १. व्यवसाय मॅट्रिक्स
         st.columns(3)[0].metric("📊 एकूण विक्री", f"₹{df_all_ledger['grand_total'].sum():,.2f}")
         st.columns(3)[1].metric("🟢 एकूण जमा रोकड", f"₹{df_all_ledger['cash_paid'].sum():,.2f}")
         st.columns(3)[2].metric("🔴 एकूण मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
         st.write("---")
         
-        # २. उधारी भरणे काउंटर फॉर्म
         st.subheader("💵 उधारी जमा काउंटर")
         df_debtors = pd.read_sql_query("SELECT id, customer_name, balance_amount FROM billing_v3 WHERE balance_amount > 0", conn)
         if not df_debtors.empty:
@@ -383,7 +368,6 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
 
         st.write("---")
         
-        # ३. प्रगत ग्राहक व दागिना वाईज सर्च फिल्टर
         st.subheader("🔍 ग्राहक आणि बिलांचा इतिहास शोधा")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
@@ -391,10 +375,9 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         with col_l2:
             search_bill_item = st.text_input("💍 दागिन्याच्या नावाने बिल शोधा (Search by Item Name):")
             
-        # SQL Query फॉर सर्चिंग
         query_l = """
             SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', 
-                   item_name AS 'दागिना', grand_total AS 'एकूण बिल (₹)', cash_paid AS 'जма रोकड (₹)', 
+                   item_name AS 'दागिना', grand_total AS 'एकूण बिल (₹)', cash_paid AS 'जमा रोकड (₹)', 
                    balance_amount AS 'बाकी उधारी (₹)', reminder_date AS 'वायदा तारीख' 
             FROM billing_v3 WHERE 1=1
         """
