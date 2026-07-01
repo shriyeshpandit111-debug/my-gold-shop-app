@@ -60,7 +60,7 @@ except:
 # ==============================================================================
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
+st.sidebar.header("🏪 मास्टर領 सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
@@ -153,7 +153,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जма रोकड (Cash Paid):", min_value=0.0, max_value=grand_total)
+            # जास्तीत जास्त किती कॅश स्वीकारू शकतो (एकूण बिलातून मोडीची किंमत वजा करून उरलेली रक्कम)
+            max_cash_allowed = float(max(0.0, grand_total - old_value))
+            cash_paid = st.number_input("जमा रोकड (Cash Paid):", min_value=0.0, max_value=max_cash_allowed, value=0.0)
+            
+            # अचूक शिल्लक उधारी हिशोब (एकूण बिल - मोडीची किंमत - भरलेली कॅश)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -172,7 +176,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (today_now, cust_name, cust_phone, i_name, f"{m_cat}", c_name, weight, live_rate, making_charge, gst_select, old_gold_type, old_gold_item, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
                 
-                inserted_bill_id = cursor.lastrowid # नवीन जनरेट झालेला बिल नंबर मिळवला
+                inserted_bill_id = cursor.lastrowid
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
                 
@@ -200,12 +204,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
             st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 12px; border-radius: 5px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px;">📲 WhatsApp वर मेसेज पाठवा</button></a>', unsafe_allow_html=True)
 
-            # --- प्रगत बिल कस्टमायझेशन विभाग ---
             with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
-                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
+                    custom_border_style = st.selectbox("बिलाची繞 बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
                 with col_c2:
                     custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे? (Footer Custom Text):", value="धन्यवाद! पुन्हा भेट द्या.")
                     custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
@@ -215,10 +218,8 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             logo_str = "👑<br>" if show_shop_logo else ""
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             
-            # परिच्छेद बदल सुरक्षित हाताळणीसाठी
             formatted_bill_note = b['bill_note'].replace('\n', '<br>')
 
-            # --- सुरक्षित HTML ब्लॉक्स ---
             old_gold_tr = ""
             if b['old_value'] > 0:
                 old_gold_tr = f"<tr><td style='padding: 5px 0;'>जुनी मोड वजा ({b['old_gold_item']}):</td><td style='text-align: right; padding: 5px 0;'>- ₹{b['old_value']:.2f}</td></tr>"
@@ -243,7 +244,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             if b['gst_select'] > 0:
                 gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}"
 
-            # --- प्रिंट लेआउट्स ---
             bill_html = ""
             component_height = 450
 
@@ -328,7 +328,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         {gst_row_a4}
                         <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">Grand Total:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td style="padding: 4px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr><td style="padding: 4px 0;">जма रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td style="padding: 6px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 6px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
                     <div style="margin-top: 20px; font-size: 13px; text-align: left; border: 1px solid #ccc; padding: 10px; background:#fafafa;"><b>📜 नियम व अटी (Terms & Conditions):</b><br>{formatted_bill_note}</div>
@@ -437,7 +437,7 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         metric_cols = st.columns(3)
         metric_cols[0].metric("📊 एकूण विक्री", f"₹{df_all_ledger['grand_total'].sum():,.2f}")
         metric_cols[1].metric("🟢 एकूण जमा रोकड", f"₹{df_all_ledger['cash_paid'].sum():,.2f}")
-        metric_cols[2].metric("🔴 एकूण祕 मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
+        metric_cols[2].metric("🔴 एकूण मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
         st.write("---")
         
         st.subheader("💵 उधारी जमा काउंटर")
@@ -477,7 +477,6 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         params_l = []
         
         if search_cust_name:
-            # जर युझरने नंबर टाकला तर आयडी किंवा फोन किंवा नावात शोधेल
             query_l += " AND (customer_name LIKE ? OR customer_phone LIKE ? OR id = ?)"
             params_l.extend([f"%{search_cust_name}%", f"%{search_cust_name}%", search_cust_name])
         if search_bill_item:
