@@ -146,7 +146,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 # वायदा तारीख लाईन ठरवणे
                 due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख / Due Date: {reminder_date}</div><div style='border-top: 1px dashed #000; margin: 5px 0;'></div>" if balance_amount > 0 else ""
 
-                bill_html = f"""
+  bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', Courier, monospace; font-size: 12px; border: 1px solid #ccc; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size:16px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center;">{shop_address}</div>
@@ -174,3 +174,5 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     {due_date_div}
                     <div style="text-align: center; font-style: italic;">{bill_note}{hallmark_str}</div>
                     <br><br>
+                </div>
+"""
