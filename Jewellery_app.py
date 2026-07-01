@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import urllib.parse  # व्हॉट्सॲप लिंकसाठी टेक्स्ट एन्कोड करायला
 from datetime import datetime
 
 # ==============================================================================
@@ -32,12 +33,12 @@ CREATE TABLE IF NOT EXISTS billing_v3 (
 )
 """)
 
-# स्टॉकचे टेबल (कॅटेगरीसह)
+# स्टॉकचे टेबल
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS items_stock (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    metal_category TEXT,  -- Gold किंवा Silver
-    metal_type TEXT,      -- 22K, 24K, 18K इ.
+    metal_category TEXT,
+    metal_type TEXT,
     item_name TEXT,
     company_name TEXT,
     stock_grams REAL,
@@ -79,13 +80,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
     with col1:
         st.subheader("👤 ग्राहकाची माहिती / Customer Info")
         cust_name = st.text_input("ग्राहकाचे नाव (Customer Name) [मराठी/Eng]:")
-        cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No):")
+        cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No) [उदा. 98XXXXXXXX]:")
         bill_note = st.text_input("बिलाच्या खालील टीप (Terms & Notes):", value="नियम: घडणावळ परत मिळणार नाही. हॉलमार्क गॅरंटी.")
         
     with col2:
         st.subheader("🛍️ दागिन्याची निवड / Select Jewellery")
-        
-        # आधी कॅटेगरी फिल्टर निवडूया
         filter_category = st.selectbox("कॅटेगरी निवडा (Filter Category):", ["सर्व (All)", "Gold", "Silver"])
         
         if filter_category == "सर्व (All)":
@@ -112,7 +111,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
         
         col3, col4, col5 = st.columns(3)
         with col3:
-            # सोन्याचे आणि चांदीचे दर कॅटेगरीवरून ठरवणे
             if m_cat == "Silver":
                 default_rate = silver_rate
             else:
@@ -141,6 +139,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             reminder_date = st.date_input("उधारी वायदा तारीख (Reminder Date):") if balance_amount > 0 else datetime.today().date()
 
+        # बिल सेव्ह करण्यासाठी बटन
         if st.button("💾 बिल सेव्ह आणि प्रिंट करा (Save & Print)"):
             if cust_name == "" or cust_phone == "":
                 st.error("❌ ग्राहकाचे नाव आणि मोबाईल नंबर भरणे अनिवार्य आहे!")
@@ -159,6 +158,42 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
                 st.success("✅ बिल यशस्वीरित्या सेव्ह झाले आणि स्टॉक अपडेट झाला!")
+                
+                # ---- व्हॉट्सॲप मेसेज मजकूर तयार करणे ----
+                # \n म्हणजे नवीन ओळ (New Line)
+                wp_text = (
+                    f"*✨ {shop_name} ✨*\n"
+                    f"पत्ता: {shop_address}\n"
+                    f"-------------------------\n"
+                    f"प्रिय *{cust_name}*, आपले बिल खालीलप्रमाणे आहे:\n"
+                    f"🗓️ तारीख: {today_now}\n"
+                    f"🛍️ दागिना: {i_name} ({m_cat} - {m_type})\n"
+                    f"⚖️ वजन: {weight}g | दर: ₹{live_rate}/g\n"
+                    f"💰 एकूण बिल: *₹{grand_total:,.2f}*\n"
+                    f"💵 जमा रोकड: ₹{cash_paid:,.2f}\n"
+                    f"🔴 बाकी उधारी: *₹{balance_amount:,.2f}*\n"
+                    f"-------------------------\n"
+                    f"🙏 आमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद!"
+                )
+                
+                # मजकूर इंटरनेट लिंक फॉरमॅटमध्ये रूपांतरित करणे
+                encoded_text = urllib.parse.quote(wp_text)
+                
+                # भारताचा कोड (+91) मोबाईल नंबरला जोडणे
+                clean_phone = cust_phone.strip().replace("+", "").replace(" ", "")
+                if len(clean_phone) == 10:
+                    clean_phone = "91" + clean_phone
+                
+                whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_text}"
+                
+                # स्क्रीनवर व्हॉट्सॲपचे बटन दाखवणे
+                st.markdown(f"""
+                    <a href="{whatsapp_url}" target="_blank">
+                        <button style="background-color: #25D366; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; width: 100%; margin-bottom: 20px;">
+                            📲 ग्राहकाला WhatsApp वर बिल पाठवा (Send to WhatsApp)
+                        </button>
+                    </a>
+                """, unsafe_allow_html=True)
                 
                 # ---- 80mm Thermal Print Format ----
                 st.write("---")
@@ -214,10 +249,7 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
         with st.form("stock_form", clear_on_submit=True):
             col_s1, col_s2 = st.columns(2)
             with col_s1:
-                # १. कॅटेगरी निवड (Gold / Silver)
                 m_category_input = st.selectbox("मुख्य कॅटेगरी (Category):", ["Gold", "Silver"])
-                
-                # २. त्यानुसार कॅटेगरी प्रकार बदलणे
                 m_type_input = st.selectbox("प्रकार/टच (Type/Purity):", ["22K", "24K", "18K", "92.5 Sterling", "Fine Silver", "Regular Silver"])
                 i_name_input = st.text_input("दागिन्याचे नाव (Item Name) [उदा. अंगठी, पैंजण, चैन]:")
                 
@@ -242,8 +274,6 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
 
     with tab2:
         st.subheader("📋 उपलब्ध सर्व स्टॉक")
-        
-        # कॅटेगरीनुसार फिल्टर लावून स्टॉक पाहण्याची सोय
         view_cat = st.radio("कोणता स्टॉक पाहायचा आहे?", ["सर्व (All)", "फक्त सोने (Gold Stock Only)", "फक्त चांदी (Silver Stock Only)"], horizontal=True)
         
         if view_cat == "फक्त सोने (Gold Stock Only)":
@@ -260,7 +290,6 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
         else:
             st.dataframe(df_stock, use_container_width=True)
             
-            # एकूण सोन्याचे वजन आणि चांदीचे वजन स्वतंत्र दाखवणे
             cursor.execute("SELECT SUM(stock_grams) FROM items_stock WHERE metal_category = 'Gold'")
             total_gold_w = cursor.fetchone()[0] or 0.0
             cursor.execute("SELECT SUM(stock_grams) FROM items_stock WHERE metal_category = 'Silver'")
@@ -287,7 +316,7 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
     """, conn)
     
     if df_ledger.empty:
-        st.info("ℹ️ डेटाベースमध्ये अजून एकही बिल किंवा उधारीची नोंद नाही.")
+        st.info("ℹ️ डेटाबेसमध्ये अजून एकही बिल किंवा उधारीची नोंद नाही.")
     else:
         total_business = df_ledger['एकूण बिल (₹)'].sum()
         total_collected = df_ledger['जमा रोकड (₹)'].sum()
@@ -296,7 +325,7 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         m1, m2, m3 = st.columns(3)
         m1.metric("📊 एकूण विक्री (Total Sales)", f"₹{total_business:,.2f}")
         m2.metric("🟢 एकूण जमा रोकड (Total Received)", f"₹{total_collected:,.2f}")
-        m3.metric("🔴 एकूण मार्केट उधारी (Total Outstanding)", f"₹{total_pending:,.2f}", delta_color="inverse")
+        m3.metric("🔴 एकूण脫ारकी उधारी (Total Outstanding)", f"₹{total_pending:,.2f}", delta_color="inverse")
         
         st.write("---")
         
