@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 
 # ==============================================================================
-# १. डेटाबेस सेटअप (Database Setup)
+# १. डेटाベース सेटअप (Database Setup)
 # ==============================================================================
 conn = sqlite3.connect("jewellery_erp_fixed.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS items_stock (
 """)
 conn.commit()
 
-# पुराना डेटाबेस सिंक करण्यासाठी पॅच (जर कॉलम्स नसतील तर एरर येऊ नये म्हणून)
+# पुराना डेटाबेस सिंक करण्यासाठी पॅच
 try:
     cursor.execute("ALTER TABLE billing_v4 ADD COLUMN old_gold_type TEXT")
     cursor.execute("ALTER TABLE billing_v4 ADD COLUMN old_gold_item TEXT")
@@ -61,7 +61,7 @@ except:
 # ==============================================================================
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर送 सेटिंग्ज / Master Settings")
+st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
@@ -191,9 +191,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             st.write("---")
             st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय (WhatsApp & Print Options)")
             
-            # कॅटेगरीनुसार मेसेज मध्ये बदल दर्शवणे
             old_gold_details_msg = f"\n🔄 *जुनी मोड वजावट:* {b['old_gold_item']} ({b['old_gold_type']}) - ₹{b['old_value']:,.2f}" if b['old_value'] > 0 else ""
-            
             default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=200)
             
@@ -206,12 +204,15 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             logo_str = "👑<br>" if show_shop_logo else ""
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             
-            # कॅटेगरीनुसार मोडीचा रो (HTML Table Row)
+            # --- HTML स्ट्रिंग्स आधीच व्यवस्थित सेट करून घेतल्या (No nested f-strings with brackets) ---
             old_gold_tr = f"<tr><td>जुनी मोड वजा ({b['old_gold_item']} - {b['old_gold_type']}):</td><td style='text-align: right;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""
             due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख: {b['reminder_date']}</div>" if b['balance_amount'] > 0 else ""
 
             gst_row_thermal = f"<tr><td>GST ({b['gst_select']}%):</td><td style='text-align: right;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
             gst_row_a4 = f"<tr><td><b>GST ({b['gst_select']}%):</b></td><td style='text-align: right;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
+            
+            gstin_div_thermal = f"<div style='text-align: center; font-weight: bold;'>GSTIN: {gst_number}</div>" if b['gst_select'] > 0 else ""
+            gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}" if b['gst_select'] > 0 else ""
 
             if print_style == "80mm Thermal Paper":
                 bill_html = f"""
@@ -219,7 +220,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="text-align: center; font-weight: bold; font-size: 12px; letter-spacing: 1px;">॥ श्री गणेश प्रसन्न ॥</div>
                     <div style="text-align: center; font-weight: bold; font-size:16px; margin-top:5px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center;">{shop_address}</div>
-                    {f'<div style="text-align: center; font-weight: bold;">GSTIN: {gst_number}</div>' if b['gst_select'] > 0 else ''}
+                    {gstin_div_thermal}
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     <div><b>तारीख:</b> {b['today_now']} | <b>ग्राहक:</b> {b['cust_name']}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
@@ -255,7 +256,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     </table>
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
-                            <td style="width: 50%;"><h2>{logo_str}{shop_name}</h2><p>{shop_address}<br>{f'<b>GSTIN:</b> {gst_number}' if b['gst_select'] > 0 else ''}</p></td>
+                            <td style="width: 50%;"><h2>{logo_str}{shop_name}</h2><p>{shop_address}<br>{gstin_p_a4}</p></td>
                             <td style="text-align: right; width: 50%;"><h1>INVOICE</h1><p><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p></td>
                         </tr>
                     </table>
