@@ -1,0 +1,177 @@
+import streamlit as st
+import pandas as pd
+import sqlite3
+import urllib.parse
+from datetime import datetime
+
+# १. डेटाबेस सेटअप
+conn = sqlite3.connect("jewellery_shop_final.db", check_same_thread=False)
+cursor = conn.cursor()
+
+# टेबल तयार करणे
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS billing (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    customer_name TEXT,
+    customer_phone TEXT,
+    item_name TEXT,
+    item_type TEXT,
+    weight REAL,
+    grand_total REAL,
+    old_gold_value REAL,
+    final_payable REAL
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS stock (
+    item_type TEXT PRIMARY KEY,
+    available_stock_grams REAL
+)
+""")
+conn.commit()
+
+# सुरुवातीचा स्टॉक सेट करणे
+for metal in ["Gold 22K", "Gold 24K", "Silver"]:
+    cursor.execute("INSERT OR IGNORE INTO stock (item_type, available_stock_grams) VALUES (?, ?)", (metal, 0.0))
+conn.commit()
+
+st.set_page_config(page_title="Jewellery ERP Pro", page_icon="👑", layout="wide")
+
+# डावी बाजू (Sidebar) - दुकानाचा सेटअप
+st.sidebar.header("🏬 दुकानाचा सेटअप (Shop Setup)")
+shop_name = st.sidebar.text_input("तुमच्या दुकानाचे नाव:", value="श्री गणेश ज्वेलर्स")
+shop_address = st.sidebar.text_area("दुकानाचा पत्ता:", value="मेन रोड, बाजार पेठ, महाराष्ट्र.")
+
+st.sidebar.header("⚙️ आजचे बाजार भाव (Daily Rates)")
+gold_24k_rate = st.sidebar.number_input("24K सोने भाव (प्रति ग्रॅम):", value=7500.0)
+gold_22k_rate = st.sidebar.number_input("22K सोने भाव (प्रति ग्रॅम):", value=6875.0)
+silver_rate = st.sidebar.number_input("चांदीचा भाव (प्रति ग्रॅम):", value=90.0)
+
+# मेनू नेव्हिगेशन
+menu = ["🧾 नवीन बिल (New Bill)", "📦 स्टॉक मॅनेजमेंट (Stock)", "📊 ग्राहकांचा इतिहास (Customer Data)"]
+choice = st.radio("मेनू निवडा:", menu, horizontal=True)
+
+# ----------------- विभाग १: नवीन बिल -----------------
+if choice == "🧾 नवीन बिल (New Bill)":
+    st.title(f"👑 {shop_name} - बिलिंग काउंटर")
+    st.write("---")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("👤 ग्राहकाची माहिती")
+        cust_name = st.text_input("ग्राहकाचे नाव:")
+        cust_phone = st.text_input("मोबाईल नंबर (WhatsApp):")
+    
+    with col2:
+        st.subheader("🛍️ नवीन दागिन्यांचे तपशील")
+        item_type = st.selectbox("धातूचा प्रकार:", ["Gold 22K", "Gold 24K", "Silver"])
+        
+        cursor.execute("SELECT available_stock_grams FROM stock WHERE item_type=?", (item_type,))
+        current_stock = cursor.fetchone()[0]
+        st.info(f"दुकानात उपलब्ध स्टॉक: {current_stock} ग्रॅम")
+        
+        item_name = st.text_input("दागिन्याचे नाव (उदा. अंगठी):")
+        weight = st.number_input("वजन ग्रॅम मध्ये:", min_value=0.0, step=0.01)
+        making_charge = st.number_input("मजुरी प्रति ग्रॅम (Making Charge/gm):", min_value=0.0)
+
+    st.subheader("🔄 जुने सोने/चांदी मोडणे")
+    old_gold_allow = st.checkbox("ग्राहकाने जुने सोने आणले आहे का?")
+    old_metal_value = 0.0
+    
+    if old_gold_allow:
+        col5, col6 = st.columns(2)
+        with col5:
+            old_weight = st.number_input("जुन्या दागिन्याचे वजन (ग्रॅम):", min_value=0.0, step=0.01)
+        with col6:
+            old_rate = st.number_input("जुन्या धातूचा खरेदी दर:", min_value=0.0)
+        old_metal_value = old_weight * old_rate
+
+    if st.button("🧮 बिल तयार करा आणि डेटा सेव्ह करा"):
+        if weight > current_stock:
+            st.error("❌ दुकानात पुरेसा स्टॉक उपलब्ध नाही! कृपया आधी स्टॉक अपडेट करा.")
+        elif cust_name == "" or cust_phone == "":
+            st.error("❌ कृपया ग्राहकाचे नाव आणि फोन नंबर टाका.")
+        else:
+            current_rate = gold_22k_rate if item_type == "Gold 22K" else (gold_24k_rate if item_type == "Gold 24K" else silver_rate)
+            metal_price = weight * current_rate
+            total_making = weight * making_charge
+            subtotal = metal_price + total_making
+            cgst = subtotal * 0.015
+            sgst = subtotal * 0.015
+            grand_total = subtotal + cgst + sgst
+            final_payable = grand_total - old_metal_value
+
+            today_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+            INSERT INTO billing (date, customer_name, customer_phone, item_name, item_type, weight, grand_total, old_gold_value, final_payable)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (today_date, cust_name, cust_phone, item_name, item_type, weight, grand_total, old_metal_value, final_payable))
+            
+            new_stock = current_stock - weight
+            cursor.execute("UPDATE stock SET available_stock_grams=? WHERE item_type=?", (new_stock, item_type))
+            conn.commit()
+
+            st.success("🎉 बिल डेटाबेसमध्ये सुरक्षितपणे सेव्ह झाले आहे आणि स्टॉक वजा झाला आहे!")
+            st.rerun()
+
+# ----------------- विभाग २: स्टॉक मॅनेजमेंट (ADD / REMOVE STOCK) -----------------
+elif choice == "📦 स्टॉक मॅनेजमेंट (Stock)":
+    st.title("📦 दुकानाचा उपलब्ध स्टॉक")
+    
+    df_stock = pd.read_sql_query("SELECT * FROM stock", conn)
+    st.table(df_stock)
+    
+    col_add, col_rem = st.columns(2)
+    
+    with col_add:
+        st.subheader("➕ स्टॉक जमा करा (Add Stock)")
+        metal_add = st.selectbox("कोणता धातू वाढवायचा आहे?", ["Gold 22K", "Gold 24K", "Silver"], key="add")
+        add_weight = st.number_input("किती ग्रॅम स्टॉक वाढवायचा?:", min_value=0.0, key="add_w")
+        if st.button("🟢 स्टॉकमध्ये जमा करा"):
+            cursor.execute("SELECT available_stock_grams FROM stock WHERE item_type=?", (metal_add,))
+            old_st = cursor.fetchone()[0]
+            cursor.execute("UPDATE stock SET available_stock_grams=? WHERE item_type=?", (old_st + add_weight, metal_add))
+            conn.commit()
+            st.success("✅ स्टॉक वाढवला आहे!")
+            st.rerun()
+            
+    with col_rem:
+        st.subheader("➖ स्टॉक कमी करा (Remove Stock)")
+        metal_rem = st.selectbox("कोणता धातू कमी करायचा आहे?", ["Gold 22K", "Gold 24K", "Silver"], key="rem")
+        rem_weight = st.number_input("किती ग्रॅम स्टॉक कमी करायचा?:", min_value=0.0, key="rem_w")
+        if st.button("🔴 स्टॉकमधून कमी करा"):
+            cursor.execute("SELECT available_stock_grams FROM stock WHERE item_type=?", (metal_rem,))
+            old_st = cursor.fetchone()[0]
+            if rem_weight > old_st:
+                st.error("❌ दुकानात तितका स्टॉक उपलब्ध नाही!")
+            else:
+                cursor.execute("UPDATE stock SET available_stock_grams=? WHERE item_type=?", (old_st - rem_weight, metal_rem))
+                conn.commit()
+                st.success("✅ स्टॉक कमी केला आहे!")
+                st.rerun()
+
+# ----------------- विभाग ३: ग्राहकांचा इतिहास (REMOVE CUSTOMER BILL) -----------------
+elif choice == "📊 ग्राहकांचा इतिहास (Customer Data)":
+    st.title("📊 ग्राहकांचा आणि बिलांचा इतिहास")
+    
+    df_bills = pd.read_sql_query("SELECT * FROM billing ORDER BY id DESC", conn)
+    if not df_bills.empty:
+        st.dataframe(df_bills)
+        
+        st.write("---")
+        st.subheader("🗑️ बिल किंवा ग्राहक डिलीट करा (Remove Customer/Bill)")
+        bill_id_to_delete = st.number_input("डिलीट करायचा असलेला 'ID' नंबर टाका:", min_value=1, step=1)
+        
+        if st.button("❌ बिल कायमचे डिलीट करा"):
+            cursor.execute("SELECT id FROM billing WHERE id=?", (bill_id_to_delete,))
+            check_id = cursor.fetchone()
+            if check_id:
+                cursor.execute("DELETE FROM billing WHERE id=?", (bill_id_to_delete,))
+                conn.commit()
+                st.success(f"✅ ID {bill_id_to_delete} चे बिल यशस्वीरित्या डिलीट केले गेले आहे!")
+                st.rerun()
+            else:
+                st.error("❌ या ID चे कोणतेही बिल सापडले नाही. कृपया वरील तक्त्यात योग्य ID नंबर पहा.")
+    else:
+        st.warning("अद्याप कोणतेही बिल सेव्ह केलेले नाही.")
