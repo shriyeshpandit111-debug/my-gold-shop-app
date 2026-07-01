@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import urllib.parse  # व्हॉट्सॲप लिंकसाठी टेक्स्ट एन्कोड करायला
+import urllib.parse
 from datetime import datetime
 
 # ==============================================================================
@@ -10,7 +10,6 @@ from datetime import datetime
 conn = sqlite3.connect("jewellery_erp_fixed.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# बिलांचे टेबल
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS billing_v3 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +32,6 @@ CREATE TABLE IF NOT EXISTS billing_v3 (
 )
 """)
 
-# स्टॉकचे टेबल
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS items_stock (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,18 +67,22 @@ silver_rate = st.sidebar.number_input("चांदी दर (Silver Rate):", v
 menu = ["🧾 नवीन बिल काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
 choice = st.radio("मुख्य मेनू निवडा / Select Menu:", menu, horizontal=True)
 
+# Session State मधे बिलाचा डेटा सेव्ह ठेवण्यासाठी जेणेकरून प्रिंट लेआउट बदलताना डेटा उडणार नाही
+if "last_bill" not in st.session_state:
+    st.session_state.last_bill = None
+
 # ==============================================================================
-# विभाग १: प्रगत थर्मल बिल काउंटर (Billing Counter)
+# विभाग १: प्रगत बिल काउंटर (Billing Counter)
 # ==============================================================================
 if choice == "🧾 नवीन बिल काउंटर / New Bill":
-    st.title("🧾 Standard 80mm Thermal Billing Counter")
+    st.title("🧾 Advanced Jewellery Billing Counter")
     st.write("---")
     
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("👤 ग्राहकाची माहिती / Customer Info")
         cust_name = st.text_input("ग्राहकाचे नाव (Customer Name) [मराठी/Eng]:")
-        cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No) [उदा. 98XXXXXXXX]:")
+        cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No):")
         bill_note = st.text_input("बिलाच्या खालील टीप (Terms & Notes):", value="नियम: घडणावळ परत मिळणार नाही. हॉलमार्क गॅरंटी.")
         
     with col2:
@@ -118,7 +120,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 
             live_rate = st.number_input("धातूचा आजचा दर / Rate per gm:", value=default_rate)
             weight = st.number_input(f"वजन ग्रॅममध्ये / Weight (Max: {s_grams}g):", min_value=0.0, max_value=s_grams, step=0.01)
-            making_charge = st.number_input("मजुरी / Labour Charge (Manual Total Amount):", min_value=0.0)
+            making_charge = st.number_input("मजुरी / Labour Charge:", min_value=0.0)
             
         with col4:
             gst_select = st.selectbox("GST टक्केवारी / GST %:", [3.0, 0.0, 1.0])
@@ -133,14 +135,13 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जमा रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
+            cash_paid = st.number_input("जма रोकड (Cash/Advance Paid):", min_value=0.0, max_value=grand_total)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
             reminder_date = st.date_input("उधारी वायदा तारीख (Reminder Date):") if balance_amount > 0 else datetime.today().date()
 
-        # बिल सेव्ह करण्यासाठी बटन
-        if st.button("💾 बिल सेव्ह आणि प्रिंट करा (Save & Print)"):
+        if st.button("💾 बिल सेव्ह करा (Save Bill)"):
             if cust_name == "" or cust_phone == "":
                 st.error("❌ ग्राहकाचे नाव आणि मोबाईल नंबर भरणे अनिवार्य आहे!")
             elif weight <= 0:
@@ -148,101 +149,149 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             else:
                 today_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # बिलाची नोंद करणे
+                # बिलाची नोंद
                 cursor.execute("""
                 INSERT INTO billing_v3 (date, customer_name, customer_phone, item_name, metal_type, company_name, weight, rate_per_gm, making_charge, gst_percent, old_value, grand_total, cash_paid, balance_amount, reminder_date, bill_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (today_now, cust_name, cust_phone, i_name, f"{m_cat} ({m_type})", c_name, weight, live_rate, making_charge, gst_select, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
                 
-                # स्टॉकमधून वजन वजा करणे
+                # स्टॉक वजा करणे
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
-                st.success("✅ बिल यशस्वीरित्या सेव्ह झाले आणि स्टॉक अपडेट झाला!")
                 
-                # ---- व्हॉट्सॲप मेसेज मजकूर तयार करणे ----
-                # \n म्हणजे नवीन ओळ (New Line)
-                wp_text = (
-                    f"*✨ {shop_name} ✨*\n"
-                    f"पत्ता: {shop_address}\n"
-                    f"-------------------------\n"
-                    f"प्रिय *{cust_name}*, आपले बिल खालीलप्रमाणे आहे:\n"
-                    f"🗓️ तारीख: {today_now}\n"
-                    f"🛍️ दागिना: {i_name} ({m_cat} - {m_type})\n"
-                    f"⚖️ वजन: {weight}g | दर: ₹{live_rate}/g\n"
-                    f"💰 एकूण बिल: *₹{grand_total:,.2f}*\n"
-                    f"💵 जमा रोकड: ₹{cash_paid:,.2f}\n"
-                    f"🔴 बाकी उधारी: *₹{balance_amount:,.2f}*\n"
-                    f"-------------------------\n"
-                    f"🙏 आमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद!"
-                )
-                
-                # मजकूर इंटरनेट लिंक फॉरमॅटमध्ये रूपांतरित करणे
-                encoded_text = urllib.parse.quote(wp_text)
-                
-                # भारताचा कोड (+91) मोबाईल नंबरला जोडणे
-                clean_phone = cust_phone.strip().replace("+", "").replace(" ", "")
-                if len(clean_phone) == 10:
-                    clean_phone = "91" + clean_phone
-                
-                whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_text}"
-                
-                # स्क्रीनवर व्हॉट्सॲपचे बटन दाखवणे
-                st.markdown(f"""
-                    <a href="{whatsapp_url}" target="_blank">
-                        <button style="background-color: #25D366; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; width: 100%; margin-bottom: 20px;">
-                            📲 ग्राहकाला WhatsApp वर बिल पाठवा (Send to WhatsApp)
-                        </button>
-                    </a>
-                """, unsafe_allow_html=True)
-                
-                # ---- 80mm Thermal Print Format ----
-                st.write("---")
-                st.subheader("📟 Print Preview")
-                
-                logo_str = "👑<br>" if show_shop_logo else ""
-                hallmark_str = "<br>[ BIS 916 HALLMARK ]" if show_hallmark_logo else ""
-                old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{old_value:.2f}</td></tr>" if old_value > 0 else ""
-                due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख / Due Date: {reminder_date}</div><div style='border-top: 1px dashed #000; margin: 5px 0;'></div>" if balance_amount > 0 else ""
+                # डेटा स्टेट मध्ये ठेवणे प्रिंटिंग पर्यायांसाठी
+                st.session_state.last_bill = {
+                    "today_now": today_now, "cust_name": cust_name, "cust_phone": cust_phone,
+                    "i_name": i_name, "m_cat": m_cat, "m_type": m_type, "c_name": c_name,
+                    "weight": weight, "live_rate": live_rate, "metal_total": metal_total,
+                    "making_charge": making_charge, "gst_select": gst_select, "gst_amt": gst_amt,
+                    "grand_total": grand_total, "old_value": old_value, "cash_paid": cash_paid,
+                    "balance_amount": balance_amount, "reminder_date": reminder_date, "bill_note": bill_note
+                }
+                st.success("✅ बिल यशस्वीरित्या सेव्ह झाले!")
 
+        # --- बिलाचे विविध प्रिंटिंग फॉरमॅट्स विभाग ---
+        if st.session_state.last_bill:
+            b = st.session_state.last_bill
+            st.write("---")
+            st.subheader("🖨️ प्रिंट आणि शेअर पर्याय (Print & Share Options)")
+            
+            # व्हॉट्सॲप बटन
+            wp_text = f"*✨ {shop_name} ✨*\nप्रिय *{b['cust_name']}*, आपले बिल:\n💰 एकूण बिल: *₹{b['grand_total']:,.2f}*\n💵 जमा: ₹{b['cash_paid']:,.2f}\n🔴 बाकी: *₹{b['balance_amount']:,.2f}*"
+            encoded_text = urllib.parse.quote(wp_text)
+            whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
+            st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 10px; border-radius: 5px; border:none; width:100%; font-weight:bold; cursor:pointer;">📲 WhatsApp वर बिल पाठवा</button></a>', unsafe_allow_html=True)
+            
+            # प्रिंट टाईप सिलेक्शन
+            print_style = st.radio("बिलाचा आकार निवडा (Select Print Size):", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
+            
+            logo_str = "👑<br>" if show_shop_logo else ""
+            hallmark_str = "<br>[ BIS 916 HALLMARK ]" if show_hallmark_logo else ""
+            old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""
+            due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख: {b['reminder_date']}</div>" if b['balance_amount'] > 0 else ""
+
+            # १. thermal प्रिंट फॉरमॅट
+            if print_style == "80mm Thermal Paper":
                 bill_html = f"""
-                <div style="width: 300px; font-family: 'Courier New', Courier, monospace; font-size: 12px; border: 1px solid #ccc; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
+                <div style="width: 300px; font-family: 'Courier New', monospace; font-size: 12px; border: 1px solid #000; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size:16px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center;">{shop_address}</div>
                     <div style="text-align: center; font-weight: bold;">GSTIN: {gst_number}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
-                    <div><b>तारीख / Date:</b> {today_now}</div>
-                    <div><b>ग्राहक / Name:</b> {cust_name}</div>
-                    <div><b>मोबाईल / Mob:</b> {cust_phone}</div>
+                    <div><b>तारीख:</b> {b['today_now']} | <b>ग्राहक:</b> {b['cust_name']}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
-                    <div style="font-weight: bold;">तपशील (Item Details):</div>
-                    <div>{i_name} ({m_cat} - {m_type})</div>
-                    <div>कंपनी / Brand: {c_name}</div>
-                    <div>वजन / Weight: {weight}g | दर / Rate: ₹{live_rate}</div>
+                    <div>{b['i_name']} ({b['m_cat']} - {b['m_type']})</div>
+                    <div>वजन: {b['weight']}g | दर: ₹{b['live_rate']}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     <table style="width:100%;">
-                        <tr><td>धातू मूल्य (Metal Price):</td><td style="text-align: right;">₹{metal_total:.2f}</td></tr>
-                        <tr><td>मजुरी (Labour):</td><td style="text-align: right;">₹{making_charge:.2f}</td></tr>
-                        <tr><td>GST ({gst_select}%):</td><td style="text-align: right;">₹{gst_amt:.2f}</td></tr>
-                        <tr style="font-weight: bold;"><td>एकूण बिल (Total):</td><td style="text-align: right;">₹{grand_total:.2f}</td></tr>
+                        <tr><td>धातू मूल्य:</td><td style="text-align: right;">₹{b['metal_total']:.2f}</td></tr>
+                        <tr><td>मजुरी:</td><td style="text-align: right;">₹{b['making_charge']:.2f}</td></tr>
+                        <tr><td>GST ({b['gst_select']}%):</td><td style="text-align: right;">₹{b['gst_amt']:.2f}</td></tr>
+                        <tr style="font-weight: bold;"><td>एकूण बिल:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td>जमा रोकड (Paid):</td><td style="text-align: right;">₹{cash_paid:.2f}</td></tr>
-                        <tr style="font-weight: bold; font-size:13px;"><td>बाकी उधारी (Balance):</td><td style="text-align: right;">₹{balance_amount:.2f}</td></tr>
+                        <tr><td>जमा रोकड:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight: bold;"><td>बाकी उधारी:</td><td style="text-align: right;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     {due_date_div}
-                    <div style="text-align: center; font-style: italic;">{bill_note}{hallmark_str}</div>
+                    <div style="text-align: center;">{b['bill_note']}{hallmark_str}</div>
                 </div>
                 """
                 st.markdown(bill_html, unsafe_allow_html=True)
+                
+            # २. A4 साईझ प्रिंट फॉरमॅट
+            elif print_style == "A4 Size Paper":
+                bill_html = f"""
+                <div style="width: 100%; max-width: 750px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 30px; background: #fff; color: #000; margin: 0 auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <td style="width: 50%;"><h2>{logo_str}{shop_name}</h2><p>{shop_address}<br><b>GSTIN:</b> {gst_number}</p></td>
+                            <td style="text-align: right; width: 50%;"><h1>TAX INVOICE</h1><p><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p></td>
+                        </tr>
+                    </table>
+                    <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
+                    <p><b>ग्राहक (Customer Name):</b> {b['cust_name']}</p>
+                    <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; margin-top: 15px;">
+                        <tr style="background-color: #f2f2f2; font-weight: bold;">
+                            <th style="border: 1px solid #000; padding: 8px;">तपशील (Item Details)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">वजन (Weight)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">आजचा दर (Rate)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">मजुरी (Labour)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">एकूण रक्कम</th>
+                        </tr>
+                        <tr>
+                            <td style="border: 1px solid #000; padding: 8px;">{b['i_name']} ({b['m_cat']} - {b['m_type']}) <br><small>Brand: {b['c_name']}</small></td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">{b['weight']}g</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['live_rate']:.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['making_charge']:.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{(b['metal_total']+b['making_charge'] film):.2f}</td>
+                        </tr>
+                    </table>
+                    <table style="width: 40%; margin-left: 60%; margin-top: 20px; border-collapse: collapse;">
+                        <tr><td><b>Subtotal:</b></td><td style="text-align: right;">₹{b['metal_total']+b['making_charge']:.2f}</td></tr>
+                        <tr><td><b>GST ({b['gst_select']}%):</b></td><td style="text-align: right;">₹{b['gst_amt']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td>Grand Total:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
+                        <tr><td>जुनी मोड (Old Gold):</td><td style="text-align: right;">- ₹{b['old_value']:.2f}</td></tr>
+                        <tr><td>जमा रोकड (Paid):</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td>बाकी रक्कम (Balance):</td><td style="text-align: right; color: red;">₹{b['balance_amount']:.2f}</td></tr>
+                    </table>
+                    <div style="margin-top: 30px; font-size: 12px; text-align: center; font-style: italic;">{b['bill_note']}{hallmark_str}</div>
+                </div>
+                """
+                st.markdown(bill_html, unsafe_allow_html=True)
+                
+            # ३. Manual/Plain प्रिंट फॉरमॅट (कच्चे बिल - विना टॅक्स)
+            elif print_style == "Manual Layout (No Tax/Plain)":
+                bill_html = f"""
+                <div style="width: 100%; max-width: 500px; font-family: 'Courier New', monospace; border: 1px solid #888; padding: 20px; background: #fafafa; color: #000; margin: 0 auto;">
+                    <h3 style="text-align: center; margin:0;">{shop_name} (अंदाजे बिल)</h3>
+                    <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
+                    <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
+                    <p style="margin:2px 0;"><b>ग्राहक:</b> {b['cust_name']} | <b>तारीख:</b> {b['today_now']}</p>
+                    <p style="margin:2px 0;"><b>दागिना:</b> {b['i_name']} ({b['m_cat']}) - {b['weight']}g</p>
+                    <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
+                    <table style="width: 100%;">
+                        <tr><td>दागिना किंमत:</td><td style="text-align: right;">₹{b['metal_total'] + b['making_charge']:.2f}</td></tr>
+                        {f"<tr><td>मोड वजा:</td><td style='text-align: right;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""}
+                        <tr style="font-weight:bold;"><td>एकूण द्यावे:</td><td style="text-align: right;">₹{b['grand_total'] - b['gst_amt']:.2f}</td></tr>
+                        <tr><td>जमा केले:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight:bold; font-size:14px; color:blue;"><td>बाकी रक्कम:</td><td style="text-align: right;">₹{b['balance_amount'] - b['gst_amt']:.2f}</td></tr>
+                    </table>
+                    <p style="text-align:center; font-size:11px; margin-top:15px;">* हे कच्चे/मॅन्युअल बिल आहे. *</p>
+                </div>
+                """
+                st.markdown(bill_html, unsafe_allow_html=True)
+                
+            st.info("💡 प्रिटींगसाठी कीबोर्डवर Ctrl + P दाबा आणि हव्या त्या प्रिंटरवर प्रिंट करा.")
 
 # ==============================================================================
-# विभाग २: कॅटेगरी वाईज स्टॉक मॅनेजमेंट (Category-wise Stock)
+# विभाग २: कॅटेगरी वाईज स्टॉक मॅनेजमेंट (आणि सर्च पर्याय)
 # ==============================================================================
 elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Management":
-    st.title("📦 कॅटेगरी वाईज स्टॉक मॅनेजमेंट / Category-wise Stock")
+    st.title("📦 स्टॉक मॅनेजमेंट आणि प्रगत शोध")
     st.write("---")
     
-    tab1, tab2 = st.tabs(["➕ नवीन स्टॉक जोडा (Add Stock)", "📋 सध्याचा स्टॉक पहा (View Stock)"])
+    tab1, tab2 = st.tabs(["➕ नवीन स्टॉक जोडा (Add Stock)", "📋 सध्याचा स्टॉक व सर्च (View & Search Stock)"])
     
     with tab1:
         st.subheader("🆕 नवीन मालाची एंट्री")
@@ -251,128 +300,114 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
             with col_s1:
                 m_category_input = st.selectbox("मुख्य कॅटेगरी (Category):", ["Gold", "Silver"])
                 m_type_input = st.selectbox("प्रकार/टच (Type/Purity):", ["22K", "24K", "18K", "92.5 Sterling", "Fine Silver", "Regular Silver"])
-                i_name_input = st.text_input("दागिन्याचे नाव (Item Name) [उदा. अंगठी, पैंजण, चैन]:")
-                
+                i_name_input = st.text_input("दागिन्याचे नाव (Item Name):")
             with col_s2:
-                c_name_input = st.text_input("कंपनी/ब्रँडचे नाव (Company/Brand Name):", value="Own Stock")
-                stock_grams_input = st.number_input("एकूण वजन ग्रॅममध्ये (Weight in Grams):", min_value=0.0, step=0.01)
-                alert_limit_input = st.number_input("किमान स्टॉक अलर्ट मर्यादा (Alert Limit Grams):", min_value=0.0, value=5.0, step=0.01)
+                c_name_input = st.text_input("कंपनी/ब्रँडचे नाव:", value="Own Stock")
+                stock_grams_input = st.number_input("एकूण वजन ग्रॅममध्ये:", min_value=0.0, step=0.01)
+                alert_limit_input = st.number_input("स्टॉक अलर्ट मर्यादा (Grams):", min_value=0.0, value=5.0, step=0.01)
             
-            submit_stock = st.form_submit_button("💾 स्टॉक जतन करा (Save Stock)")
-            
+            submit_stock = st.form_submit_button("💾 स्टॉक जतन करा")
             if submit_stock:
                 if i_name_input == "" or stock_grams_input <= 0:
-                    st.error("❌ कृपया दागिन्याचे नाव आणि अचूक वजन टाका!")
+                    st.error("❌ योग्य माहिती भरा!")
                 else:
-                    cursor.execute("""
-                    INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """, (m_category_input, m_type_input, i_name_input, c_name_input, stock_grams_input, alert_limit_input))
+                    cursor.execute("INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit) VALUES (?, ?, ?, ?, ?, ?)", (m_category_input, m_type_input, i_name_input, c_name_input, stock_grams_input, alert_limit_input))
                     conn.commit()
-                    st.success(f"✅ [{m_category_input}] {i_name_input} स्टॉकमध्ये यशस्वीरित्या जोडला गेला!")
+                    st.success("✅ स्टॉक जोडला!")
                     st.rerun()
 
     with tab2:
-        st.subheader("📋 उपलब्ध सर्व स्टॉक")
-        view_cat = st.radio("कोणता स्टॉक पाहायचा आहे?", ["सर्व (All)", "फक्त सोने (Gold Stock Only)", "फक्त चांदी (Silver Stock Only)"], horizontal=True)
+        st.subheader("🔍 स्टॉक शोध पर्याय")
         
-        if view_cat == "फक्त सोने (Gold Stock Only)":
-            q_stock = "SELECT id AS 'ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'दागिना', company_name AS 'कंपनी', stock_grams AS 'वजन (ग्रॅम)', alert_limit AS 'अलर्ट लिमिट' FROM items_stock WHERE metal_category = 'Gold'"
-        elif view_cat == "फक्त चांदी (Silver Stock Only)":
-            q_stock = "SELECT id AS 'ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'दागिना', company_name AS 'कंपनी', stock_grams AS 'वजन (ग्रॅम)', alert_limit AS 'अलर्ट लिमिट' FROM items_stock WHERE metal_category = 'Silver'"
-        else:
-            q_stock = "SELECT id AS 'ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'दागिना', company_name AS 'कंपनी', stock_grams AS 'वजन (ग्रॅम)', alert_limit AS 'अलर्ट लिमिट' FROM items_stock"
+        # सर्च फिल्टर्स
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            search_item = st.text_input("📦 दागिन्याच्या नावाने शोधा (Search by Item Name):")
+        with col_f2:
+            search_cat = st.selectbox("कॅटेगरीनुसार फिल्टर:", ["सर्व (All)", "Gold", "Silver"])
             
-        df_stock = pd.read_sql_query(q_stock, conn)
+        # SQL Query तयार करणे
+        query_s = "SELECT id AS 'ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'दागिना', company_name AS 'कंपनी', stock_grams AS 'वजन (ग्रॅम)', alert_limit AS 'अलर्ट लिमिट' FROM items_stock WHERE 1=1"
+        params_s = []
+        
+        if search_cat != "सर्व (All)":
+            query_s += " AND metal_category = ?"
+            params_s.append(search_cat)
+        if search_item:
+            query_s += " AND item_name LIKE ?"
+            params_s.append(f"%{search_item}%")
+            
+        df_stock = pd.read_sql_query(query_s, conn, params=params_s)
         
         if df_stock.empty:
-            st.info("ℹ️ निवडलेल्या कॅटेगरीमध्ये सध्या कोणताही स्टॉक उपलब्ध नाही.")
+            st.info("ℹ️ शोधलेला किंवा उपलब्ध कोणताही स्टॉक नाही.")
         else:
             st.dataframe(df_stock, use_container_width=True)
-            
-            cursor.execute("SELECT SUM(stock_grams) FROM items_stock WHERE metal_category = 'Gold'")
-            total_gold_w = cursor.fetchone()[0] or 0.0
-            cursor.execute("SELECT SUM(stock_grams) FROM items_stock WHERE metal_category = 'Silver'")
-            total_silver_w = cursor.fetchone()[0] or 0.0
-            
-            st.write("---")
-            sc1, sc2 = st.columns(2)
-            sc1.info(f"✨ **एकूण सोन्याचा स्टॉक (Total Gold):** {total_gold_w:.3f} ग्रॅम")
-            sc2.info(f"✨ **एकूण चांदीचा स्टॉक (Total Silver):** {total_silver_w:.3f} ग्रॅम")
 
 # ==============================================================================
-# विभाग ३: ग्राहक उधारी व इतिहास (Customer Ledger)
+# विभाग ३: ग्राहक उधारी व इतिहास (आणि ग्राहक/दागिना वाईज सर्च)
 # ==============================================================================
 elif choice == "📊 ग्राहक उधारी व इतिहास / Customer Ledger":
-    st.title("📊 ग्राहक उधारी व इतिहास / Customer Ledger")
+    st.title("📊 ग्राहक उधारी व इतिहास लेजर")
     st.write("---")
     
-    df_ledger = pd.read_sql_query("""
-        SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', 
-               item_name AS 'दागिना', grand_total AS 'एकूण बिल (₹)', cash_paid AS 'जमा रोकड (₹)', 
-               balance_amount AS 'बाकी उधारी (₹)', reminder_date AS 'वायदा तारीख' 
-        FROM billing_v3 
-        ORDER BY id DESC
-    """, conn)
+    # सर्व डेटा आधी लोड करूया जेणेकरून मॅट्रिक्स बरोबर दिसतील
+    df_all_ledger = pd.read_sql_query("SELECT grand_total, cash_paid, balance_amount FROM billing_v3", conn)
     
-    if df_ledger.empty:
-        st.info("ℹ️ डेटाबेसमध्ये अजून एकही बिल किंवा उधारीची नोंद नाही.")
+    if df_all_ledger.empty:
+        st.info("ℹ️ अजून एकही बिलाची नोंद नाही.")
     else:
-        total_business = df_ledger['एकूण बिल (₹)'].sum()
-        total_collected = df_ledger['जमा रोकड (₹)'].sum()
-        total_pending = df_ledger['बाकी उधारी (₹)'].sum()
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("📊 एकूण विक्री (Total Sales)", f"₹{total_business:,.2f}")
-        m2.metric("🟢 एकूण जमा रोकड (Total Received)", f"₹{total_collected:,.2f}")
-        m3.metric("🔴 एकूण脫ारकी उधारी (Total Outstanding)", f"₹{total_pending:,.2f}", delta_color="inverse")
-        
+        # १. व्यवसाय मॅट्रिक्स
+        st.columns(3)[0].metric("📊 एकूण विक्री", f"₹{df_all_ledger['grand_total'].sum():,.2f}")
+        st.columns(3)[1].metric("🟢 एकूण जमा रोकड", f"₹{df_all_ledger['cash_paid'].sum():,.2f}")
+        st.columns(3)[2].metric("🔴 एकूण मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
         st.write("---")
         
-        st.subheader("💵 उधारीची रक्कम जमा करा (Receive Pending Payment)")
+        # २. उधारी भरणे काउंटर फॉर्म
+        st.subheader("💵 उधारी जमा काउंटर")
         df_debtors = pd.read_sql_query("SELECT id, customer_name, balance_amount FROM billing_v3 WHERE balance_amount > 0", conn)
-        
-        if df_debtors.empty:
-            st.success("🎉 सर्व ग्राहकांची उधारी पूर्ण जमा आहे! कोणतीही उधारी बाकी नाही.")
-        else:
+        if not df_debtors.empty:
             debtor_options = {row['id']: f"बिल ID: {row['id']} | {row['customer_name']} (बाकी: ₹{row['balance_amount']:.2f})" for idx, row in df_debtors.iterrows()}
-            
-            with st.form("payment_receive_form"):
-                col_p1, col_p2 = st.columns(2)
-                with col_p1:
-                    selected_bill_id = st.selectbox("ग्राहक आणि बिल निवडा:", options=list(debtor_options.keys()), format_func=lambda x: debtor_options[x])
-                with col_p2:
-                    amount_to_pay = st.number_input("आता जमा करायची रक्कम (₹):", min_value=0.0, step=100.0)
-                
-                submit_payment = st.form_submit_button("✅ रक्कम जमा करा (Update Payment)")
-                
-                if submit_payment:
-                    cursor.execute("SELECT customer_name, cash_paid, balance_amount FROM billing_v3 WHERE id=?", (selected_bill_id,))
-                    current_bill = cursor.fetchone()
-                    c_cust, c_paid, c_bal = current_bill[0], current_bill[1], current_bill[2]
-                    
-                    if amount_to_pay <= 0:
-                        st.error("❌ कृपया ० पेक्षा जास्त रक्कम टाका!")
-                    elif amount_to_pay > c_bal:
-                        st.error(f"❌ रक्कम बाकी उधारीपेक्षा (₹{c_bal:.2f}) जास्त असू शकत नाही!")
-                    else:
-                        new_paid = c_paid + amount_to_pay
-                        new_bal = c_bal - amount_to_pay
-                        
-                        cursor.execute("UPDATE billing_v3 SET cash_paid=?, balance_amount=? WHERE id=?", (new_paid, new_bal, selected_bill_id))
+            with st.form("pay_form"):
+                sb_id = st.selectbox("ग्राहक निवडा:", options=list(debtor_options.keys()), format_func=lambda x: debtor_options[x])
+                amt_pay = st.number_input("रक्कम जमा करा (₹):", min_value=0.0)
+                if st.form_submit_button("✅ अपडेट पेमेंट"):
+                    cursor.execute("SELECT customer_name, cash_paid, balance_amount FROM billing_v3 WHERE id=?", (sb_id,))
+                    c_name, c_paid, c_bal = cursor.fetchone()
+                    if 0 < amt_pay <= c_bal:
+                        cursor.execute("UPDATE billing_v3 SET cash_paid=?, balance_amount=? WHERE id=?", (c_paid+amt_pay, c_bal-amt_pay, sb_id))
                         conn.commit()
-                        st.success(f"✅ {c_cust} यांचे ₹{amount_to_pay:.2f} जमा झाले. नवीन बाकी: ₹{new_bal:.2f}")
+                        st.success("✅ पेमेंट अपडेट झाले!")
                         st.rerun()
+                    else: st.error("❌ चुकीची रक्कम!")
 
         st.write("---")
         
-        st.subheader("📋 सर्व बिलांचा आणि उधारीचा इतिहास")
-        search_query = st.text_input("🔍 ग्राहक किंवा मोबाईल नंबरवरून शोधा (Search by Name/Phone):")
-        if search_query:
-            filtered_df = df_ledger[
-                df_ledger['ग्राहक'].str.contains(search_query, case=False, na=False) | 
-                df_ledger['मोबाईल'].str.contains(search_query, case=False, na=False)
-            ]
-            st.dataframe(filtered_df, use_container_width=True)
-        else:
-            st.dataframe(df_ledger, use_container_width=True)
+        # ३. प्रगत ग्राहक व दागिना वाईज सर्च फिल्टर
+        st.subheader("🔍 ग्राहक आणि बिलांचा इतिहास शोधा")
+        col_l1, col_l2 = st.columns(2)
+        with col_l1:
+            search_cust_name = st.text_input("👤 ग्राहकाच्या नावाने किंवा नंबरने शोधा (Search by Customer Name/No):")
+        with col_l2:
+            search_bill_item = st.text_input("💍 दागिन्याच्या नावाने बिल शोधा (Search by Item Name):")
+            
+        # SQL Query फॉर सर्चिंग
+        query_l = """
+            SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', 
+                   item_name AS 'दागिना', grand_total AS 'एकूण बिल (₹)', cash_paid AS 'जма रोकड (₹)', 
+                   balance_amount AS 'बाकी उधारी (₹)', reminder_date AS 'वायदा तारीख' 
+            FROM billing_v3 WHERE 1=1
+        """
+        params_l = []
+        
+        if search_cust_name:
+            query_l += " AND (customer_name LIKE ? OR customer_phone LIKE ?)"
+            params_l.extend([f"%{search_cust_name}%", f"%{search_cust_name}%"])
+        if search_bill_item:
+            query_l += " AND item_name LIKE ?"
+            params_l.append(f"%{search_bill_item}%")
+            
+        query_l += " ORDER BY id DESC"
+        
+        df_ledger = pd.read_sql_query(query_l, conn, params=params_l)
+        st.dataframe(df_ledger, use_container_width=True)
