@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 
 # १. डेटाबेस सेटअप
-conn = sqlite3.connect("jewellery_master_v3.db", check_same_thread=False)
+conn = sqlite3.connect("jewellery_final_erp.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
