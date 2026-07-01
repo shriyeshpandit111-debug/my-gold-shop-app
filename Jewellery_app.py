@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import sqlite3
 import urllib.parse
@@ -59,7 +60,7 @@ except:
 # ==============================================================================
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर領 सेटिंग्ज / Master Settings")
+st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
@@ -72,7 +73,6 @@ gold_22k_rate = st.sidebar.number_input("22K सोने दर (प्रत�
 gold_18k_rate = st.sidebar.number_input("18K सोने दर (प्रति ग्रॅम):", value=5625.0)
 silver_rate = st.sidebar.number_input("चांदी दर (प्रति ग्रॅम):", value=90.0)
 
-# --- इथे स्पेलिंग फिक्स केले आहे ---
 menu = ["🧾 नवीन बिल काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
 choice = st.radio("मुख्य मेन्यू निवडा / Select Menu:", menu, horizontal=True)
 
@@ -152,7 +152,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
             
-            cash_paid = st.number_input("जमा रोकड (Cash Paid):", min_value=0.0, max_value=grand_total)
+            cash_paid = st.number_input("जма रोकड (Cash Paid):", min_value=0.0, max_value=grand_total)
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -192,7 +192,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             old_gold_details_msg = f"\n🔄 *जुनी मोड वजावट:* {b['old_gold_item']} ({b['old_gold_type']}) - ₹{b['old_value']:,.2f}" if b['old_value'] > 0 else ""
             default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
-            custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=200)
+            custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
             
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
@@ -206,12 +206,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             # --- सुरक्षित HTML ब्लॉक्स ---
             old_gold_tr = ""
             if b['old_value'] > 0:
-                old_gold_tr = f"""
-                <tr>
-                    <td style="padding: 5px 0;">जुनी मोड वजा ({b['old_gold_item']} - {b['old_gold_type']}):</td>
-                    <td style="text-align: right; padding: 5px 0;">- ₹{b['old_value']:.2f}</td>
-                </tr>
-                """
+                old_gold_tr = f"<tr><td style='padding: 5px 0;'>जुनी मोड वजा ({b['old_gold_item']}):</td><td style='text-align: right; padding: 5px 0;'>- ₹{b['old_value']:.2f}</td></tr>"
 
             due_date_div = ""
             if b['balance_amount'] > 0:
@@ -219,21 +214,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
 
             gst_row_thermal = ""
             if b['gst_select'] > 0:
-                gst_row_thermal = f"""
-                <tr>
-                    <td style="padding: 5px 0;">GST ({b['gst_select']}%):</td>
-                    <td style="text-align: right; padding: 5px 0;">₹{b['gst_amt']:.2f}</td>
-                </tr>
-                """
+                gst_row_thermal = f"<tr><td style='padding: 5px 0;'>GST ({b['gst_select']}%):</td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>"
 
             gst_row_a4 = ""
             if b['gst_select'] > 0:
-                gst_row_a4 = f"""
-                <tr>
-                    <td style="padding: 5px 0;"><b>GST ({b['gst_select']}%):</b></td>
-                    <td style="text-align: right; padding: 5px 0;">₹{b['gst_amt']:.2f}</td>
-                </tr>
-                """
+                gst_row_a4 = f"<tr><td style='padding: 5px 0;'><b>GST ({b['gst_select']}%):</b></td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>"
             
             gstin_div_thermal = ""
             if b['gst_select'] > 0:
@@ -243,11 +228,15 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             if b['gst_select'] > 0:
                 gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}"
 
-            # --- प्रिंट लेआउट्स ---
+            # --- प्रिंट लेआउट्स (HTML Component द्वारे सुरक्षित रेंडरिंग) ---
+            bill_html = ""
+            component_height = 400
+
             if print_style == "80mm Thermal Paper":
+                component_height = 500
                 bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', monospace; font-size: 13px; border: 1px solid #000; padding: 12px; background: #fff; color: #000; margin: 0 auto;">
-                    <div style="text-align: center; font-weight: bold; font-size: 14px; letter-spacing: 1px;">॥ श्री गणेश प्रसन्न ॥</div>
+                    <div style="text-align: center; font-weight: bold; font-size: 14px;">॥ श्री गणेश प्रसन्न ॥</div>
                     <div style="text-align: center; font-weight: bold; font-size: 18px; margin-top: 5px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center; font-size: 12px;">{shop_address}</div>
                     {gstin_div_thermal}
@@ -269,90 +258,90 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     {due_date_div}
-                    <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold; font-style: italic;">* Subject to Sangola Jurisdiction *</div>
+                    <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold;">* Subject to Sangola Jurisdiction *</div>
                     <div style="text-align: center; margin-top: 5px; font-size: 11px;">{b['bill_note']}{hallmark_str}</div>
                 </div>
                 """
-                st.markdown(bill_html, unsafe_allow_html=True)
                 
             elif print_style == "A4 Size Paper":
+                component_height = 650
                 subtotal_val = b['metal_total'] + b['making_charge']
                 bill_html = f"""
-                <div style="width: 100%; max-width: 750px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 30px; background: #fff; color: #000; margin: 0 auto;">
+                <div style="width: 95%; max-width: 700px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 20px; background: #fff; color: #000; margin: 0 auto;">
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
                         <tr>
-                            <td style="font-size: 12px; font-weight: bold; text-align: left; vertical-align: top; color: #333; width: 35%;">* Subject to Sangola Jurisdiction *</td>
-                            <td style="font-size: 16px; font-weight: bold; text-align: center; vertical-align: top; letter-spacing: 1px; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
+                            <td style="font-size: 11px; font-weight: bold; text-align: left; color: #333; width: 35%;">* Subject to Sangola Jurisdiction *</td>
+                            <td style="font-size: 14px; font-weight: bold; text-align: center; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
                             <td style="width: 35%;"></td>
                         </tr>
                     </table>
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
                             <td style="width: 50%; vertical-align: top;">
-                                <h2 style="margin: 0 0 5px 0; font-size: 26px;">{logo_str}{shop_name}</h2>
-                                <p style="margin: 0; font-size: 14px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
+                                <h2 style="margin: 0 0 5px 0; font-size: 22px;">{logo_str}{shop_name}</h2>
+                                <p style="margin: 0; font-size: 13px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
                             </td>
                             <td style="text-align: right; width: 50%; vertical-align: top;">
-                                <h1 style="margin: 0 0 5px 0; font-size: 32px; color: #222;">INVOICE</h1>
-                                <p style="margin: 0; font-size: 14px; line-height: 1.4;"><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p>
+                                <h1 style="margin: 0 0 5px 0; font-size: 28px; color: #222;">INVOICE</h1>
+                                <p style="margin: 0; font-size: 13px; line-height: 1.4;"><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p>
                             </td>
                         </tr>
                     </table>
-                    <div style="border-top: 2px solid #000; margin: 20px 0;"></div>
-                    <p style="font-size: 16px; margin: 0 0 15px 0;"><b>ग्राहक (Customer Name):</b> {b['cust_name']}</p>
-                    <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: 14px;">
+                    <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
+                    <p style="font-size: 14px; margin: 0 0 10px 0;"><b>ग्राहक (Customer Name):</b> {b['cust_name']}</p>
+                    <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: 13px;">
                         <tr style="background-color: #f2f2f2; font-weight: bold;">
-                            <th style="border: 1px solid #000; padding: 10px; text-align: left;">तपशील (Item Details)</th>
-                            <th style="border: 1px solid #000; padding: 10px; text-align: right;">वजन (Weight)</th>
-                            <th style="border: 1px solid #000; padding: 10px; text-align: right;">आजचा दर (Rate)</th>
-                            <th style="border: 1px solid #000; padding: 10px; text-align: right;">मजुरी (Labour)</th>
-                            <th style="border: 1px solid #000; padding: 10px; text-align: right;">एकूण रक्कम</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: left;">तपशील (Item Details)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">वजन (Weight)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">दर (Rate)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">मजुरी (Labour)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">एकूण रक्कम</th>
                         </tr>
                         <tr>
-                            <td style="border: 1px solid #000; padding: 10px; font-weight: bold;">{b['i_name']} ({b['m_cat']}) <br><span style="font-weight: normal; font-size: 12px; color: #555;">Brand: {b['c_name']}</span></td>
-                            <td style="border: 1px solid #000; padding: 10px; text-align: right;">{b['weight']}g</td>
-                            <td style="border: 1px solid #000; padding: 10px; text-align: right;">₹{b['live_rate']:.2f}</td>
-                            <td style="border: 1px solid #000; padding: 10px; text-align: right;">₹{b['making_charge']:.2f}</td>
-                            <td style="border: 1px solid #000; padding: 10px; text-align: right; font-weight: bold;">₹{subtotal_val:.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; font-weight: bold;">{b['i_name']} ({b['m_cat']})</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">{b['weight']}g</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['live_rate']:.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['making_charge']:.2f}</td>
+                            <td style="border: 1px solid #000; padding: 8px; text-align: right; font-weight: bold;">₹{subtotal_val:.2f}</td>
                         </tr>
                     </table>
-                    <table style="width: 50%; margin-left: 50%; margin-top: 20px; border-collapse: collapse; font-size: 14px;">
-                        <tr><td style="padding: 5px 0;"><b>Subtotal:</b></td><td style="text-align: right; padding: 5px 0;">₹{subtotal_val:.2f}</td></tr>
+                    <table style="width: 50%; margin-left: 50%; margin-top: 15px; border-collapse: collapse; font-size: 13px;">
+                        <tr><td style="padding: 4px 0;"><b>Subtotal:</b></td><td style="text-align: right; padding: 4px 0;">₹{subtotal_val:.2f}</td></tr>
                         {gst_row_a4}
-                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 6px 0;">Grand Total:</td><td style="text-align: right; padding: 6px 0;">₹{b['grand_total']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">Grand Total:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td style="padding: 5px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 5px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight: bold; font-size: 18px; border-top: 2px double #000;"><td style="padding: 8px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 8px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
+                        <tr><td style="padding: 4px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td style="padding: 6px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 6px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <div style="margin-top: 40px; font-size: 13px; text-align: center; font-style: italic; border-top: 1px solid #ccc; padding-top: 15px;">{b['bill_note']}{hallmark_str}</div>
+                    <div style="margin-top: 30px; font-size: 12px; text-align: center; border-top: 1px solid #ccc; padding-top: 10px;">{b['bill_note']}{hallmark_str}</div>
                 </div>
                 """
-                st.markdown(bill_html, unsafe_allow_html=True)
                 
             elif print_style == "Manual Layout (No Tax/Plain)":
+                component_height = 450
                 bill_html = f"""
-                <div style="width: 100%; max-width: 500px; font-family: 'Courier New', monospace; border: 1px solid #888; padding: 20px; background: #fafafa; color: #000; margin: 0 auto; font-size: 14px;">
-                    <div style="text-align: center; font-weight: bold; font-size: 14px;">॥ श्री गणेश प्रसन्न ॥</div>
-                    <h3 style="text-align: center; margin:5px 0 0 0; font-size: 18px;">{shop_name} (अंदाजे बिल)</h3>
-                    <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
+                <div style="width: 400px; font-family: 'Courier New', monospace; border: 1px solid #888; padding: 15px; background: #fafafa; color: #000; margin: 0 auto; font-size: 13px;">
+                    <div style="text-align: center; font-weight: bold;">॥ श्री गणेश प्रसन्न ॥</div>
+                    <h3 style="text-align: center; margin:5px 0 0 0;">{shop_name} (अंदाजे बिल)</h3>
+                    <p style="text-align: center; margin:0; font-size:11px;">{shop_address}</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
                     <p style="margin:2px 0;"><b>ग्राहक:</b> {b['cust_name']} | <b>तारीख:</b> {b['today_now']}</p>
                     <p style="margin:2px 0;"><b>दागिना:</b> {b['i_name']} ({b['m_cat']}) - {b['weight']}g</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
                     <table style="width: 100%; border-collapse: collapse;">
-                        <tr><td style="padding: 3px 0;">दागिना किंमत:</td><td style="text-align: right; padding: 3px 0;">₹{b['metal_total'] + b['making_charge']:.2f}</td></tr>
+                        <tr><td style="padding: 3px 0;">दागिना किंमत:</td><td style="text-align: right; padding: 3px 0;">₹{(b['metal_total'] + b['making_charge']):.2f}</td></tr>
                         {old_gold_tr}
-                        <tr style="font-weight:bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">एकूण द्यावे:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total'] - b['gst_amt']:.2f}</td></tr>
+                        <tr style="font-weight:bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">एकूण द्यावे:</td><td style="text-align: right; padding: 5px 0;">₹{(b['grand_total'] - b['gst_amt']):.2f}</td></tr>
                         <tr><td style="padding: 3px 0;">जमा केले:</td><td style="text-align: right; padding: 3px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight:bold; font-size:16px; color:blue; border-top: 1px solid #000;"><td style="padding: 5px 0;">बाकी रक्कम:</td><td style="text-align: right; padding: 5px 0;">₹{b['balance_amount']:.2f}</td></tr>
+                        <tr style="font-weight:bold; font-size:15px; color:blue; border-top: 1px solid #000;"><td style="padding: 5px 0;">बाकी रक्कम:</td><td style="text-align: right; padding: 5px 0;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <p style="text-align: left; font-size: 12px; font-weight: bold; margin-top: 15px; border-top: 1px dashed #000; padding-top: 5px;">* Subject to Sangola Jurisdiction *</p>
-                    <p style="text-align:center; font-size:11px; margin-top:5px; color: #555;">* हे कच्चे/मॅन्युअल बिल आहे. *</p>
+                    <p style="text-align: center; font-size:11px; margin-top:10px; border-top: 1px dashed #000; padding-top:5px;">* Subject to Sangola Jurisdiction *</p>
                 </div>
                 """
-                st.markdown(bill_html, unsafe_allow_html=True)
-                
-            st.info("💡 प्रिटींगसाठी कीबोर्डवर Ctrl + P दाबा.")
+            
+            # --- सुरक्षित रेंडरिंग पद्धत (काहीही कोड दिसणार नाही) ---
+            components.html(bill_html, height=component_height, scrolling=True)
+            st.info("💡 प्रिटींगसाठी बिलाच्या भागावर उजवे (Right) क्लिक करून Print दाबा किंवा Ctrl + P दाबा.")
 
 # ==============================================================================
 # विभाग २: स्टॉक मॅनेजमेंट
@@ -427,7 +416,7 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         metric_cols = st.columns(3)
         metric_cols[0].metric("📊 एकूण विक्री", f"₹{df_all_ledger['grand_total'].sum():,.2f}")
         metric_cols[1].metric("🟢 एकूण जमा रोकड", f"₹{df_all_ledger['cash_paid'].sum():,.2f}")
-        metric_cols[2].metric("🔴 एकूण मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
+        metric_cols[2].metric("🔴 एकूण祕 मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
         st.write("---")
         
         st.subheader("💵 उधारी जमा काउंटर")
