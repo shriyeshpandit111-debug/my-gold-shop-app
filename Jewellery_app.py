@@ -91,7 +91,8 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
         st.subheader("👤 ग्राहकाची माहिती / Customer Info")
         cust_name = st.text_input("ग्राहकाचे नाव (Customer Name):")
         cust_phone = st.text_input("मोबाईल नंबर (WhatsApp No):")
-        bill_note = st.text_input("बिलाच्या खालील टीप (Terms & Notes):", value="नियम: घडणावळ परत मिळणार नाही. हॉलमार्क गॅरंटी.")
+        bill_note = st.text_area("बिलाच्या खालील टीप / नियम व अटी (Custom Notes/Terms):", 
+                                value="१. घडणावळ परत मिळणार नाही.\n२. हॉलमार्क दागिन्यांची १००% गॅरंटी.\n३. उधारीची रक्कम वेळेत जमा करावी.")
         
     with col2:
         st.subheader("🛍️ दागिन्याची निवड / Select Jewellery")
@@ -171,11 +172,12 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (today_now, cust_name, cust_phone, i_name, f"{m_cat}", c_name, weight, live_rate, making_charge, gst_select, old_gold_type, old_gold_item, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
                 
+                inserted_bill_id = cursor.lastrowid # नवीन जनरेट झालेला बिल नंबर मिळवला
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
                 
                 st.session_state.last_bill = {
-                    "today_now": today_now, "cust_name": cust_name, "cust_phone": cust_phone,
+                    "bill_id": inserted_bill_id, "today_now": today_now, "cust_name": cust_name, "cust_phone": cust_phone,
                     "i_name": i_name, "m_cat": m_cat, "m_type": m_type, "c_name": c_name,
                     "weight": weight, "live_rate": live_rate, "metal_total": metal_total,
                     "making_charge": making_charge, "gst_select": gst_select, "gst_amt": gst_amt,
@@ -183,7 +185,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     "grand_total": grand_total, "old_value": old_value, "cash_paid": cash_paid,
                     "balance_amount": balance_amount, "reminder_date": reminder_date, "bill_note": bill_note
                 }
-                st.success("✅ बिल यशस्वीरित्या सेव्ह झाले!")
+                st.success(f"✅ बिल यशस्वीरित्या सेव्ह झाले! (बिल नंबर: #{inserted_bill_id})")
 
         if st.session_state.last_bill:
             b = st.session_state.last_bill
@@ -191,18 +193,31 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय (WhatsApp & Print Options)")
             
             old_gold_details_msg = f"\n🔄 *जुनी मोड वजावट:* {b['old_gold_item']} ({b['old_gold_type']}) - ₹{b['old_value']:,.2f}" if b['old_value'] > 0 else ""
-            default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
+            default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
             
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
             st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 12px; border-radius: 5px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px;">📲 WhatsApp वर मेसेज पाठवा</button></a>', unsafe_allow_html=True)
 
+            # --- प्रगत बिल कस्टमायझेशन विभाग ---
+            with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
+                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
+                with col_c2:
+                    custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे? (Footer Custom Text):", value="धन्यवाद! पुन्हा भेट द्या.")
+                    custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
+
             print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
             
             logo_str = "👑<br>" if show_shop_logo else ""
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             
+            # परिच्छेद बदल सुरक्षित हाताळणीसाठी
+            formatted_bill_note = b['bill_note'].replace('\n', '<br>')
+
             # --- सुरक्षित HTML ब्लॉक्स ---
             old_gold_tr = ""
             if b['old_value'] > 0:
@@ -228,46 +243,48 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             if b['gst_select'] > 0:
                 gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}"
 
-            # --- प्रिंट लेआउट्स (HTML Component द्वारे सुरक्षित रेंडरिंग) ---
+            # --- प्रिंट लेआउट्स ---
             bill_html = ""
-            component_height = 400
+            component_height = 450
 
             if print_style == "80mm Thermal Paper":
-                component_height = 500
+                component_height = 570
                 bill_html = f"""
-                <div style="width: 300px; font-family: 'Courier New', monospace; font-size: 13px; border: 1px solid #000; padding: 12px; background: #fff; color: #000; margin: 0 auto;">
+                <div style="width: 320px; font-family: 'Courier New', monospace; font-size: {custom_font_size}px; border: 2px {custom_border_style} #000; padding: 12px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size: 14px;">॥ श्री गणेश प्रसन्न ॥</div>
                     <div style="text-align: center; font-weight: bold; font-size: 18px; margin-top: 5px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center; font-size: 12px;">{shop_address}</div>
                     {gstin_div_thermal}
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
+                    <div><b>बिल नंबर (Bill No):</b> #{b['bill_id']}</div>
                     <div><b>तारीख:</b> {b['today_now']}</div>
-                    <div><b>ग्राहक:</b> {b['cust_name']}</div>
+                    <div><b>ग्राहक:</b> {b['cust_name']} [{b['cust_phone']}]</div>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     <div style="font-weight: bold;">{b['i_name']} ({b['m_cat']})</div>
                     <div>वजन: {b['weight']}g | दर: ₹{b['live_rate']}</div>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
-                    <table style="width:100%; border-collapse: collapse; font-size: 13px;">
+                    <table style="width:100%; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr><td style="padding: 3px 0;">धातू मूल्य:</td><td style="text-align: right; padding: 3px 0;">₹{b['metal_total']:.2f}</td></tr>
                         <tr><td style="padding: 3px 0;">मजुरी:</td><td style="text-align: right; padding: 3px 0;">₹{b['making_charge']:.2f}</td></tr>
                         {gst_row_thermal}
                         <tr style="font-weight: bold; border-top: 1px dashed #000;"><td style="padding: 5px 0;">एकूण बिल:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
                         <tr><td style="padding: 3px 0;">जमा रोकड:</td><td style="text-align: right; padding: 3px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0; font-size: 14px;">बाकी उधारी:</td><td style="text-align: right; padding: 5px 0; font-size: 14px;">₹{b['balance_amount']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0; font-size: 15px;">बाकी उधारी:</td><td style="text-align: right; padding: 5px 0; font-size: 15px;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     {due_date_div}
                     <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold;">* Subject to Sangola Jurisdiction *</div>
-                    <div style="text-align: center; margin-top: 5px; font-size: 11px;">{b['bill_note']}{hallmark_str}</div>
+                    <div style="margin-top: 5px; font-size: 12px; border: 1px solid #ddd; padding: 5px; background:#f9f9f9;"><b>टीप / नियम:</b><br>{formatted_bill_note}</div>
+                    <div style="text-align: center; margin-top: 8px; font-weight: bold; font-size: 12px;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
                 
             elif print_style == "A4 Size Paper":
-                component_height = 650
+                component_height = 720
                 subtotal_val = b['metal_total'] + b['making_charge']
                 bill_html = f"""
-                <div style="width: 95%; max-width: 700px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 20px; background: #fff; color: #000; margin: 0 auto;">
+                <div style="width: 95%; max-width: 720px; font-family: Arial, sans-serif; font-size: {custom_font_size}px; border: 2px {custom_border_style} #000; padding: 20px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
                         <tr>
                             <td style="font-size: 11px; font-weight: bold; text-align: left; color: #333; width: 35%;">* Subject to Sangola Jurisdiction *</td>
@@ -278,18 +295,19 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
                             <td style="width: 50%; vertical-align: top;">
-                                <h2 style="margin: 0 0 5px 0; font-size: 22px;">{logo_str}{shop_name}</h2>
+                                <h2 style="margin: 0 0 5px 0; font-size: 24px;">{logo_str}{shop_name}</h2>
                                 <p style="margin: 0; font-size: 13px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
                             </td>
                             <td style="text-align: right; width: 50%; vertical-align: top;">
                                 <h1 style="margin: 0 0 5px 0; font-size: 28px; color: #222;">INVOICE</h1>
-                                <p style="margin: 0; font-size: 13px; line-height: 1.4;"><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p>
+                                <p style="margin: 0; font-size: 13px; line-height: 1.4;"><b>बिल नंबर (Bill No):</b> #{b['bill_id']}</p>
+                                <p style="margin: 3px 0; font-size: 13px; line-height: 1.4;"><b>तारीख (Date):</b> {b['today_now']}</p>
                             </td>
                         </tr>
                     </table>
                     <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
-                    <p style="font-size: 14px; margin: 0 0 10px 0;"><b>ग्राहक (Customer Name):</b> {b['cust_name']}</p>
-                    <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: 13px;">
+                    <p style="font-size: 15px; margin: 0 0 15px 0;"><b>ग्राहक (Customer Name):</b> {b['cust_name']} &nbsp;&nbsp;&nbsp;&nbsp; <b>मोबाईल (WhatsApp No):</b> {b['cust_phone']}</p>
+                    <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr style="background-color: #f2f2f2; font-weight: bold;">
                             <th style="border: 1px solid #000; padding: 8px; text-align: left;">तपशील (Item Details)</th>
                             <th style="border: 1px solid #000; padding: 8px; text-align: right;">वजन (Weight)</th>
@@ -305,7 +323,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                             <td style="border: 1px solid #000; padding: 8px; text-align: right; font-weight: bold;">₹{subtotal_val:.2f}</td>
                         </tr>
                     </table>
-                    <table style="width: 50%; margin-left: 50%; margin-top: 15px; border-collapse: collapse; font-size: 13px;">
+                    <table style="width: 50%; margin-left: 50%; margin-top: 15px; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr><td style="padding: 4px 0;"><b>Subtotal:</b></td><td style="text-align: right; padding: 4px 0;">₹{subtotal_val:.2f}</td></tr>
                         {gst_row_a4}
                         <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">Grand Total:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
@@ -313,33 +331,36 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         <tr><td style="padding: 4px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td style="padding: 6px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 6px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <div style="margin-top: 30px; font-size: 12px; text-align: center; border-top: 1px solid #ccc; padding-top: 10px;">{b['bill_note']}{hallmark_str}</div>
+                    <div style="margin-top: 20px; font-size: 13px; text-align: left; border: 1px solid #ccc; padding: 10px; background:#fafafa;"><b>📜 नियम व अटी (Terms & Conditions):</b><br>{formatted_bill_note}</div>
+                    <div style="margin-top: 20px; font-size: 13px; text-align: center; border-top: 1px solid #ccc; padding-top: 10px; font-weight: bold;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
                 
             elif print_style == "Manual Layout (No Tax/Plain)":
-                component_height = 450
+                component_height = 520
                 bill_html = f"""
-                <div style="width: 400px; font-family: 'Courier New', monospace; border: 1px solid #888; padding: 15px; background: #fafafa; color: #000; margin: 0 auto; font-size: 13px;">
+                <div style="width: 420px; font-family: 'Courier New', monospace; font-size: {custom_font_size}px; border: 2px {custom_border_style} #888; padding: 15px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold;">॥ श्री गणेश प्रसन्न ॥</div>
                     <h3 style="text-align: center; margin:5px 0 0 0;">{shop_name} (अंदाजे बिल)</h3>
-                    <p style="text-align: center; margin:0; font-size:11px;">{shop_address}</p>
+                    <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
-                    <p style="margin:2px 0;"><b>ग्राहक:</b> {b['cust_name']} | <b>तारीख:</b> {b['today_now']}</p>
+                    <p style="margin:2px 0;"><b>बिल नंबर:</b> #{b['bill_id']}</p>
+                    <p style="margin:2px 0;"><b>ग्राहक:</b> {b['cust_name']} [{b['cust_phone']}]</p>
+                    <p style="margin:2px 0;"><b>तारीख:</b> {b['today_now']}</p>
                     <p style="margin:2px 0;"><b>दागिना:</b> {b['i_name']} ({b['m_cat']}) - {b['weight']}g</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
-                    <table style="width: 100%; border-collapse: collapse;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr><td style="padding: 3px 0;">दागिना किंमत:</td><td style="text-align: right; padding: 3px 0;">₹{(b['metal_total'] + b['making_charge']):.2f}</td></tr>
                         {old_gold_tr}
                         <tr style="font-weight:bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">एकूण द्यावे:</td><td style="text-align: right; padding: 5px 0;">₹{(b['grand_total'] - b['gst_amt']):.2f}</td></tr>
                         <tr><td style="padding: 3px 0;">जमा केले:</td><td style="text-align: right; padding: 3px 0;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight:bold; font-size:15px; color:blue; border-top: 1px solid #000;"><td style="padding: 5px 0;">बाकी रक्कम:</td><td style="text-align: right; padding: 5px 0;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <p style="text-align: center; font-size:11px; margin-top:10px; border-top: 1px dashed #000; padding-top:5px;">* Subject to Sangola Jurisdiction *</p>
+                    <div style="margin-top: 10px; font-size: 11px; border-top: 1px dashed #000; padding-top:5px;"><b>टिप:</b><br>{formatted_bill_note}</div>
+                    <p style="text-align: center; font-size:11px; margin-top:10px; font-weight: bold;">{custom_footer_msg}</p>
                 </div>
                 """
             
-            # --- सुरक्षित रेंडरिंग पद्धत (काहीही कोड दिसणार नाही) ---
             components.html(bill_html, height=component_height, scrolling=True)
             st.info("💡 प्रिटींगसाठी बिलाच्या भागावर उजवे (Right) क्लिक करून Print दाबा किंवा Ctrl + P दाबा.")
 
@@ -424,7 +445,8 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         if not df_debtors.empty:
             debtor_options = {row['id']: f"बिल ID: {row['id']} | {row['customer_name']} (बाकी: ₹{row['balance_amount']:.2f})" for idx, row in df_debtors.iterrows()}
             with st.form("pay_form"):
-                sb_id = st.selectbox("ग्राहक निवडा:", options=list(debtor_options.keys()), format_func=lambda x: debtor_options[x])
+                st.write("💸 **थेट बिल नंबर सिलेक्ट करून उधारी जमा करा:**")
+                sb_id = st.selectbox("बिल नंबर आणि ग्राहक निवडा:", options=list(debtor_options.keys()), format_func=lambda x: debtor_options[x])
                 amt_pay = st.number_input("रक्कम जमा करा (₹):", min_value=0.0)
                 if st.form_submit_button("✅ अपडेट पेमेंट"):
                     cursor.execute("SELECT customer_name, cash_paid, balance_amount FROM billing_v4 WHERE id=?", (sb_id,))
@@ -432,16 +454,16 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
                     if 0 < amt_pay <= c_bal:
                         cursor.execute("UPDATE billing_v4 SET cash_paid=?, balance_amount=? WHERE id=?", (c_paid+amt_pay, c_bal-amt_pay, sb_id))
                         conn.commit()
-                        st.success("✅ पेमेंट अपडेट झाले!")
+                        st.success(f"✅ बिल नंबर #{sb_id} साठी पेमेंट अपडेट झाले!")
                         st.rerun()
-                    else: st.error("❌ चुकीची रक्कम!")
+                    else: st.error("❌ केलेली रक्कमेत चूक आहे किंवा उधारीपेक्षा जास्त आहे!")
 
         st.write("---")
         
         st.subheader("🔍 ग्राहक आणि बिलांचा इतिहास शोधा")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
-            search_cust_name = st.text_input("👤 ग्राहकाच्या नावाने किंवा नंबरने शोधा:")
+            search_cust_name = st.text_input("👤 ग्राहक नाव / नंबर / बिल नंबरने शोधा:")
         with col_l2:
             search_bill_item = st.text_input("💍 दागिन्याच्या नावाने बिल शोधा:")
             
@@ -455,8 +477,9 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
         params_l = []
         
         if search_cust_name:
-            query_l += " AND (customer_name LIKE ? OR customer_phone LIKE ?)"
-            params_l.extend([f"%{search_cust_name}%", f"%{search_cust_name}%"])
+            # जर युझरने नंबर टाकला तर आयडी किंवा फोन किंवा नावात शोधेल
+            query_l += " AND (customer_name LIKE ? OR customer_phone LIKE ? OR id = ?)"
+            params_l.extend([f"%{search_cust_name}%", f"%{search_cust_name}%", search_cust_name])
         if search_bill_item:
             query_l += " AND item_name LIKE ?"
             params_l.append(f"%{search_bill_item}%")
