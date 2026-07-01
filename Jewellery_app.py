@@ -59,7 +59,7 @@ except:
 # ==============================================================================
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
+st.sidebar.header("🏪 मास्टर領 सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
@@ -72,7 +72,8 @@ gold_22k_rate = st.sidebar.number_input("22K सोने दर (प्रत�
 gold_18k_rate = st.sidebar.number_input("18K सोने दर (प्रति ग्रॅम):", value=5625.0)
 silver_rate = st.sidebar.number_input("चांदी दर (प्रति ग्रॅम):", value=90.0)
 
-menu = ["🧾 नवीन बिल明 काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
+# --- इथे स्पेलिंग फिक्स केले आहे ---
+menu = ["🧾 नवीन बिल काउंटर / New Bill", "📦 स्टॉक मॅनेजमेंट / Stock Management", "📊 ग्राहक उधारी व इतिहास / Customer Ledger"]
 choice = st.radio("मुख्य मेन्यू निवडा / Select Menu:", menu, horizontal=True)
 
 if "last_bill" not in st.session_state:
