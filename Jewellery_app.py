@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 
 # ==============================================================================
-# १. डेटाベース सेटअप (Database Setup)
+# १. डेटाबेस सेटअप (Database Setup)
 # ==============================================================================
 conn = sqlite3.connect("jewellery_erp_fixed.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -52,7 +52,7 @@ st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="
 
 st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
-shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Maharashtra.")
+shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
 show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark लोगो दाखवा? (Show Hallmark Logo)", value=True)
 show_shop_logo = st.sidebar.checkbox("बिलावर दुकानाचा लोगो दाखवा? (Show Shop Logo)", value=True)
@@ -122,7 +122,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             making_charge = st.number_input("मजुरी / Labour Charge:", min_value=0.0)
             
         with col4:
-            gst_select = st.selectbox("GST टक्केवारी / GST %:", [3.0, 0.0, 1.0])
+            gst_select = st.selectbox("GST टक्केवारी / GST % (० केल्यास बिलातून लपेल):", [0.0, 3.0, 1.0])
             old_gold_allow = st.checkbox("जुनी मोड वजा करायची का? (Old Gold Exchange)")
             old_value = st.number_input("जुन्या मोडीची किंमत / Old Value (₹):", min_value=0.0) if old_gold_allow else 0.0
             
@@ -151,7 +151,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 cursor.execute("""
                 INSERT INTO billing_v3 (date, customer_name, customer_phone, item_name, metal_type, company_name, weight, rate_per_gm, making_charge, gst_percent, old_value, grand_total, cash_paid, balance_amount, reminder_date, bill_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (today_now, cust_name, cust_phone, i_name, f"{m_cat} ({m_type})", c_name, weight, live_rate, making_charge, gst_select, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
+                """, (today_now, cust_name, cust_phone, i_name, f"{m_cat}", c_name, weight, live_rate, making_charge, gst_select, old_value, grand_total, cash_paid, balance_amount, str(reminder_date), bill_note))
                 
                 cursor.execute("UPDATE items_stock SET stock_grams = stock_grams - ? WHERE id=?", (weight, selected_item_id))
                 conn.commit()
@@ -169,36 +169,44 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
         if st.session_state.last_bill:
             b = st.session_state.last_bill
             st.write("---")
-            st.subheader("🖨️ प्रिंट आणि शेअर पर्याय (Print & Share Options)")
+            st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय (WhatsApp & Print Options)")
             
-            wp_text = f"*✨ {shop_name} ✨*\nप्रिय *{b['cust_name']}*, आपले बिल:\n💰 एकूण बिल: *₹{b['grand_total']:,.2f}*\n💵 जमा: ₹{b['cash_paid']:,.2f}\n🔴 बाकी: *₹{b['balance_amount']:,.2f}*"
-            encoded_text = urllib.parse.quote(wp_text)
+            # --- बदलता येणारा व्हॉट्सॲप मेसेज बॉक्स (Editable Message Box) ---
+            default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
+            
+            custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा (हा मेसेज ग्राहकाला जाईल):", value=default_msg, height=200)
+            
+            encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://wa.me/91{b['cust_phone']}?text={encoded_text}"
-            st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 10px; border-radius: 5px; border:none; width:100%; font-weight:bold; cursor:pointer;">📲 WhatsApp वर बिल पाठवा</button></a>', unsafe_allow_html=True)
-            
+            st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; padding: 12px; border-radius: 5px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px;">📲 WhatsApp वर मेसेज पाठवा</button></a>', unsafe_allow_html=True)
+            # -----------------------------------------------------------------
+
             print_style = st.radio("बिलाचा आकार निवडा (Select Print Size):", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
             
             logo_str = "👑<br>" if show_shop_logo else ""
-            hallmark_str = "<br>[ BIS 916 HALLMARK ]" if show_hallmark_logo else ""
+            hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             old_gold_tr = f"<tr><td>जुनी मोड वजा (Old Gold):</td><td style='text-align: right;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""
             due_date_div = f"<div style='font-weight: bold;'>वायदा तारीख: {b['reminder_date']}</div>" if b['balance_amount'] > 0 else ""
+
+            gst_row_thermal = f"<tr><td>GST ({b['gst_select']}%):</td><td style='text-align: right;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
+            gst_row_a4 = f"<tr><td><b>GST ({b['gst_select']}%):</b></td><td style='text-align: right;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
 
             if print_style == "80mm Thermal Paper":
                 bill_html = f"""
                 <div style="width: 300px; font-family: 'Courier New', monospace; font-size: 12px; border: 1px solid #000; padding: 10px; background: #fff; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold; font-size:16px;">{logo_str}{shop_name}</div>
                     <div style="text-align: center;">{shop_address}</div>
-                    <div style="text-align: center; font-weight: bold;">GSTIN: {gst_number}</div>
+                    {f'<div style="text-align: center; font-weight: bold;">GSTIN: {gst_number}</div>' if b['gst_select'] > 0 else ''}
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     <div><b>तारीख:</b> {b['today_now']} | <b>ग्राहक:</b> {b['cust_name']}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
-                    <div>{b['i_name']} ({b['m_cat']} - {b['m_type']})</div>
+                    <div>{b['i_name']} ({b['m_cat']})</div>
                     <div>वजन: {b['weight']}g | दर: ₹{b['live_rate']}</div>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     <table style="width:100%;">
                         <tr><td>धातू मूल्य:</td><td style="text-align: right;">₹{b['metal_total']:.2f}</td></tr>
                         <tr><td>मजुरी:</td><td style="text-align: right;">₹{b['making_charge']:.2f}</td></tr>
-                        <tr><td>GST ({b['gst_select']}%):</td><td style="text-align: right;">₹{b['gst_amt']:.2f}</td></tr>
+                        {gst_row_thermal}
                         <tr style="font-weight: bold;"><td>एकूण बिल:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
                         <tr><td>जमा रोकड:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
@@ -206,6 +214,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 5px 0;"></div>
                     {due_date_div}
+                    <div style="text-align: center; font-size: 11px; margin-top: 5px; font-weight: bold;">* Subject to Sangola Jurisdiction *</div>
                     <div style="text-align: center;">{b['bill_note']}{hallmark_str}</div>
                 </div>
                 """
@@ -216,8 +225,8 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 <div style="width: 100%; max-width: 750px; font-family: Arial, sans-serif; border: 2px solid #000; padding: 30px; background: #fff; color: #000; margin: 0 auto;">
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
-                            <td style="width: 50%;"><h2>{logo_str}{shop_name}</h2><p>{shop_address}<br><b>GSTIN:</b> {gst_number}</p></td>
-                            <td style="text-align: right; width: 50%;"><h1>TAX INVOICE</h1><p><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p></td>
+                            <td style="width: 50%;"><h2>{logo_str}{shop_name}</h2><p>{shop_address}<br>{f'<b>GSTIN:</b> {gst_number}' if b['gst_select'] > 0 else ''}</p></td>
+                            <td style="text-align: right; width: 50%;"><h1>INVOICE</h1><p><b>तारीख:</b> {b['today_now']}<br><b>मोबाईल:</b> {b['cust_phone']}</p></td>
                         </tr>
                     </table>
                     <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
@@ -231,7 +240,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                             <th style="border: 1px solid #000; padding: 8px; text-align: right;">एकूण रक्कम</th>
                         </tr>
                         <tr>
-                            <td style="border: 1px solid #000; padding: 8px;">{b['i_name']} ({b['m_cat']} - {b['m_type']}) <br><small>Brand: {b['c_name']}</small></td>
+                            <td style="border: 1px solid #000; padding: 8px;">{b['i_name']} ({b['m_cat']}) <br><small>Brand: {b['c_name']}</small></td>
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">{b['weight']}g</td>
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['live_rate']:.2f}</td>
                             <td style="border: 1px solid #000; padding: 8px; text-align: right;">₹{b['making_charge']:.2f}</td>
@@ -240,13 +249,14 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     </table>
                     <table style="width: 40%; margin-left: 60%; margin-top: 20px; border-collapse: collapse;">
                         <tr><td><b>Subtotal:</b></td><td style="text-align: right;">₹{b['metal_total']+b['making_charge']:.2f}</td></tr>
-                        <tr><td><b>GST ({b['gst_select']}%):</b></td><td style="text-align: right;">₹{b['gst_amt']:.2f}</td></tr>
+                        {gst_row_a4}
                         <tr style="font-weight: bold; border-top: 1px solid #000;"><td>Grand Total:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
                         <tr><td>जुनी मोड (Old Gold):</td><td style="text-align: right;">- ₹{b['old_value']:.2f}</td></tr>
                         <tr><td>जमा रोकड (Paid):</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td>बाकी रक्कम (Balance):</td><td style="text-align: right; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <div style="margin-top: 30px; font-size: 12px; text-align: center; font-style: italic;">{b['bill_note']}{hallmark_str}</div>
+                    <div style="margin-top: 20px; font-size: 13px; text-align: left; font-weight: bold; border-top: 1px solid #ccc; padding-top: 5px;">* Subject to Sangola Jurisdiction *</div>
+                    <div style="margin-top: 10px; font-size: 12px; text-align: center; font-style: italic;">{b['bill_note']}{hallmark_str}</div>
                 </div>
                 """
                 st.markdown(bill_html, unsafe_allow_html=True)
@@ -267,7 +277,8 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         <tr><td>जमा केले:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight:bold; font-size:14px; color:blue;"><td>बाकी रक्कम:</td><td style="text-align: right;">₹{b['balance_amount'] - b['gst_amt']:.2f}</td></tr>
                     </table>
-                    <p style="text-align:center; font-size:11px; margin-top:15px;">* हे कच्चे/मॅन्युअल बिल आहे. *</p>
+                    <p style="text-align: left; font-size: 12px; font-weight: bold; margin-top: 10px; border-top: 1px dashed #000; padding-top: 5px;">* Subject to Sangola Jurisdiction *</p>
+                    <p style="text-align:center; font-size:11px; margin-top:5px;">* हे कच्चे/मॅन्युअल बिल आहे. *</p>
                 </div>
                 """
                 st.markdown(bill_html, unsafe_allow_html=True)
@@ -346,7 +357,7 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
     else:
         st.columns(3)[0].metric("📊 एकूण विक्री", f"₹{df_all_ledger['grand_total'].sum():,.2f}")
         st.columns(3)[1].metric("🟢 एकूण जमा रोकड", f"₹{df_all_ledger['cash_paid'].sum():,.2f}")
-        st.columns(3)[2].metric("🔴 एकूण मार्केट उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
+        st.columns(3)[2].metric("🔴 एकूण祕 उधारी", f"₹{df_all_ledger['balance_amount'].sum():,.2f}", delta_color="inverse")
         st.write("---")
         
         st.subheader("💵 उधारी जमा काउंटर")
