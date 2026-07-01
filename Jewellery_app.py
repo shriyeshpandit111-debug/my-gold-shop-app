@@ -60,7 +60,7 @@ except:
 # ==============================================================================
 st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर領 सेटिंग्ज / Master Settings")
+st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
@@ -157,7 +157,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             max_cash_allowed = float(max(0.0, grand_total - old_value))
             cash_paid = st.number_input("जमा रोकड (Cash Paid):", min_value=0.0, max_value=max_cash_allowed, value=0.0)
             
-            # अचूक शिल्लक उधारी हिशोब (एकूण बिल - मोडीची किंमत - भरलेली कॅश)
+            # अचूक शिल्लक उधारी हिशोब
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
             
@@ -208,7 +208,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
-                    custom_border_style = st.selectbox("बिलाची繞 बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
+                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
                 with col_c2:
                     custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे? (Footer Custom Text):", value="धन्यवाद! पुन्हा भेट द्या.")
                     custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
@@ -328,7 +328,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                         {gst_row_a4}
                         <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">Grand Total:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td style="padding: 4px 0;">जма रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr><td style="padding: 4px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
                         <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td style="padding: 6px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 6px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
                     <div style="margin-top: 20px; font-size: 13px; text-align: left; border: 1px solid #ccc; padding: 10px; background:#fafafa;"><b>📜 नियम व अटी (Terms & Conditions):</b><br>{formatted_bill_note}</div>
