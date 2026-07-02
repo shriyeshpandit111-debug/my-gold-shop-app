@@ -417,7 +417,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
             components.html(bill_html, height=component_height, scrolling=True)
 
 # ==============================================================================
-# विभाग ३: स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर (सुधारित विभाग)
+# विभाग ३: स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर
 # ==============================================================================
 elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barcode":
     st.title("📦 स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर")
@@ -471,7 +471,6 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
         if df_stock.empty:
             st.info("ℹ️ स्टॉक खाली आहे.")
         else:
-            # युझरला पाहण्यासाठी सुंदर टेबल डिस्प्ले
             display_df = df_stock.rename(columns={
                 'id': 'आयटम ID', 'metal_category': 'कॅटेगरी', 'metal_type': 'प्रकार',
                 'item_name': 'नाव', 'item_size': 'साईझ', 'stock_grams': 'वजन (g)'
@@ -481,23 +480,17 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
             st.write("---")
             st.markdown("#### 🖨️ बारकोड प्रिंट करण्यासाठी आयटम निवडा:")
             
-            # रो वाईज किंवा ड्रॉपडाऊन पद्धतीने बारकोड काढण्यासाठी सोपा पर्याय
             barcode_options = {row['id']: f"ID: #{row['id']} | {row['item_name']} ({row['stock_grams']}g)" for idx, row in df_stock.iterrows()}
             selected_b_id = st.selectbox("बारकोड लेबल प्रिंट करण्यासाठी निवडा:", options=list(barcode_options.keys()), format_func=lambda x: barcode_options[x])
             
             if selected_b_id:
-                # निवडलेल्या आयटमची माहिती काढणे
                 item_row = df_stock[df_stock['id'] == selected_b_id].iloc[0]
                 
-                # बारकोड स्टिकर डिझाईन (Standard Jewelry Tag Size - 50mm x 25mm layout)
                 barcode_html = f"""
                 <div id="barcode-sticker" style="width: 260px; border: 1px solid #000; padding: 10px; font-family: Arial, sans-serif; text-align: center; background: #fff; color: #000; margin: 10px auto;">
                     <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing:0.5px;">{shop_name}</div>
                     <div style="font-size: 11px; margin: 2px 0;"><b>{item_row['item_name']}</b> [{item_row['item_size']}]</div>
-                    
-                    <!-- जनरेटेड सिम्बॉलिक बारकोड लाईन्स -->
                     <div style="letter-spacing: 3px; font-size: 22px; font-family: 'Courier New', monospace; font-weight: bold; margin: 4px 0; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 6px); height: 30px; width: 80%; margin-left:10%;"></div>
-                    
                     <div style="font-size: 11px; font-weight: bold;">CODE: *J{item_row['id']:05d}*</div>
                     <div style="display: flex; justify-content: space-between; font-size: 10px; margin-top: 5px; padding: 0 5px; border-top: 1px dashed #ccc; padding-top:4px;">
                         <span><b>Type:</b> {item_row['metal_type']}</span>
@@ -516,7 +509,7 @@ elif choice == "📊 ग्राहक उधारी / Ledger":
     st.write("---")
     df_ledger = pd.read_sql_query("SELECT id, date, customer_name, customer_phone, grand_total, cash_paid, balance_amount FROM billing_v4 WHERE balance_amount > 0", conn)
     if df_ledger.empty:
-        st.success("🎉 बाजारात कोणतीही उधारी शिल्लक नाही!")
+        st.success("🎉 बाजारात कोणतीही उधारी安置 शिल्लक नाही!")
     else:
         st.dataframe(df_ledger, use_container_width=True)
 
@@ -561,5 +554,9 @@ elif choice == "⚙️ बॅकअप / Backup":
                         cursor = conn.cursor()
                         st.success("🎉 डेटा यशस्वीरित्या रिस्टोर झाला!")
                         st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ डेटा रिस्टोर करताना समस्या आली: {e}")
+                        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+                        cursor = conn.cursor()
                 else:
                     st.error("❌ कृपया वरील चेकबॉक्सवर टिक करा.")
