@@ -115,10 +115,6 @@ gold_22k_rate = st.sidebar.number_input("22K सोने दर (/gm):", value=
 gold_18k_rate = st.sidebar.number_input("18K सोने दर (/gm):", value=5625.0)
 silver_rate = st.sidebar.number_input("चांदी दर (/gm):", value=90.0)
 
-# सेशन स्टेट मध्ये सिलेक्टेड बारकोड आयटम ठेवण्यासाठी
-if "selected_barcode_item" not in st.session_state:
-    st.session_state.selected_barcode_item = None
-
 # ==============================================================================
 # ३. मॉडर्न नेव्हिगेशन मेनू
 # ==============================================================================
@@ -126,7 +122,7 @@ menu = [
     "🏠 मुख्य डॅशबोर्ड / Home",
     "🧾 नवीन बिल काउंटर / New Bill", 
     "📦 स्टॉक आणि बारकोड / Stock & Barcode", 
-    "📊 ग्राहक उधारी / Ledger",
+    "📊 ग्राहक लेजर व उधारी / Ledger",
     "⚙️ बॅकअप / Backup"
 ]
 choice = st.radio(" ", menu, horizontal=True)
@@ -450,7 +446,7 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
                 st.rerun()
 
     with col_s2:
-        st.subheader("🔍 प्रगत स्टॉक सर्च (वजन व साईझनुसार फिल्टर)")
+        st.subheader("🔍 प्रगत स्टॉक सर्च")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             search_name = st.text_input("🔎 नाव / प्रकार शोधा:")
@@ -478,7 +474,7 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
             st.dataframe(display_df.drop(columns=['alert_limit']), use_container_width=True)
             
             st.write("---")
-            st.markdown("#### 🖨️ बारकोड प्रिंट करण्यासाठी आयटम निवडा:")
+            st.markdown("### 🖨️ बारकोड कस्टमायझेशन पॅनेल (Customize Barcode)")
             
             barcode_options = {row['id']: f"ID: #{row['id']} | {row['item_name']} ({row['stock_grams']}g)" for idx, row in df_stock.iterrows()}
             selected_b_id = st.selectbox("बारकोड लेबल प्रिंट करण्यासाठी निवडा:", options=list(barcode_options.keys()), format_func=lambda x: barcode_options[x])
@@ -486,32 +482,128 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
             if selected_b_id:
                 item_row = df_stock[df_stock['id'] == selected_b_id].iloc[0]
                 
-                barcode_html = f"""
-                <div id="barcode-sticker" style="width: 260px; border: 1px solid #000; padding: 10px; font-family: Arial, sans-serif; text-align: center; background: #fff; color: #000; margin: 10px auto;">
-                    <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing:0.5px;">{shop_name}</div>
-                    <div style="font-size: 11px; margin: 2px 0;"><b>{item_row['item_name']}</b> [{item_row['item_size']}]</div>
-                    <div style="letter-spacing: 3px; font-size: 22px; font-family: 'Courier New', monospace; font-weight: bold; margin: 4px 0; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 6px); height: 30px; width: 80%; margin-left:10%;"></div>
-                    <div style="font-size: 11px; font-weight: bold;">CODE: *J{item_row['id']:05d}*</div>
-                    <div style="display: flex; justify-content: space-between; font-size: 10px; margin-top: 5px; padding: 0 5px; border-top: 1px dashed #ccc; padding-top:4px;">
+                # कस्टमायझेशन ऑप्शन्स (नवे पर्याय)
+                st.write("**🎛️ स्टिकरवर काय प्रिंट करायचे ते निवडा:**")
+                bc_1, bc_2, bc_3, bc_4 = st.columns(4)
+                with bc_1:
+                    b_size_opt = st.selectbox("बारकोड स्टिकर साईझ (Size):", ["Small (Ear Tops)", "Medium (Standard)", "Large"], index=0)
+                with bc_2:
+                    inc_shop = st.checkbox("दुकानाचे नाव दाखवा?", value=True)
+                with bc_3:
+                    inc_size = st.checkbox("साईझ (Size) दाखवा?", value=True)
+                with bc_4:
+                    inc_weight = st.checkbox("वजन (Weight) दाखवा?", value=True)
+                
+                # साईझनुसार CSS विड्थ सेट करणे
+                sticker_width = "190px" if "Small" in b_size_opt else ("260px" if "Medium" in b_size_opt else "340px")
+                font_base = "10px" if "Small" in b_size_opt else ("12px" if "Medium" in b_size_opt else "14px")
+                bar_height = "18px" if "Small" in b_size_opt else "30px"
+                
+                # HTML घटक तयार करणे
+                shop_html = f"<div style='font-size: {font_base}; font-weight: bold; text-transform: uppercase;'>{shop_name}</div>" if inc_shop else ""
+                size_str = f" [{item_row['item_size']}]" if inc_size else ""
+                
+                weight_section = ""
+                if inc_weight:
+                    weight_section = f"""
+                    <div style="display: flex; justify-content: space-between; font-size: 9px; margin-top: 3px; padding: 0 2px; border-top: 1px dashed #ccc;">
                         <span><b>Type:</b> {item_row['metal_type']}</span>
                         <span><b>Wt:</b> {item_row['stock_grams']} g</span>
                     </div>
-                    <button onclick="window.print();" style="margin-top: 8px; font-size: 10px; padding: 2px 8px; cursor: pointer;">🖨️ Print Label</button>
+                    """
+                
+                barcode_html = f"""
+                <div id="barcode-sticker" style="width: {sticker_width}; border: 1px solid #000; padding: 6px; font-family: Arial, sans-serif; text-align: center; background: #fff; color: #000; margin: 10px auto;">
+                    {shop_html}
+                    <div style="font-size: {font_base}; margin: 1px 0;"><b>{item_row['item_name']}</b>{size_str}</div>
+                    <div style="letter-spacing: 2px; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 5px); height: {bar_height}; width: 90%; margin-left:5%;"></div>
+                    <div style="font-size: 9px; font-weight: bold; margin-top: 2px;">CODE: *J{item_row['id']:05d}*</div>
+                    {weight_section}
+                    <button onclick="window.print();" style="margin-top: 5px; font-size: 9px; padding: 2px 6px; cursor: pointer;">🖨️ Print Label</button>
                 </div>
                 """
-                components.html(barcode_html, height=160)
+                components.html(barcode_html, height=180)
 
 # ==============================================================================
-# विभाग ४: ग्राहक उधारी (Ledger)
+# विभाग ४: ग्राहक लेजर व उधारी (सुधारित विभाग - सर्च व हिस्ट्री)
 # ==============================================================================
-elif choice == "📊 ग्राहक उधारी / Ledger":
-    st.title("📊 ग्राहक उधारी आणि लेजर खाती")
+elif choice == "📊 ग्राहक लेजर व उधारी / Ledger":
+    st.title("📊 ग्राहक लेजर उधारी आणि कस्टमर हिस्ट्री")
     st.write("---")
-    df_ledger = pd.read_sql_query("SELECT id, date, customer_name, customer_phone, grand_total, cash_paid, balance_amount FROM billing_v4 WHERE balance_amount > 0", conn)
+    
+    st.subheader("🔍 ग्राहक किंवा बिल सर्च करा")
+    col_l1, col_l2 = st.columns(2)
+    with col_l1:
+        search_bill_id = st.text_input("🔎 बिल नंबरने शोधा (उदा. 1, 2):")
+    with col_l2:
+        search_cust_name = st.text_input("👤 ग्राहकाच्या नावाने शोधा:")
+        
+    # डेटाबेस मधून फिल्टर करणे
+    ledger_query = "SELECT id, date, customer_name, customer_phone, grand_total, cash_paid, balance_amount FROM billing_v4 WHERE 1=1"
+    ledger_params = []
+    
+    if search_bill_id:
+        ledger_query += " AND id = ?"
+        ledger_params.append(search_bill_id)
+    if search_cust_name:
+        ledger_query += " AND customer_name LIKE ?"
+        ledger_params.append(f"%{search_cust_name}%")
+        
+    df_ledger = pd.read_sql_query(ledger_query, conn, params=ledger_params)
+    
     if df_ledger.empty:
-        st.success("🎉 बाजारात कोणतीही उधारी安置 शिल्लक नाही!")
+        st.warning("ℹ️ दिलेल्या माहितीनुसार कोणताही रेकॉर्ड सापडला नाही.")
     else:
-        st.dataframe(df_ledger, use_container_width=True)
+        # सुंदर फॉरमॅट मध्ये दाखवणे
+        disp_ledger = df_ledger.rename(columns={
+            'id': 'बिल नंबर', 'date': 'तारीख', 'customer_name': 'ग्राहक नाव',
+            'customer_phone': 'मोबाईल', 'grand_total': 'एकूण बिल', 
+            'cash_paid': 'जमा रोकड', 'balance_amount': 'बाकी उधारी'
+        })
+        st.dataframe(disp_ledger, use_container_width=True)
+        
+        st.write("---")
+        # उधारी जमा करण्याचा नवा पर्याय
+        st.subheader("💰 उधारीचे पैसे जमा करा (Add Payment to Ledger)")
+        
+        # फक्त उधारी बाकी असलेली बिले ड्रॉपडाऊनमध्ये आणणे
+        df_active_udhari = df_ledger[df_ledger['balance_amount'] > 0]
+        
+        if df_active_udhari.empty:
+            st.success("🎉 सर्च केलेल्या रेकॉर्डमध्ये कोणाचीही उधारी शिल्लक नाही!")
+        else:
+            udhari_options = {row['id']: f"बिल #{row['id']} | {row['customer_name']} (बाकी: ₹{row['balance_amount']:.2f})" for idx, row in df_active_udhari.iterrows()}
+            selected_bill_to_pay = st.selectbox("ज्या बिलाचे पैसे जमा करायचे आहेत ते निवडा:", options=list(udhari_options.keys()), format_func=lambda x: udhari_options[x])
+            
+            if selected_bill_to_pay:
+                row_to_pay = df_active_udhari[df_active_udhari['id'] == selected_bill_to_pay].iloc[0]
+                max_pay_allowed = float(row_to_pay['balance_amount'])
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    received_amt = st.number_input("💵 जमा झालेली रक्कम भरा (₹):", min_value=0.0, max_value=max_pay_allowed, step=10.0, value=max_pay_allowed)
+                with col_p2:
+                    st.write("")
+                    st.write("")
+                    if st.button("✅ रक्कम जमा करा (Update Payment)"):
+                        new_balance = max_pay_allowed - received_amt
+                        new_cash_paid = float(row_to_pay['cash_paid']) + received_amt
+                        
+                        cursor.execute("UPDATE billing_v4 SET cash_paid = ?, balance_amount = ? WHERE id = ?", (new_cash_paid, new_balance, selected_bill_to_pay))
+                        conn.commit()
+                        st.success(f"🎉 यशस्वी! बिल #{selected_bill_to_pay} मध्ये ₹{received_amt} जमा झाले. नवीन बाकी: ₹{new_balance:.2f}")
+                        st.rerun()
+
+        # ग्राहक हिस्ट्री दाखवणे
+        if search_cust_name:
+            st.write("---")
+            st.subheader(f"📜 {search_cust_name} यांची संपूर्ण व्यवहार हिस्ट्री (Customer History)")
+            for idx, row in df_ledger.iterrows():
+                st.markdown(f"""
+                * **बिल नंबर:** #{row['id']} | **तारीख:** {row['date']}
+                * **खरेदी केलेला दागिना:** {row['grand_total']} रुपयांची एकूण खरेदी. (जमा: ₹{row['cash_paid']} | बाकी उधारी: ₹{row['balance_amount']})
+                ---
+                """)
 
 # ==============================================================================
 # विभाग ५: बॅकअप आणि रिस्टोर
