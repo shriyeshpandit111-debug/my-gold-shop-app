@@ -66,11 +66,14 @@ def get_image_base64(uploaded_file):
 # ==============================================================================
 # २. प्राथमिक डिझाईन आणि साइडबार (UI Design & Sidebar)
 # ==============================================================================
-st.set_page_config(page_title="Jewellery ERP Master", page_icon="👑", layout="wide")
+st.set_page_config(page_title="साईप्रसाद ज्वेलर्स ERP", page_icon="👑", layout="wide")
 
 st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
-shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
-shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
+
+# --- इथे तुमची माहिती कायमस्वरूपी सेट केली आहे ---
+shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="साईप्रसाद ज्वेलर्स")
+shop_prop = st.sidebar.text_input("प्रोप्रायटर (Proprietor):", value="धनंजय कालिदास पंडित")
+shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मुख्य पेठ, मारुती मंदिराजवळ, महूद बु॥, ता. सांगोला. मो. ९९७५७५०१२७")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
 
 st.sidebar.subheader("🖼️ दुकानाचे लोगो अपलोड (Shop Logos)")
@@ -219,11 +222,9 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
             
-            # --- FIXED 100% WORKING WHATSAPP LINK ---
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
             
-            # Streamlit native link button (Works on mobile app & laptop flawlessly)
             st.link_button("📲 WhatsApp वर मेसेज पाठवा (Mobile & Laptop Friendly)", url=whatsapp_url, use_container_width=True, type="primary")
             st.write("")
 
@@ -238,7 +239,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
 
             print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
             
-            # Logos HTML Integration
             html_logo_section = "<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>"
             if logo64_1:
                 html_logo_section += f"<img src='{logo64_1}' style='max-height: 70px; max-width: 130px; object-fit: contain;'>"
@@ -288,6 +288,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="text-align: center; font-weight: bold; font-size: 12px;">॥ श्री गणेश प्रसन्न ॥</div>
                     {html_logo_section}
                     <div style="text-align: center; font-weight: bold; font-size: 18px; margin-top: 5px;">{shop_name}</div>
+                    <div style="text-align: center; font-size: 11px; font-style: italic;">प्रोप्रायटर: {shop_prop}</div>
                     <div style="text-align: center; font-size: 12px;">{shop_address}</div>
                     {gstin_div_thermal}
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
@@ -331,7 +332,8 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
                             <td style="width: 50%; vertical-align: top;">
-                                <h2 style="margin: 0 0 5px 0; font-size: 24px;">{shop_name}</h2>
+                                <h2 style="margin: 0 0 2px 0; font-size: 24px;">{shop_name}</h2>
+                                <p style="margin: 0 0 5px 0; font-size: 13px; color: #55px;"><b>प्रोप्रायटर:</b> {shop_prop}</p>
                                 <p style="margin: 0; font-size: 13px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
                             </td>
                             <td style="text-align: right; width: 50%; vertical-align: top;">
@@ -378,6 +380,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="text-align: center; font-weight: bold;">॥ श्री गणेश प्रसन्न ॥</div>
                     {html_logo_section}
                     <h3 style="text-align: center; margin:5px 0 0 0;">{shop_name} (अंदाजे बिल)</h3>
+                    <p style="text-align: center; margin:0; font-size:11px;">प्रोप्रायटर: {shop_prop}</p>
                     <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
                     <p style="margin:2px 0;"><b>बिल नंबर:</b> #{b['bill_id']}</p>
@@ -501,22 +504,14 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
                         confirm_url = f"https://api.whatsapp.com/send?phone=91{c_phone}&text={encoded_confirm}"
                         st.link_button("📲 जमा पावती WhatsApp वर पाठवा", url=confirm_url, type="primary")
                 else:
-                    st.error("❌ या आयडीचे कोणतेही बिल अस्तित्वात नाही!")
+                    st.error("❌ या आयडीचे कोणतेही बिल सापडले नाही.")
 
 # ==============================================================================
-# विभाग ४: बॅकअप आणि रिस्टोर (Database Backup & Restore)
+# विभाग ४: बॅकअप आणि रिस्टोर (Backup Menu Anchor)
 # ==============================================================================
 elif choice == "⚙️ बॅकअप आणि रिस्टोर / Database Backup":
-    st.title("⚙️ सुरक्षितता: बॅकअप आणि रिस्टोर पर्याय")
+    st.title("⚙️ सिस्टम बॅकअप / Database Management")
     st.write("---")
-    
-    st.subheader("📥 डेटाबेस फाईल डाउनलोड करा")
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "rb") as f:
-            db_bytes = f.read()
-        st.download_button(
-            label="💾 क्लिक करा आणि सुरक्षित बॅकअप डाउनलोड करा (.db फाईल)",
-            data=db_bytes,
-            file_name=f"jewellery_backup_{datetime.now().strftime('%Y%m%d')}.db",
-            mime="application/octet-stream"
-        )
+    st.info("डेटा सुरक्षित ठेवण्यासाठी नियमितपणे तुमच्या डेटाबेस फाईलचा बॅकअप घ्या.")
+    with open(DB_FILE, "rb") as f:
+        st.download_button("📥 सुरक्षित बॅकअप फाईल डाऊनलोड करा (Download Database)", data=f, file_name=DB_FILE, mime="application/octet-stream")
