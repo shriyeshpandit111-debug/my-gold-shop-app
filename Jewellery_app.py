@@ -4,7 +4,10 @@ import pandas as pd
 import sqlite3
 import urllib.parse
 import os
+import base64
 from datetime import datetime
+from PIL import Image
+import io
 
 # ==============================================================================
 # १. डेटाबेस सेटअप (Database Setup)
@@ -50,6 +53,16 @@ CREATE TABLE IF NOT EXISTS items_stock (
 """)
 conn.commit()
 
+# Image la HTML madhe dakhvanyasathi Base64 madhe convert karnare function
+def get_image_base64(uploaded_file):
+    if uploaded_file is not None:
+        try:
+            bytes_data = uploaded_file.getvalue()
+            return f"data:image/png;base64,{base64.b64encode(bytes_data).decode()}"
+        except:
+            return None
+    return None
+
 # ==============================================================================
 # २. प्राथमिक डिझाईन आणि साइडबार (UI Design & Sidebar)
 # ==============================================================================
@@ -59,8 +72,12 @@ st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Set
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="श्री गणेश ज्वेलर्स")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मेन रोड, बाजार पेठ, Sangola.")
 gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
-show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark लोगो दाखवा?", value=True)
-show_shop_logo = st.sidebar.checkbox("बिलावर दुकानाचा लोगो दाखवा?", value=True)
+
+st.sidebar.subheader("🖼️ दुकानाचे लोगो अपलोड (Shop Logos)")
+logo_file_1 = st.sidebar.file_uploader("१. मुख्य लोगो अपलोड करा (Main Logo):", type=["png", "jpg", "jpeg"])
+logo_file_2 = st.sidebar.file_uploader("२. दुसरा लोगो / Hallmark लोगो (Optional):", type=["png", "jpg", "jpeg"])
+
+show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark मजकूर दाखवा?", value=True)
 
 st.sidebar.header("💰 आजचे बाजार भाव / Daily Rates")
 gold_24k_rate = st.sidebar.number_input("24K सोने दर (प्रति ग्रॅम):", value=7500.0)
@@ -78,6 +95,10 @@ choice = st.radio("मुख्य मेन्यू निवडा / Select M
 
 if "last_bill" not in st.session_state:
     st.session_state.last_bill = None
+
+# Base64 Logos string generate karne
+logo64_1 = get_image_base64(logo_file_1)
+logo64_2 = get_image_base64(logo_file_2)
 
 # ==============================================================================
 # विभाग १: नवीन बिल काउंटर (Billing Counter)
@@ -198,10 +219,13 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
             
-            # Mobile-friendly open link (No _blank to avoid popup blockers on phone)
+            # --- FIXED 100% WORKING WHATSAPP LINK ---
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
-            st.markdown(f'<a href="{whatsapp_url}" target="_top"><button style="background-color: #25D366; color: white; padding: 14px; border-radius: 6px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">📲 WhatsApp वर मेसेज पाठवा (Mobile Friendly)</button></a>', unsafe_allow_html=True)
+            
+            # Streamlit native link button (Works on mobile app & laptop flawlessly)
+            st.link_button("📲 WhatsApp वर मेसेज पाठवा (Mobile & Laptop Friendly)", url=whatsapp_url, use_container_width=True, type="primary")
+            st.write("")
 
             with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
                 col_c1, col_c2 = st.columns(2)
@@ -214,7 +238,19 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
 
             print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
             
-            logo_str = "👑<br>" if show_shop_logo else ""
+            # Logos HTML Integration
+            html_logo_section = "<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>"
+            if logo64_1:
+                html_logo_section += f"<img src='{logo64_1}' style='max-height: 70px; max-width: 130px; object-fit: contain;'>"
+            else:
+                html_logo_section += "<span style='font-size:25px;'>👑</span>"
+                
+            if logo64_2:
+                html_logo_section += f"<img src='{logo64_2}' style='max-height: 70px; max-width: 130px; object-fit: contain;'>"
+            else:
+                html_logo_section += "<span></span>"
+            html_logo_section += "</div>"
+            
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             formatted_bill_note = b['bill_note'].replace('\n', '<br>')
 
@@ -243,14 +279,15 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}"
 
             bill_html = ""
-            component_height = 450
+            component_height = 480
 
             if print_style == "80mm Thermal Paper":
-                component_height = 570
+                component_height = 620
                 bill_html = f"""
                 <div style="width: 320px; font-family: 'Courier New', monospace; font-size: {custom_font_size}px; border: 2px {custom_border_style} #000; padding: 12px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
-                    <div style="text-align: center; font-weight: bold; font-size: 14px;">॥ श्री गणेश प्रसन्न ॥</div>
-                    <div style="text-align: center; font-weight: bold; font-size: 18px; margin-top: 5px;">{logo_str}{shop_name}</div>
+                    <div style="text-align: center; font-weight: bold; font-size: 12px;">॥ श्री गणेश प्रसन्न ॥</div>
+                    {html_logo_section}
+                    <div style="text-align: center; font-weight: bold; font-size: 18px; margin-top: 5px;">{shop_name}</div>
                     <div style="text-align: center; font-size: 12px;">{shop_address}</div>
                     {gstin_div_thermal}
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
@@ -272,19 +309,21 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     {due_date_div}
-                    <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold;">* Subject to Sangola Jurisdiction *</div>
+                    <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold;">* Subject to Jurisdiction *</div>
                     <div style="margin-top: 5px; font-size: 12px; border: 1px solid #ddd; padding: 5px; background:#f9f9f9;"><b>टीप / नियम:</b><br>{formatted_bill_note}</div>
                     <div style="text-align: center; margin-top: 8px; font-weight: bold; font-size: 12px;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
+                
             elif print_style == "A4 Size Paper":
-                component_height = 720
+                component_height = 760
                 subtotal_val = b['metal_total'] + b['making_charge']
                 bill_html = f"""
                 <div style="width: 95%; max-width: 720px; font-family: Arial, sans-serif; font-size: {custom_font_size}px; border: 2px {custom_border_style} #000; padding: 20px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
+                    {html_logo_section}
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
                         <tr>
-                            <td style="font-size: 11px; font-weight: bold; text-align: left; color: #333; width: 35%;">* Subject to Sangola Jurisdiction *</td>
+                            <td style="font-size: 11px; font-weight: bold; text-align: left; color: #333; width: 35%;">* Subject to Jurisdiction *</td>
                             <td style="font-size: 14px; font-weight: bold; text-align: center; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
                             <td style="width: 35%;"></td>
                         </tr>
@@ -292,7 +331,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <table style="width: 100%; border-collapse: collapse;">
                         <tr>
                             <td style="width: 50%; vertical-align: top;">
-                                <h2 style="margin: 0 0 5px 0; font-size: 24px;">{logo_str}{shop_name}</h2>
+                                <h2 style="margin: 0 0 5px 0; font-size: 24px;">{shop_name}</h2>
                                 <p style="margin: 0; font-size: 13px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
                             </td>
                             <td style="text-align: right; width: 50%; vertical-align: top;">
@@ -333,10 +372,11 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 </div>
                 """
             elif print_style == "Manual Layout (No Tax/Plain)":
-                component_height = 520
+                component_height = 560
                 bill_html = f"""
                 <div style="width: 420px; font-family: 'Courier New', monospace; font-size: {custom_font_size}px; border: 2px {custom_border_style} #888; padding: 15px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
                     <div style="text-align: center; font-weight: bold;">॥ श्री गणेश प्रसन्न ॥</div>
+                    {html_logo_section}
                     <h3 style="text-align: center; margin:5px 0 0 0;">{shop_name} (अंदाजे बिल)</h3>
                     <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
                     <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
@@ -374,7 +414,7 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
         else:
             s_type = st.selectbox("प्रकार / Type:", ["Silver 99.9", "Silver Ornament"])
             
-        s_item_name = st.text_input("दागिन्याचे नाव (उदा. राणी हार, तोडे, छल्ला):")
+        s_item_name = st.text_input("दागिन्याचे नाव (उदा. राणी हार, तोडे):")
         s_company = st.text_input("उत्पादक / कंपनी नाव (Company Name):", value="Own Manufacture")
         s_grams = st.number_input("एकूण वजन ग्रॅममध्ये (Stock Grams):", min_value=0.0, step=0.1)
         s_alert = st.number_input("अलर्ट मर्यादा ग्रॅम (Low Stock Limit):", min_value=0.0, value=5.0, step=0.5)
@@ -393,18 +433,16 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Managem
 
     with col_s2:
         st.subheader("📊 उपलब्ध स्टॉक लिस्ट / Available Stock List")
-        df_stock = pd.read_sql_query("SELECT id, metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock", conn)
+        df_stock = pd.read_sql_query("SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock", conn)
         
         if df_stock.empty:
             st.info("ℹ️ स्टॉकमध्ये सध्या कोणताही माल उपलब्ध नाही.")
         else:
-            # Low stock alert check
             def highlight_low_stock(row):
                 return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
-            
             st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
             
-            st.subheader("🗑️ स्टॉक डिलीट किंवा अपडेट करा")
+            st.subheader("🗑️ स्टॉक डिलीट करा")
             del_id = st.number_input("डिलीट करण्यासाठी आयटम ID टाका:", min_value=1, step=1)
             if st.button("❌ आयटम कायमचा काढा (Delete Item)"):
                 cursor.execute("DELETE FROM items_stock WHERE id=?", (del_id,))
@@ -432,7 +470,6 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
             
         st.dataframe(df_filtered, use_container_width=True)
         
-        # Balance summary card
         total_udhari = df_filtered['बाकी उधारी'].sum()
         st.subheader(f"🔴 एकूण येणे उधारी (Total Outstanding): ₹{total_udhari:,.2f}")
         
@@ -458,11 +495,11 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
                         conn.commit()
                         st.success(f"✅ ₹{pay_amount} जमा झाले! नवीन बाकी: ₹{new_bal}")
                         
-                        # Send notification message on WhatsApp for payment confirmation
+                        # WhatsApp confirmation for Ledger update using native button
                         confirm_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{c_name}*,\nतुमच्या कडून बिल नंबर *#{pay_bill_id}* साठी ₹{pay_amount:,.2f} ची उधारी रक्कम जमा झाली आहे.\n\n📉 *आता शिल्लक बाकी उधारी:* ₹{new_bal:,.2f}\n\nधन्यवाद! 🙏"
                         encoded_confirm = urllib.parse.quote(confirm_msg)
                         confirm_url = f"https://api.whatsapp.com/send?phone=91{c_phone}&text={encoded_confirm}"
-                        st.markdown(f'<a href="{confirm_url}" target="_top"><button style="background-color: #25D366; color: white; padding: 10px; border-radius: 5px; border:none; cursor:pointer;">📲 जमा पावती WhatsApp वर पाठवा</button></a>', unsafe_allow_html=True)
+                        st.link_button("📲 जमा पावती WhatsApp वर पाठवा", url=confirm_url, type="primary")
                 else:
                     st.error("❌ या आयडीचे कोणतेही बिल अस्तित्वात नाही!")
 
@@ -474,8 +511,6 @@ elif choice == "⚙️ बॅकअप आणि रिस्टोर / Databas
     st.write("---")
     
     st.subheader("📥 डेटाबेस फाईल डाउनलोड करा")
-    st.write("तुमचा संपूर्ण डेटा सुरक्षित ठेवण्यासाठी वेळोवेळी डेटाबेस फाईल डाउनलोड करून ठेवावी.")
-    
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "rb") as f:
             db_bytes = f.read()
@@ -485,5 +520,3 @@ elif choice == "⚙️ बॅकअप आणि रिस्टोर / Databas
             file_name=f"jewellery_backup_{datetime.now().strftime('%Y%m%d')}.db",
             mime="application/octet-stream"
         )
-    else:
-        st.error("❌ डेटाबेस फाईल सापडली नाही!")
