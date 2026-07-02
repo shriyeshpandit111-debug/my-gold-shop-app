@@ -67,7 +67,7 @@ def get_image_base64(uploaded_file):
 # ==============================================================================
 st.set_page_config(page_title="साईप्रसाद ज्वेलर्स ERP", page_icon="👑", layout="wide")
 
-# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे (ERROR FIXED HERE)
+# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे
 st.markdown("""
 <style>
     /* मुख्य बॅकग्राउंड आणि फॉन्ट */
@@ -99,7 +99,7 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
 </style>
-""", unsafe_allow_html=True)  # <-- इथे चूक झाली होती, आता फिक्स केली आहे.
+""", unsafe_allow_html=True)
 
 # साइडबार कॉन्फिगरेशन
 st.sidebar.markdown("<h2 style='text-align: center; color: #AA7C11;'>⚙️ सेटिंग्स पॅनेल</h2>", unsafe_allow_html=True)
@@ -141,7 +141,6 @@ logo64_2 = get_image_base64(logo_file_2)
 # विभाग १: नवीन मॉडर्न होम पेज / डॅशबोर्ड (Home Dashboard)
 # ==============================================================================
 if choice == "🏠 मुख्य डॅशबोर्ड / Home":
-    # हेडर सेक्शन
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #111 0%, #2c3e50 100%); padding: 30px; border-radius: 15px; text-align: center; color: white; margin-bottom: 30px; box-shadow: 0 10px 20px rgba(0,0,0,0.2);">
         <h1 style="color: #D4AF37; margin: 0; font-size: 36px; font-weight: bold; letter-spacing: 1px;">👑 {shop_name} 👑</h1>
@@ -150,7 +149,6 @@ if choice == "🏠 मुख्य डॅशबोर्ड / Home":
     </div>
     """, unsafe_allow_html=True)
 
-    # डेटाबेस मधून लाईव्ह आकडेवारी आणणे
     df_bills_count = pd.read_sql_query("SELECT COUNT(id) as total_bills, SUM(balance_amount) as total_udhari FROM billing_v4", conn)
     df_stock_count = pd.read_sql_query("SELECT SUM(stock_grams) as total_gold FROM items_stock WHERE metal_category='Gold'", conn)
     df_silver_count = pd.read_sql_query("SELECT SUM(stock_grams) as total_silver FROM items_stock WHERE metal_category='Silver'", conn)
@@ -160,19 +158,17 @@ if choice == "🏠 मुख्य डॅशबोर्ड / Home":
     total_g_stock = df_stock_count['total_gold'].values[0] if df_stock_count['total_gold'].values[0] else 0.0
     total_s_stock = df_silver_count['total_silver'].values[0] if df_silver_count['total_silver'].values[0] else 0.0
 
-    # डॅशबोर्ड कार्ड्सची पहिली ओळ (Live Statistics)
     st.markdown("<h3 style='margin-bottom:15px; color:#2c3e50;'>📈 लाईव्ह दुकानाचा अहवाल (Live Shop Report)</h3>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f'<div class="metric-card"><div class="metric-title">🧾 एकूण बनवलेली बिले</div><div class="metric-value">{total_b} टॅग्ज</div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown(f'<div class="metric-card" style="border-left-color: #e74c3c;"><div class="metric-title">🔴 एकूण मार्केट उधारी</div><div class="metric-value">₹{total_u:,.2f}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card" style="border-left-color: #e74c3c;"><div class="metric-title">🔴 एकूण Market उधारी</div><div class="metric-value">₹{total_u:,.2f}</div></div>', unsafe_allow_html=True)
     with c3:
         st.markdown(f'<div class="metric-card"><div class="metric-title">👑 सोने एकूण स्टॉक</div><div class="metric-value">{total_g_stock:.3f} g</div></div>', unsafe_allow_html=True)
     with c4:
         st.markdown(f'<div class="metric-card" style="border-left-color: #bdc3c7;"><div class="metric-title">🥈 चांदी एकूण स्टॉक</div><div class="metric-value">{total_s_stock:.3f} g</div></div>', unsafe_allow_html=True)
 
-    # आजचे भाव डिस्प्ले कार्ड्स
     st.write("")
     st.markdown("<h3 style='margin-bottom:15px; color:#2c3e50;'>💰 आजचे सोन्या-चांदीचे दर</h3>", unsafe_allow_html=True)
     r1, r2, r3, r4 = st.columns(4)
@@ -185,7 +181,6 @@ if choice == "🏠 मुख्य डॅशबोर्ड / Home":
     with r4:
         st.markdown(f'<div class="metric-card" style="background:#f4f6f7;"><div class="metric-title">शुद्ध चांदी (Silver)</div><div class="metric-value" style="color:#7f8c8d;">₹{silver_rate:,.2f}</div></div>', unsafe_allow_html=True)
 
-    # क्विक नेव्हिगेशन हेल्प गाइड
     st.markdown("""
     <div style="background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; margin-top: 20px;">
         <h4>🚀 क्विक शेड्युल आणि मदत टिप्स:</h4>
@@ -313,8 +308,10 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
             st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय (WhatsApp & Print Options)")
             
             old_gold_details_msg = f"\n🔄 *जुनी मोड वजा:* {b['old_gold_item']} ({b['old_gold_type']}) - ₹{b['old_value']:,.2f}" if b['old_value'] > 0 else ""
-            default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
-            custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
+            
+            default_msg = f"✨ *{shop_name}* ✨\n\nHello *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
+            
+            custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा (Customize Message):", value=default_msg, height=150)
             
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
@@ -397,7 +394,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                     {html_logo_section}
                     <table style="width: 100%; margin-bottom: 10px;">
                         <tr>
-                            <td style="font-size: 11px; text-align: left; width: 35%;">* Subject to Jurisdiction *</td>
+                            <td style="font-size: 11px; text-align: left; width: 35%;">* Subject to Sangola Jurisdiction *</td>
                             <td style="font-size: 14px; font-weight: bold; text-align: center; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
                             <td style="width: 35%;"></td>
                         </tr>
@@ -417,7 +414,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                         </tr>
                     </table>
                     <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
-                    <p style="font-size: 15px;"><b>ग्राहक नाम:</b> {b['cust_name']} &nbsp;&nbsp;&nbsp;&nbsp; <b>मोबाईल:</b> {b['cust_phone']}</p>
+                    <p style="font-size: 15px;"><b>ग्राहक नाव:</b> {b['cust_name']} &nbsp;&nbsp;&nbsp;&nbsp; <b>मोबाईल:</b> {b['cust_phone']}</p>
                     <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr style="background-color: #f2f2f2; font-weight: bold;">
                             <th style="border: 1px solid #000; padding: 8px; text-align: left;">तपशील (Item)</th>
@@ -500,96 +497,81 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
         df_stock = pd.read_sql_query(query_str, conn, params=params)
         
         if df_stock.empty:
-            st.info("ℹ️ स्टॉक रिकामी आहे.")
+            st.info("ℹ️ स्टॉक खाली आहे.")
         else:
             def highlight_low_stock(row):
                 return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
             st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
-            
-            st.write("---")
-            st.subheader("🏷️ कस्टमाईज्ड बारकोड प्रिंट करा")
-            barcode_id = st.selectbox("आयटम निवडा:", options=df_stock['आयटम ID'].tolist(),
-                                      format_func=lambda x: f"ID: {x} - " + df_stock[df_stock['आयटम ID']==x]['नाव'].values[0])
-            
-            if barcode_id:
-                selected_row = df_stock[df_stock['आयटम ID'] == barcode_id].iloc[0]
-                b_id = str(selected_row['आयटम ID']).zfill(5)
-                b_name = selected_row['नाव']
-                b_weight = selected_row['वजन (g)']
-                b_size = selected_row['साईझ']
-                
-                bc_layout = st.radio("बारकोडचा आकार निवडा:", ["लहान साईझ (Small - for Ear Tops)", "मोठी साईझ (Standard)"], horizontal=True)
-                width_px, height_px, font_size, bc_width = ("170px", "85px", "9px", "1") if bc_layout.startswith("लहान") else ("260px", "130px", "12px", "2")
-                
-                barcode_html = f"""
-                <div style="display: flex; justify-content: center; font-family: Arial, sans-serif;">
-                    <div style="width: {width_px}; height: {height_px}; border: 1px dotted #888; padding: 4px; text-align: center; background: #fff; color: #000; box-sizing: border-box; overflow: hidden;">
-                        <div style="font-size: {font_size}; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{b_name}</div>
-                        <div style="font-size: {font_size}; margin: 2px 0; font-weight: bold; display: flex; justify-content: space-around;">
-                            <span>वजन: <b>{b_weight}g</b></span>
-                            <span>साईझ: <b>{b_size}</b></span>
-                        </div>
-                        <div style="display: flex; justify-content: center; align-items: center; margin-top: 1px;">
-                            <svg id="barcode"></svg>
-                        </div>
-                    </div>
-                </div>
-                <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-                <script>
-                    JsBarcode("#barcode", "{b_id}", {{
-                        format: "CODE128", width: {bc_width}, height: { "20" if bc_layout.startswith("लहान") else "40" },
-                        displayValue: true, fontSize: { "8" if bc_layout.startswith("लहान") else "11" }, margin: 0
-                    }});
-                </script>
-                """
-                components.html(barcode_html, height=180)
 
 # ==============================================================================
-# विभाग ४: ग्राहक उधारी व इतिहास (Customer Ledger)
+# विभाग ४: ग्राहक उधारी (Ledger)
 # ==============================================================================
 elif choice == "📊 ग्राहक उधारी / Ledger":
-    st.title("📊 ग्राहक उधारी खाते आणि इतिहास")
+    st.title("📊 ग्राहक उधारी आणि लेजर खाती")
     st.write("---")
-    
-    df_all_bills = pd.read_sql_query("SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', grand_total AS 'एकूण बिल', cash_paid AS 'जमा रोकड', balance_amount AS 'बाकी उधारी', reminder_date AS 'वायदा तारीख' FROM billing_v4 ORDER BY id DESC", conn)
-    
-    if df_all_bills.empty:
-        st.info("ℹ️ अद्याप एकही बिलाची नोंद नाही.")
+    df_ledger = pd.read_sql_query("SELECT id, date, customer_name, customer_phone, grand_total, cash_paid, balance_amount FROM billing_v4 WHERE balance_amount > 0", conn)
+    if df_ledger.empty:
+        st.success("🎉 बाजारात कोणतीही उधारी शिल्लक नाही!")
     else:
-        search_cust = st.text_input("🔍 ग्राहक नाव किंवा मोबाईल नंबर टाकून शोधा:")
-        df_filtered = df_all_bills[df_all_bills['ग्राहक'].str.contains(search_cust, case=False, na=False) | df_all_bills['मोबाईल'].str.contains(search_cust, na=False)] if search_cust else df_all_bills
-            
-        st.dataframe(df_filtered, use_container_width=True)
-        st.subheader(f"🔴 एकूण मार्केट येणे उधारी: ₹{df_filtered['बाकी उधारी'].sum():,.2f}")
-        
-        st.write("---")
-        st.subheader("💸 उधारी जमा पावती काउंटर")
-        col_l1, col_l2 = st.columns(2)
-        with col_l1:
-            pay_bill_id = st.number_input("बिल ID टाका:", min_value=1, step=1)
-            pay_amount = st.number_input("जमा रक्कम (₹):", min_value=0.0, step=100.0)
-        with col_l2:
-            if st.button("💵 उधारी जमा करा"):
-                cursor.execute("SELECT balance_amount, cash_paid, customer_name, customer_phone FROM billing_v4 WHERE id=?", (pay_bill_id,))
-                res = cursor.fetchone()
-                if res:
-                    curr_bal, curr_paid, c_name, c_phone = res[0], res[1], res[2], res[3]
-                    if pay_amount > curr_bal:
-                        st.error(f"❌ चूक! बाकी फक्त ₹{curr_bal} आहे.")
-                    else:
-                        new_bal = curr_bal - pay_amount
-                        cursor.execute("UPDATE billing_v4 SET balance_amount=?, cash_paid=? WHERE id=?", (new_bal, curr_paid + pay_amount, pay_bill_id))
-                        conn.commit()
-                        st.success(f"✅ ₹{pay_amount} जमा झाले! नवीन बाकी: ₹{new_bal}")
-                        
-                        confirm_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{c_name}*,\nतुमच्या कडून बिल नंबर *#{pay_bill_id}* साठी ₹{pay_amount:,.2f} ची उधारी रक्कम जमा झाली आहे.\n\n📉 *आता शिल्लक बाकी उधारी:* ₹{new_bal:,.2f}\n\nधन्यवाद! 🙏"
-                        st.link_button("📲 जमा पावती WhatsApp वर पाठवा", url=f"https://api.whatsapp.com/send?phone=91{c_phone}&text={urllib.parse.quote(confirm_msg)}", type="primary")
+        st.dataframe(df_ledger, use_container_width=True)
 
 # ==============================================================================
-# विभाग ५: बॅकअप (Backup Menu)
+# विभाग ५: बॅकअप आणि रिस्टोर (Backup & Restore)
 # ==============================================================================
 elif choice == "⚙️ बॅकअप / Backup":
-    st.title("⚙️ सिस्टम डेटाबेस बॅकअप")
+    st.title("⚙️ डेटाबेस बॅकअप आणि रिस्टोर पॅनेल")
     st.write("---")
-    with open(DB_FILE, "rb") as f:
-        st.download_button("📥 सुरक्षित डेटाबेस फाईल डाऊनलोड करा (Download Database)", data=f, file_name=DB_FILE, mime="application/octet-stream")
+    
+    col_b1, col_b2 = st.columns(2)
+    
+    with col_b1:
+        st.subheader("📥 डेटाबेस बॅकअप घ्या (Download Backup)")
+        st.write("तुमचा सुरक्षित डेटा भविष्यासाठी सेव्ह करून ठेवण्यासाठी खालील बटणावर क्लिक करून बॅकअप फाईल डाउनलोड करा.")
+        
+        try:
+            with open(DB_FILE, "rb") as f:
+                db_bytes = f.read()
+            
+            current_date = datetime.now().strftime("%d-%m-%Y")
+            backup_filename = f"jewellery_erp_backup_{current_date}.db"
+            
+            st.download_button(
+                label="💾 बॅकअप फाईल डाउनलोड करा",
+                data=db_bytes,
+                file_name=backup_filename,
+                mime="application/octet-stream",
+                use_container_width=True
+            )
+            st.info("💡 टीप: ही डाउनलोड केलेली फाईल पेनड्राईव्ह किंवा गुगल ड्राईव्हवर सुरक्षित ठेवा.")
+        except Exception as e:
+            st.error(f"❌ बॅकअप फाईल तयार करताना चूक झाली: {e}")
+
+    with col_b2:
+        st.subheader("📤 जुना बॅकअप रिस्टोर करा (Restore Backup)")
+        st.write("⚠️ **सावधान:** जुना डेटा रिस्टोर केल्यास सध्याचा चालू डेटा पूर्णपणे बदलला जाईल!")
+        
+        uploaded_backup_file = st.file_uploader("तुमची बॅकअप (.db) फाईल निवडा:", type=["db"])
+        
+        if uploaded_backup_file is not None:
+            confirm_restore = st.checkbox("होय, मला जुना डेटा रिस्टोर करायचा आहे आणि मी सध्याचा चालू डेटा बदलण्यास तयार आहे.")
+            
+            if st.button("🔄 डेटा रिस्टोर करा (Confirm Restore)", type="primary", use_container_width=True):
+                if confirm_restore:
+                    try:
+                        conn.close()
+                        
+                        with open(DB_FILE, "wb") as f:
+                            f.write(uploaded_backup_file.getbuffer())
+                        
+                        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+                        cursor = conn.cursor()
+                        
+                        st.success("🎉 तुमचा जुना डेटा यशस्वीरित्या रिस्टोर (Restore) झाला आहे!")
+                        st.warning("🔄 बदल पूर्णपणे पाहण्यासाठी कृपया पेज एकदा 'Refresh' करा.")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"❌ डेटा रिस्टोर करताना समस्या आली: {e}")
+                        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+                        cursor = conn.cursor()
+                else:
+                    st.error("❌ कृपया वरील चेकबॉक्सवर टिक करून होय म्हणा (Confirm करा).")
