@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS billing_v4 (
 )
 """)
 
+# items_stock टेबलमध्ये item_size कॉलम जोडला (नसल्यास)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS items_stock (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,10 +49,18 @@ CREATE TABLE IF NOT EXISTS items_stock (
     item_name TEXT,
     company_name TEXT,
     stock_grams REAL,
-    alert_limit REAL
+    alert_limit REAL,
+    item_size TEXT
 )
 """)
 conn.commit()
+
+# जुन्या डेटाबेसमध्ये जर कॉलम नसेल तर तो ॲड करण्यासाठी सेफ्टी चेक
+try:
+    cursor.execute("ALTER TABLE items_stock ADD COLUMN item_size TEXT")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass # कॉलम आधीपासूनच उपलब्ध आहे
 
 # Image la HTML madhe dakhvanyasathi Base64 madhe convert karnare function
 def get_image_base64(uploaded_file):
@@ -70,7 +79,6 @@ st.set_page_config(page_title="साईप्रसाद ज्वेलर्
 
 st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
 
-# --- इथे तुमची माहिती कायमस्वरूपी सेट केली आहे ---
 shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="साईप्रसाद ज्वेलर्स")
 shop_prop = st.sidebar.text_input("प्रोप्रायटर (Proprietor):", value="धनंजय कालिदास पंडित")
 shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मुख्य पेठ, मारुती मंदिराजवळ, महूद बु॥, ता. सांगोला. मो. ९९७५७५०१२७")
@@ -90,7 +98,7 @@ silver_rate = st.sidebar.number_input("चांदी दर (प्रति �
 
 menu = [
     "🧾 नवीन बिल काउंटर / New Bill", 
-    "📦 स्टॉक मॅनेजमेंट / Stock Management", 
+    "📦 स्टॉक मॅनेजमेंट / Stock & Barcode", 
     "📊 ग्राहक उधारी व इतिहास / Customer Ledger",
     "⚙️ बॅकअप आणि रिस्टोर / Database Backup"
 ]
@@ -99,7 +107,6 @@ choice = st.radio("मुख्य मेन्यू निवडा / Select M
 if "last_bill" not in st.session_state:
     st.session_state.last_bill = None
 
-# Base64 Logos string generate karne
 logo64_1 = get_image_base64(logo_file_1)
 logo64_2 = get_image_base64(logo_file_2)
 
@@ -123,17 +130,17 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
         filter_category = st.selectbox("कॅटेगरी निवडा (Filter Category):", ["सर्व (All)", "Gold", "Silver"])
         
         if filter_category == "सर्व (All)":
-            query = "SELECT id, metal_category, metal_type, item_name, company_name, stock_grams FROM items_stock WHERE stock_grams > 0"
+            query = "SELECT id, metal_category, metal_type, item_name, company_name, stock_grams, item_size FROM items_stock WHERE stock_grams > 0"
             df_avail = pd.read_sql_query(query, conn)
         else:
-            query = "SELECT id, metal_category, metal_type, item_name, company_name, stock_grams FROM items_stock WHERE stock_grams > 0 AND metal_category = ?"
+            query = "SELECT id, metal_category, metal_type, item_name, company_name, stock_grams, item_size FROM items_stock WHERE stock_grams > 0 AND metal_category = ?"
             df_avail = pd.read_sql_query(query, conn, params=(filter_category,))
         
         if df_avail.empty:
             st.warning(f"⚠️ {filter_category} कॅटेगरीमध्ये एकही दागिना उपलब्ध नाही! कृपया आधी स्टॉक जोडा.")
             selected_item_id = None
         else:
-            item_options = {row['id']: f"[{row['metal_category']}] {row['item_name']} - {row['metal_type']} ({row['company_name']}) [Stock: {row['stock_grams']}g]" for idx, row in df_avail.iterrows()}
+            item_options = {row['id']: f"Code #{row['id']} | {row['item_name']} [Size: {row['item_size']}] [वजन: {row['stock_grams']}g] ({row['metal_type']})" for idx, row in df_avail.iterrows()}
             selected_item_id = st.selectbox("दागिना निवडा (Select Item):", options=list(item_options.keys()), format_func=lambda x: item_options[x])
 
     if selected_item_id:
@@ -152,7 +159,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 default_rate = gold_22k_rate if m_type == "Gold 22K" else (gold_24k_rate if m_type == "Gold 24K" else gold_18k_rate)
                 
             live_rate = st.number_input("धातूचा आजचा दर / Rate per gm:", value=default_rate)
-            weight = st.number_input(f"वजन ग्रॅममध्ये / Weight (Max: {s_grams}g):", min_value=0.0, max_value=s_grams, step=0.01)
+            weight = st.number_input(f"वजन ग्रॅममध्ये / Weight (Max: {s_grams}g):", min_value=0.0, max_value=s_grams, step=0.01, value=s_grams)
             making_charge = st.number_input("मजुरी / Labour Charge:", min_value=0.0)
             
         with col4:
@@ -402,49 +409,126 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             components.html(bill_html, height=component_height, scrolling=True)
 
 # ==============================================================================
-# विभाग २: स्टॉक मॅनेजमेंट (Stock Management)
+# विभाग २: स्टॉक मॅनेजमेंट आणि बारकोड (Stock Management & Barcode)
 # ==============================================================================
-elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Management":
-    st.title("📦 स्टॉक मॅनेजमेंट / Stock & Inventory")
+elif choice == "📦 स्टॉक मॅनेजमेंट / Stock & Barcode":
+    st.title("📦 स्टॉक मॅनेजमेंट आणि बारकोड लेबल जनरेटर")
     st.write("---")
     
     col_s1, col_s2 = st.columns([1, 2])
     with col_s1:
-        st.subheader("➕ नवीन स्टॉक जोडा / Add Stock")
+        st.subheader("➕ नवीन स्टॉक आणि साईझ जोडा / Add Stock")
         s_category = st.selectbox("कॅटेगरी / Category:", ["Gold", "Silver"])
         if s_category == "Gold":
             s_type = st.selectbox("प्रकार / Type:", ["Gold 24K", "Gold 22K", "Gold 18K"])
         else:
             s_type = st.selectbox("प्रकार / Type:", ["Silver 99.9", "Silver Ornament"])
             
-        s_item_name = st.text_input("दागिन्याचे नाव (उदा. राणी हार, तोडे):")
-        s_company = st.text_input("उत्पादक / कंपनी नाव (Company Name):", value="Own Manufacture")
-        s_grams = st.number_input("एकूण वजन ग्रॅममध्ये (Stock Grams):", min_value=0.0, step=0.1)
-        s_alert = st.number_input("अलर्ट मर्यादा ग्रॅम (Low Stock Limit):", min_value=0.0, value=5.0, step=0.5)
+        s_item_name = st.text_input("दागिन्याचे नाव (उदा. Ear Tops, राणी हार, तोडे):")
+        s_size = st.text_input("दागिन्याची साईझ / आकार (उदा. Small, Medium, 2.4, 6 No, Lahan):", value="-")
+        s_company = st.text_input("उत्पादक / कंपनी नाव:", value="Own Manufacture")
+        s_grams = st.number_input("दागिन्याचे वजन ग्रॅममध्ये (Weight in Grams):", min_value=0.0, step=0.01, format="%.3f")
+        s_alert = st.number_input("अलर्ट मर्यादा ग्रॅम (Low Stock Limit):", min_value=0.0, value=1.0, step=0.1)
         
         if st.button("📥 स्टॉक सुरक्षित करा / Save Stock"):
             if s_item_name == "":
                 st.error("❌ दागिन्याचे नाव टाकणे आवश्यक आहे!")
             else:
                 cursor.execute("""
-                INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, (s_category, s_type, s_item_name, s_company, s_grams, s_alert))
+                INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit, item_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (s_category, s_type, s_item_name, s_company, s_grams, s_alert, s_size))
                 conn.commit()
-                st.success(f"✅ {s_item_name} स्टॉक यशस्वीरित्या जोडला गेला!")
+                st.success(f"✅ {s_item_name} (वजन: {s_grams}g, साईझ: {s_size}) यशस्वीरित्या स्टॉक मध्ये जोडले!")
                 st.rerun()
 
     with col_s2:
-        st.subheader("📊 उपलब्ध स्टॉक लिस्ट / Available Stock List")
-        df_stock = pd.read_sql_query("SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock", conn)
+        st.subheader("🔍 प्रगत स्टॉक सर्च (वजन व साईझनुसार फिल्टर)")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            search_name = st.text_input("🔎 दागिन्याचे नाव / प्रकार शोधा:")
+        with col_f2:
+            search_size = st.text_input("📏 विशिष्ट साईझ शोधा (Size Filter):")
+            
+        # SQL Query for filtering
+        query_str = "SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', item_size AS 'साईझ', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock WHERE 1=1"
+        params = []
+        
+        if search_name:
+            query_str += " AND (item_name LIKE ? OR metal_type LIKE ?)"
+            params.append(f"%{search_name}%")
+            params.append(f"%{search_name}%")
+        if search_size:
+            query_str += " AND item_size LIKE ?"
+            params.append(f"%{search_size}%")
+            
+        df_stock = pd.read_sql_query(query_str, conn, params=params)
         
         if df_stock.empty:
-            st.info("ℹ️ स्टॉकमध्ये सध्या कोणताही माल उपलब्ध नाही.")
+            st.info("ℹ️ शोधलेला किंवा कोणताही स्टॉक उपलब्ध नाही.")
         else:
             def highlight_low_stock(row):
                 return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
             st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
             
+            # --- बारकोड कस्टमायझेशन विभाग ---
+            st.write("---")
+            st.subheader("🏷️ कस्टमाईज्ड बारकोड प्रिंट करा / Customize Barcode Size")
+            
+            barcode_id = st.selectbox("ज्या दागिन्याचा बारकोड पाहिजे तो आयटम निवडा:", 
+                                      options=df_stock['आयटम ID'].tolist(),
+                                      format_func=lambda x: f"ID: {x} - " + df_stock[df_stock['आयटम ID']==x]['नाव'].values[0] + " (" + str(df_stock[df_stock['आयटम ID']==x]['वजन (g)'].values[0]) + "g)")
+            
+            if barcode_id:
+                selected_row = df_stock[df_stock['आयटम ID'] == barcode_id].iloc[0]
+                b_id = str(selected_row['आयटम ID']).zfill(5) # ५ अंकी युनिक कोड बनवण्यासाठी
+                b_name = selected_row['नाव']
+                b_weight = selected_row['वजन (g)']
+                b_size = selected_row['साईझ']
+                
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    bc_layout = st.radio("बारकोडचा आकार निवडा (Ear Tops साठी लहान निवडा):", ["लहान साईझ (Small - for Ear Tops)", "मोठी साईझ (Standard)"], horizontal=True)
+                with col_b2:
+                    st.write("💡 *टिप: कंट्रोल + P (Ctrl+P) दाबून प्रिंट काढा.*")
+                
+                # कस्टमाईज साईझ नुसार CSS बदलणे
+                if bc_layout == "लहान साईझ (Small - for Ear Tops)":
+                    width_px, height_px, font_size, bc_width = "170px", "85px", "9px", "1"
+                else:
+                    width_px, height_px, font_size, bc_width = "260px", "130px", "12px", "2"
+                
+                barcode_html = f"""
+                <div style="display: flex; justify-content: center; font-family: Arial, sans-serif; margin-top: 10px;">
+                    <div id="printArea" style="width: {width_px}; height: {height_px}; border: 1px dotted #888; padding: 4px; text-align: center; background: #fff; color: #000; box-sizing: border-box; overflow: hidden;">
+                        <div style="font-size: {font_size}; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">{b_name}</div>
+                        <div style="font-size: {font_size}; margin: 2px 0; font-weight: bold; display: flex; justify-content: space-around; line-height: 1.1;">
+                            <span>वजन: <b>{b_weight}g</b></span>
+                            <span>साईझ: <b>{b_size}</b></span>
+                        </div>
+                        <div style="display: flex; justify-content: center; align-items: center; margin-top: 1px;">
+                            <svg id="barcode"></svg>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- JsBarcode Script लोड करणे -->
+                <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+                <script>
+                    JsBarcode("#barcode", "{b_id}", {{
+                        format: "CODE128",
+                        width: {bc_width},
+                        height: { "20" if bc_layout.startswith("लहान") else "40" },
+                        displayValue: true,
+                        fontSize: { "8" if bc_layout.startswith("लहान") else "11" },
+                        margin: 0
+                    }});
+                </script>
+                """
+                components.html(barcode_html, height=180)
+            
+            st.write("---")
             st.subheader("🗑️ स्टॉक डिलीट करा")
             del_id = st.number_input("डिलीट करण्यासाठी आयटम ID टाका:", min_value=1, step=1)
             if st.button("❌ आयटम कायमचा काढा (Delete Item)"):
@@ -498,7 +582,6 @@ elif choice == "📊 ग्राहक उधारी व इतिहास /
                         conn.commit()
                         st.success(f"✅ ₹{pay_amount} जमा झाले! नवीन बाकी: ₹{new_bal}")
                         
-                        # WhatsApp confirmation for Ledger update using native button
                         confirm_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{c_name}*,\nतुमच्या कडून बिल नंबर *#{pay_bill_id}* साठी ₹{pay_amount:,.2f} ची उधारी रक्कम जमा झाली आहे.\n\n📉 *आता शिल्लक बाकी उधारी:* ₹{new_bal:,.2f}\n\nधन्यवाद! 🙏"
                         encoded_confirm = urllib.parse.quote(confirm_msg)
                         confirm_url = f"https://api.whatsapp.com/send?phone=91{c_phone}&text={encoded_confirm}"
