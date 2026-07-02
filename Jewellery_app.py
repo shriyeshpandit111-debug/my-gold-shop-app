@@ -6,8 +6,6 @@ import urllib.parse
 import os
 import base64
 from datetime import datetime
-from PIL import Image
-import io
 
 # ==============================================================================
 # १. डेटाबेस सेटअप (Database Setup)
@@ -40,7 +38,6 @@ CREATE TABLE IF NOT EXISTS billing_v4 (
 )
 """)
 
-# items_stock टेबलमध्ये item_size कॉलम जोडला (नसल्यास)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS items_stock (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,14 +52,7 @@ CREATE TABLE IF NOT EXISTS items_stock (
 """)
 conn.commit()
 
-# जुन्या डेटाबेसमध्ये जर कॉलम नसेल तर तो ॲड करण्यासाठी सेफ्टी चेक
-try:
-    cursor.execute("ALTER TABLE items_stock ADD COLUMN item_size TEXT")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass # कॉलम आधीपासूनच उपलब्ध आहे
-
-# Image la HTML madhe dakhvanyasathi Base64 madhe convert karnare function
+# इमेज कन्व्हर्टर फंक्शन
 def get_image_base64(uploaded_file):
     if uploaded_file is not None:
         try:
@@ -73,36 +63,73 @@ def get_image_base64(uploaded_file):
     return None
 
 # ==============================================================================
-# २. प्राथमिक डिझाईन आणि साइडबार (UI Design & Sidebar)
+# २. मॉडर्न इंटरफेस डिझाईन आणि थीम (Modern UI & Theme Settings)
 # ==============================================================================
 st.set_page_config(page_title="साईप्रसाद ज्वेलर्स ERP", page_icon="👑", layout="wide")
 
-st.sidebar.header("🏪 मास्टर सेटिंग्ज / Master Settings")
+# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे
+st.markdown("""
+<style>
+    /* मुख्य बॅकग्राउंड आणि फॉन्ट */
+    .main .block-container { padding-top: 2rem; }
+    h1, h2, h3 { font-family: 'Helvetica Neue', sans-serif; color: #2C3E50; }
+    
+    /* मॉडर्न डॅशबोर्ड कार्ड्स */
+    .metric-card {
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        border-left: 5px solid #D4AF37; /* Gold Border */
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        padding: 20px;
+        margin-bottom: 20px;
+        transition: transform 0.2s;
+    }
+    .metric-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(212,175,55,0.15); }
+    .metric-title { font-size: 14px; color: #7F8C8D; font-weight: bold; text-transform: uppercase; }
+    .metric-value { font-size: 24px; color: #2C3E50; font-weight: bold; margin-top: 5px; }
+    
+    /* बटन डिझाईन */
+    .stButton>button {
+        background: linear-gradient(135deg, #D4AF37 0%, #AA7C11 100%) !important;
+        color: white !important;
+        border-radius: 8px !important;
+        border: none !important;
+        font-weight: bold !important;
+        padding: 10px 24px !important;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_index=True)
 
-shop_name = st.sidebar.text_input("दुकानाचे नाव (Shop Name):", value="साईप्रसाद ज्वेलर्स")
-shop_prop = st.sidebar.text_input("प्रोप्रायटर (Proprietor):", value="धनंजय कालिदास पंडित")
-shop_address = st.sidebar.text_area("दुकानाचा पत्ता (Address):", value="मुख्य पेठ, मारुती मंदिराजवळ, महूद बु॥, ता. सांगोला. मो. ९९७५७५०१२७")
-gst_number = st.sidebar.text_input("GSTIN (GST नंबर):", value="27AAAAA0000A1Z1")
+# साइडबार कॉन्फिगरेशन
+st.sidebar.markdown("<h2 style='text-align: center; color: #AA7C11;'>⚙️ सेटिंग्स पॅनेल</h2>", unsafe_allow_html=True)
+shop_name = st.sidebar.text_input("दुकानाचे नाव:", value="साईप्रसाद ज्वेलर्स")
+shop_prop = st.sidebar.text_input("प्रोप्रायटर:", value="धनंजय कालिदास पंडित")
+shop_address = st.sidebar.text_area("दुकानाचा पत्ता:", value="मुख्य पेठ, मारुती मंदिराजवळ, महूद बु॥, ता. सांगोला. मो. ९९७५७५०१२७")
+gst_number = st.sidebar.text_input("GSTIN नंबर:", value="27AAAAA0000A1Z1")
 
-st.sidebar.subheader("🖼️ दुकानाचे लोगो अपलोड (Shop Logos)")
-logo_file_1 = st.sidebar.file_uploader("१. मुख्य लोगो अपलोड करा (Main Logo):", type=["png", "jpg", "jpeg"])
-logo_file_2 = st.sidebar.file_uploader("२. दुसरा लोगो / Hallmark लोगो (Optional):", type=["png", "jpg", "jpeg"])
+logo_file_1 = st.sidebar.file_uploader("१. मुख्य लोगो (Main Logo):", type=["png", "jpg", "jpeg"])
+logo_file_2 = st.sidebar.file_uploader("२. Hallmark लोगो (Optional):", type=["png", "jpg", "jpeg"])
+show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark दाखवा?", value=True)
 
-show_hallmark_logo = st.sidebar.checkbox("बिलावर Hallmark मजकूर दाखवा?", value=True)
+st.sidebar.markdown("---")
+st.sidebar.markdown("<h3 style='color: #AA7C11;'>💰 आजचे बाजार भाव</h3>", unsafe_allow_html=True)
+gold_24k_rate = st.sidebar.number_input("24K सोने दर (/gm):", value=7500.0)
+gold_22k_rate = st.sidebar.number_input("22K सोने दर (/gm):", value=6875.0)
+gold_18k_rate = st.sidebar.number_input("18K सोने दर (/gm):", value=5625.0)
+silver_rate = st.sidebar.number_input("चांदी दर (/gm):", value=90.0)
 
-st.sidebar.header("💰 आजचे बाजार भाव / Daily Rates")
-gold_24k_rate = st.sidebar.number_input("24K सोने दर (प्रति ग्रॅम):", value=7500.0)
-gold_22k_rate = st.sidebar.number_input("22K सोने दर (प्रति ग्रॅम):", value=6875.0)
-gold_18k_rate = st.sidebar.number_input("18K सोने दर (प्रति ग्रॅम):", value=5625.0)
-silver_rate = st.sidebar.number_input("चांदी दर (प्रति ग्रॅम):", value=90.0)
-
+# ==============================================================================
+# ३. मॉडर्न नेव्हिगेशन मेनू (Modern Navigation Tabs)
+# ==============================================================================
 menu = [
+    "🏠 मुख्य डॅशबोर्ड / Home",
     "🧾 नवीन बिल काउंटर / New Bill", 
-    "📦 स्टॉक मॅनेजमेंट / Stock & Barcode", 
-    "📊 ग्राहक उधारी व इतिहास / Customer Ledger",
-    "⚙️ बॅकअप आणि रिस्टोर / Database Backup"
+    "📦 स्टॉक आणि बारकोड / Stock & Barcode", 
+    "📊 ग्राहक उधारी / Ledger",
+    "⚙️ बॅकअप / Backup"
 ]
-choice = st.radio("मुख्य मेन्यू निवडा / Select Menu:", menu, horizontal=True)
+choice = st.radio(" ", menu, horizontal=True)
 
 if "last_bill" not in st.session_state:
     st.session_state.last_bill = None
@@ -111,9 +138,69 @@ logo64_1 = get_image_base64(logo_file_1)
 logo64_2 = get_image_base64(logo_file_2)
 
 # ==============================================================================
-# विभाग १: नवीन बिल काउंटर (Billing Counter)
+# विभाग १: नवीन मॉडर्न होम पेज / डॅशबोर्ड (Home Dashboard)
 # ==============================================================================
-if choice == "🧾 नवीन बिल काउंटर / New Bill":
+if choice == "🏠 मुख्य डॅशबोर्ड / Home":
+    # हेडर सेक्शन
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #111 0%, #2c3e50 100%); padding: 30px; border-radius: 15px; text-align: center; color: white; margin-bottom: 30px; box-shadow: 0 10px 20px rgba(0,0,0,0.2);">
+        <h1 style="color: #D4AF37; margin: 0; font-size: 36px; font-weight: bold; letter-spacing: 1px;">👑 {shop_name} 👑</h1>
+        <p style="margin: 5px 0 0 0; opacity: 0.8; font-size: 16px;">स्मार्ट ज्वेलरी मॅनेजमेंट ERP सिस्टीम | प्रोप्रायटर: {shop_prop}</p>
+        <p style="margin: 5px 0 0 0; font-size: 13px; font-style: italic; opacity: 0.6;">{shop_address}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # डेटाबेस मधून लाईव्ह आकडेवारी आणणे
+    df_bills_count = pd.read_sql_query("SELECT COUNT(id) as total_bills, SUM(balance_amount) as total_udhari FROM billing_v4", conn)
+    df_stock_count = pd.read_sql_query("SELECT SUM(stock_grams) as total_gold FROM items_stock WHERE metal_category='Gold'", conn)
+    df_silver_count = pd.read_sql_query("SELECT SUM(stock_grams) as total_silver FROM items_stock WHERE metal_category='Silver'", conn)
+
+    total_b = df_bills_count['total_bills'].values[0] if df_bills_count['total_bills'].values[0] else 0
+    total_u = df_bills_count['total_udhari'].values[0] if df_bills_count['total_udhari'].values[0] else 0.0
+    total_g_stock = df_stock_count['total_gold'].values[0] if df_stock_count['total_gold'].values[0] else 0.0
+    total_s_stock = df_silver_count['total_silver'].values[0] if df_silver_count['total_silver'].values[0] else 0.0
+
+    # डॅशबोर्ड कार्ड्सची पहिली ओळ (Live Statistics)
+    st.markdown("<h3 style='margin-bottom:15px; color:#2c3e50;'>📈 लाईव्ह दुकानाचा अहवाल (Live Shop Report)</h3>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f'<div class="metric-card"><div class="metric-title">🧾 एकूण बनवलेली बिले</div><div class="metric-value">{total_b} टॅग्ज</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="metric-card" style="border-left-color: #e74c3c;"><div class="metric-title">🔴 एकूण मार्केट उधारी</div><div class="metric-value">₹{total_u:,.2f}</div></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'<div class="metric-card"><div class="metric-title">👑 सोने एकूण स्टॉक</div><div class="metric-value">{total_g_stock:.3f} g</div></div>', unsafe_allow_html=True)
+    with c4:
+        st.markdown(f'<div class="metric-card" style="border-left-color: #bdc3c7;"><div class="metric-title">🥈 चांदी एकूण स्टॉक</div><div class="metric-value">{total_s_stock:.3f} g</div></div>', unsafe_allow_html=True)
+
+    # आजचे भाव डिस्प्ले कार्ड्स
+    st.write("")
+    st.markdown("<h3 style='margin-bottom:15px; color:#2c3e50;'>💰 आजचे सोन्या-चांदीचे दर</h3>", unsafe_allow_html=True)
+    r1, r2, r3, r4 = st.columns(4)
+    with r1:
+        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने २४ कॅरेट (24K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_24k_rate:,.2f}</div></div>', unsafe_allow_html=True)
+    with r2:
+        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने २२ कॅरेट (22K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_22k_rate:,.2f}</div></div>', unsafe_allow_html=True)
+    with r3:
+        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने १८ कॅरेट (18K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_18k_rate:,.2f}</div></div>', unsafe_allow_html=True)
+    with r4:
+        st.markdown(f'<div class="metric-card" style="background:#f4f6f7;"><div class="metric-title">शुद्ध चांदी (Silver)</div><div class="metric-value" style="color:#7f8c8d;">₹{silver_rate:,.2f}</div></div>', unsafe_allow_html=True)
+
+    # क्विक नेव्हिगेशन हेल्प गाइड
+    st.markdown("""
+    <div style="background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; margin-top: 20px;">
+        <h4>🚀 क्विक शेड्युल आणि मदत टिप्स:</h4>
+        <ul style="font-size: 14px; color: #555;">
+            <li>नवीन गिराईक आल्यावर वर दिलेल्या <b>'नवीन बिल काउंटर'</b> टॅब मध्ये जाऊन झटपट बिल बनवा.</li>
+            <li>आयटमची साईझ आणि वजनानुसार बारकोड काढण्यासाठी <b>'स्टॉक आणि बारकोड'</b> पॅनेल वापरा.</li>
+            <li>जर एखादा स्टॉक संपत आला असेल (अलर्ट मर्यादेपेक्षा कमी), तर स्टॉक टेबलमध्ये तो <b>लाल रंगात</b> हायलाइट होईल.</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ==============================================================================
+# विभाग २: नवीन बिल काउंटर (Billing Counter)
+# ==============================================================================
+elif choice == "🧾 नवीन बिल काउंटर / New Bill":
     st.title("🧾 Advanced Jewellery Billing Counter")
     st.write("---")
     
@@ -169,7 +256,7 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             if old_gold_allow:
                 old_gold_type = st.selectbox("मोडीचा धातू प्रकार:", ["Gold (सोने)", "Silver (चांदी)"])
-                old_gold_item = st.text_input("मोडीच्या वस्तूचे नाव (उदा. जुनी अंगठी, चैन):", value="जुनी मोड")
+                old_gold_item = st.text_input("मोडीच्या वस्तूचे नाव:", value="जुनी मोड")
                 old_value = st.number_input("जुन्या मोडीची एकूण किंमत (₹):", min_value=0.0)
             else:
                 old_gold_type = "-"
@@ -232,16 +319,16 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
             
-            st.link_button("📲 WhatsApp वर मेसेज पाठवा (Mobile & Laptop Friendly)", url=whatsapp_url, use_container_width=True, type="primary")
+            st.link_button("📲 WhatsApp वर मेसेज पाठवा", url=whatsapp_url, use_container_width=True, type="primary")
             st.write("")
 
             with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
-                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid (सलग रेघ)", "dashed (तुटक रेघ)", "double (डबल रेघ)", "none (बॉर्डर नाही)"], index=0).split(" ")[0]
+                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid", "dashed", "double", "none"], index=0)
                 with col_c2:
-                    custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे? (Footer Custom Text):", value="धन्यवाद! पुन्हा भेट द्या.")
+                    custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे?:", value="धन्यवाद! पुन्हा भेट द्या.")
                     custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
 
             print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
@@ -251,7 +338,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                 html_logo_section += f"<img src='{logo64_1}' style='max-height: 70px; max-width: 130px; object-fit: contain;'>"
             else:
                 html_logo_section += "<span style='font-size:25px;'>👑</span>"
-                
             if logo64_2:
                 html_logo_section += f"<img src='{logo64_2}' style='max-height: 70px; max-width: 130px; object-fit: contain;'>"
             else:
@@ -260,30 +346,12 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
             formatted_bill_note = b['bill_note'].replace('\n', '<br>')
-
-            old_gold_tr = ""
-            if b['old_value'] > 0:
-                old_gold_tr = f"<tr><td style='padding: 5px 0;'>जुनी मोड वजा ({b['old_gold_item']}):</td><td style='text-align: right; padding: 5px 0;'>- ₹{b['old_value']:.2f}</td></tr>"
-
-            due_date_div = ""
-            if b['balance_amount'] > 0:
-                due_date_div = f"<div style='font-weight: bold; margin-top: 5px;'>वायदा तारीख: {b['reminder_date']}</div>"
-
-            gst_row_thermal = ""
-            if b['gst_select'] > 0:
-                gst_row_thermal = f"<tr><td style='padding: 5px 0;'>GST ({b['gst_select']}%):</td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>"
-
-            gst_row_a4 = ""
-            if b['gst_select'] > 0:
-                gst_row_a4 = f"<tr><td style='padding: 5px 0;'><b>GST ({b['gst_select']}%):</b></td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>"
-            
-            gstin_div_thermal = ""
-            if b['gst_select'] > 0:
-                gstin_div_thermal = f"<div style='text-align: center; font-weight: bold; margin-top: 2px;'>GSTIN: {gst_number}</div>"
-
-            gstin_p_a4 = ""
-            if b['gst_select'] > 0:
-                gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}"
+            old_gold_tr = f"<tr><td style='padding: 5px 0;'>जुनी मोड वजा ({b['old_gold_item']}):</td><td style='text-align: right; padding: 5px 0;'>- ₹{b['old_value']:.2f}</td></tr>" if b['old_value'] > 0 else ""
+            due_date_div = f"<div style='font-weight: bold; margin-top: 5px;'>वायदा तारीख: {b['reminder_date']}</div>" if b['balance_amount'] > 0 else ""
+            gst_row_thermal = f"<tr><td style='padding: 5px 0;'>GST ({b['gst_select']}%):</td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
+            gst_row_a4 = f"<tr><td style='padding: 5px 0;'><b>GST ({b['gst_select']}%):</b></td><td style='text-align: right; padding: 5px 0;'>₹{b['gst_amt']:.2f}</td></tr>" if b['gst_select'] > 0 else ""
+            gstin_div_thermal = f"<div style='text-align: center; font-weight: bold; margin-top: 2px;'>GSTIN: {gst_number}</div>" if b['gst_select'] > 0 else ""
+            gstin_p_a4 = f"<b>GSTIN:</b> {gst_number}" if b['gst_select'] > 0 else ""
 
             bill_html = ""
             component_height = 480
@@ -299,66 +367,64 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="text-align: center; font-size: 12px;">{shop_address}</div>
                     {gstin_div_thermal}
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
-                    <div><b>बिल नंबर (Bill No):</b> #{b['bill_id']}</div>
+                    <div><b>बिल नंबर:</b> #{b['bill_id']}</div>
                     <div><b>तारीख:</b> {b['today_now']}</div>
-                    <div><b>ग्राहक:</b> {b['cust_name']} [{b['cust_phone']}]</div>
+                    <div><b>ग्राहक:</b> {b['cust_name']}</div>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     <div style="font-weight: bold;">{b['i_name']} ({b['m_cat']})</div>
                     <div>वजन: {b['weight']}g | दर: ₹{b['live_rate']}</div>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
-                    <table style="width:100%; border-collapse: collapse; font-size: {custom_font_size}px;">
-                        <tr><td style="padding: 3px 0;">धातू मूल्य:</td><td style="text-align: right; padding: 3px 0;">₹{b['metal_total']:.2f}</td></tr>
-                        <tr><td style="padding: 3px 0;">मजुरी:</td><td style="text-align: right; padding: 3px 0;">₹{b['making_charge']:.2f}</td></tr>
+                    <table style="width:100%; font-size: {custom_font_size}px;">
+                        <tr><td>धातू मूल्य:</td><td style="text-align: right;">₹{b['metal_total']:.2f}</td></tr>
+                        <tr><td>मजुरी:</td><td style="text-align: right;">₹{b['making_charge']:.2f}</td></tr>
                         {gst_row_thermal}
-                        <tr style="font-weight: bold; border-top: 1px dashed #000;"><td style="padding: 5px 0;">एकूण बिल:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px dashed #000;"><td>एकूण बिल:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td style="padding: 3px 0;">जमा रोकड:</td><td style="text-align: right; padding: 3px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0; font-size: 15px;">बाकी उधारी:</td><td style="text-align: right; padding: 5px 0; font-size: 15px;">₹{b['balance_amount']:.2f}</td></tr>
+                        <tr><td>जमा रोकड:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px solid #000; font-size: 15px;"><td>बाकी उधारी:</td><td style="text-align: right;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     {due_date_div}
-                    <div style="text-align: center; font-size: 11px; margin-top: 8px; font-weight: bold;">* Subject to Jurisdiction *</div>
-                    <div style="margin-top: 5px; font-size: 12px; border: 1px solid #ddd; padding: 5px; background:#f9f9f9;"><b>टीप / नियम:</b><br>{formatted_bill_note}</div>
-                    <div style="text-align: center; margin-top: 8px; font-weight: bold; font-size: 12px;">{custom_footer_msg}{hallmark_str}</div>
+                    <div style="margin-top: 5px; font-size: 12px; border: 1px solid #ddd; padding: 5px; background:#f9f9f9;"><b>टीप:</b><br>{formatted_bill_note}</div>
+                    <div style="text-align: center; margin-top: 8px; font-weight: bold;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
-                
             elif print_style == "A4 Size Paper":
                 component_height = 760
                 subtotal_val = b['metal_total'] + b['making_charge']
                 bill_html = f"""
                 <div style="width: 95%; max-width: 720px; font-family: Arial, sans-serif; font-size: {custom_font_size}px; border: 2px {custom_border_style} #000; padding: 20px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
                     {html_logo_section}
-                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
+                    <table style="width: 100%; margin-bottom: 10px;">
                         <tr>
-                            <td style="font-size: 11px; font-weight: bold; text-align: left; color: #333; width: 35%;">* Subject to Jurisdiction *</td>
+                            <td style="font-size: 11px; text-align: left; width: 35%;">* Subject to Jurisdiction *</td>
                             <td style="font-size: 14px; font-weight: bold; text-align: center; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
                             <td style="width: 35%;"></td>
                         </tr>
                     </table>
-                    <table style="width: 100%; border-collapse: collapse;">
+                    <table style="width: 100%;">
                         <tr>
-                            <td style="width: 50%; vertical-align: top;">
-                                <h2 style="margin: 0 0 2px 0; font-size: 24px;">{shop_name}</h2>
-                                <p style="margin: 0 0 5px 0; font-size: 13px; color: #55px;"><b>प्रोप्रायटर:</b> {shop_prop}</p>
-                                <p style="margin: 0; font-size: 13px; line-height: 1.4;">{shop_address}<br>{gstin_p_a4}</p>
+                            <td>
+                                <h2 style="margin: 0; font-size: 24px;">{shop_name}</h2>
+                                <p style="margin: 3px 0;"><b>प्रोप्रायटर:</b> {shop_prop}</p>
+                                <p style="margin: 0; font-size: 13px;">{shop_address}<br>{gstin_p_a4}</p>
                             </td>
-                            <td style="text-align: right; width: 50%; vertical-align: top;">
-                                <h1 style="margin: 0 0 5px 0; font-size: 28px; color: #222;">INVOICE</h1>
-                                <p style="margin: 0; font-size: 13px; line-height: 1.4;"><b>बिल नंबर (Bill No):</b> #{b['bill_id']}</p>
-                                <p style="margin: 3px 0; font-size: 13px; line-height: 1.4;"><b>तारीख (Date):</b> {b['today_now']}</p>
+                            <td style="text-align: right; vertical-align: top;">
+                                <h1 style="margin: 0; font-size: 28px; color: #222;">INVOICE</h1>
+                                <p style="margin: 0;"><b>बिल नंबर:</b> #{b['bill_id']}</p>
+                                <p style="margin: 3px 0;"><b>तारीख:</b> {b['today_now']}</p>
                             </td>
                         </tr>
                     </table>
                     <div style="border-top: 2px solid #000; margin: 15px 0;"></div>
-                    <p style="font-size: 15px; margin: 0 0 15px 0;"><b>ग्राहक (Customer Name):</b> {b['cust_name']} &nbsp;&nbsp;&nbsp;&nbsp; <b>मोबाईल (WhatsApp No):</b> {b['cust_phone']}</p>
+                    <p style="font-size: 15px;"><b>ग्राहक नाम:</b> {b['cust_name']} &nbsp;&nbsp;&nbsp;&nbsp; <b>मोबाईल:</b> {b['cust_phone']}</p>
                     <table style="width: 100%; border: 1px solid #000; border-collapse: collapse; font-size: {custom_font_size}px;">
                         <tr style="background-color: #f2f2f2; font-weight: bold;">
-                            <th style="border: 1px solid #000; padding: 8px; text-align: left;">तपशील (Item Details)</th>
-                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">वजन (Weight)</th>
-                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">दर (Rate)</th>
-                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">मजुरी (Labour)</th>
-                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">एकूण रक्कम</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: left;">तपशील (Item)</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">वजन</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">दर</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">मजुरी</th>
+                            <th style="border: 1px solid #000; padding: 8px; text-align: right;">एकूण</th>
                         </tr>
                         <tr>
                             <td style="border: 1px solid #000; padding: 8px; font-weight: bold;">{b['i_name']} ({b['m_cat']})</td>
@@ -368,97 +434,65 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                             <td style="border: 1px solid #000; padding: 8px; text-align: right; font-weight: bold;">₹{subtotal_val:.2f}</td>
                         </tr>
                     </table>
-                    <table style="width: 50%; margin-left: 50%; margin-top: 15px; border-collapse: collapse; font-size: {custom_font_size}px;">
-                        <tr><td style="padding: 4px 0;"><b>Subtotal:</b></td><td style="text-align: right; padding: 4px 0;">₹{subtotal_val:.2f}</td></tr>
+                    <table style="width: 50%; margin-left: 50%; margin-top: 15px; font-size: {custom_font_size}px;">
+                        <tr><td><b>Subtotal:</b></td><td style="text-align: right;">₹{subtotal_val:.2f}</td></tr>
                         {gst_row_a4}
-                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">Grand Total:</td><td style="text-align: right; padding: 5px 0;">₹{b['grand_total']:.2f}</td></tr>
+                        <tr style="font-weight: bold; border-top: 1px solid #000;"><td>Grand Total:</td><td style="text-align: right;">₹{b['grand_total']:.2f}</td></tr>
                         {old_gold_tr}
-                        <tr><td style="padding: 4px 0;">जमा रोकड (Paid):</td><td style="text-align: right; padding: 4px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td style="padding: 6px 0;">बाकी रक्कम (Balance):</td><td style="text-align: right; padding: 6px 0; color: red;">₹{b['balance_amount']:.2f}</td></tr>
+                        <tr><td>जमा रोकड:</td><td style="text-align: right;">₹{b['cash_paid']:.2f}</td></tr>
+                        <tr style="font-weight: bold; font-size: 16px; border-top: 2px double #000;"><td>बाकी रक्कम:</td><td style="text-align: right; color: red;">₹{b['balance_amount']:.2f}</td></tr>
                     </table>
-                    <div style="margin-top: 20px; font-size: 13px; text-align: left; border: 1px solid #ccc; padding: 10px; background:#fafafa;"><b>📜 नियम व अटी (Terms & Conditions):</b><br>{formatted_bill_note}</div>
+                    <div style="margin-top: 20px; font-size: 13px; border: 1px solid #ccc; padding: 10px; background:#fafafa;"><b>📜 नियम व अटी:</b><br>{formatted_bill_note}</div>
                     <div style="margin-top: 20px; font-size: 13px; text-align: center; border-top: 1px solid #ccc; padding-top: 10px; font-weight: bold;">{custom_footer_msg}{hallmark_str}</div>
-                </div>
-                """
-            elif print_style == "Manual Layout (No Tax/Plain)":
-                component_height = 560
-                bill_html = f"""
-                <div style="width: 420px; font-family: 'Courier New', monospace; font-size: {custom_font_size}px; border: 2px {custom_border_style} #888; padding: 15px; background: {custom_bg_color}; color: #000; margin: 0 auto;">
-                    <div style="text-align: center; font-weight: bold;">॥ श्री गणेश प्रसन्न ॥</div>
-                    {html_logo_section}
-                    <h3 style="text-align: center; margin:5px 0 0 0;">{shop_name} (अंदाजे बिल)</h3>
-                    <p style="text-align: center; margin:0; font-size:11px;">प्रोप्रायटर: {shop_prop}</p>
-                    <p style="text-align: center; margin:0; font-size:12px;">{shop_address}</p>
-                    <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
-                    <p style="margin:2px 0;"><b>बिल नंबर:</b> #{b['bill_id']}</p>
-                    <p style="margin:2px 0;"><b>ग्राहक:</b> {b['cust_name']} [{b['cust_phone']}]</p>
-                    <p style="margin:2px 0;"><b>तारीख:</b> {b['today_now']}</p>
-                    <p style="margin:2px 0;"><b>दागिना:</b> {b['i_name']} ({b['m_cat']}) - {b['weight']}g</p>
-                    <div style="border-top: 1px solid #000; margin: 10px 0;"></div>
-                    <table style="width: 100%; border-collapse: collapse; font-size: {custom_font_size}px;">
-                        <tr><td style="padding: 3px 0;">दागिना किंमत:</td><td style="text-align: right; padding: 3px 0;">₹{(b['metal_total'] + b['making_charge']):.2f}</td></tr>
-                        {old_gold_tr}
-                        <tr style="font-weight:bold; border-top: 1px solid #000;"><td style="padding: 5px 0;">एकूण द्यावे:</td><td style="text-align: right; padding: 5px 0;">₹{(b['grand_total'] - b['gst_amt']):.2f}</td></tr>
-                        <tr><td style="padding: 3px 0;">जमा केले:</td><td style="text-align: right; padding: 3px 0;">₹{b['cash_paid']:.2f}</td></tr>
-                        <tr style="font-weight:bold; font-size:15px; color:blue; border-top: 1px solid #000;"><td style="padding: 5px 0;">बाकी रक्कम:</td><td style="text-align: right; padding: 5px 0;">₹{b['balance_amount']:.2f}</td></tr>
-                    </table>
-                    <div style="margin-top: 10px; font-size: 11px; border-top: 1px dashed #000; padding-top:5px;"><b>टिप:</b><br>{formatted_bill_note}</div>
-                    <p style="text-align: center; font-size:11px; margin-top:10px; font-weight: bold;">{custom_footer_msg}</p>
                 </div>
                 """
             components.html(bill_html, height=component_height, scrolling=True)
 
 # ==============================================================================
-# विभाग २: स्टॉक मॅनेजमेंट आणि बारकोड (Stock Management & Barcode)
+# विभाग ३: स्टॉक मॅनेजमेंट आणि बारकोड (Stock Management & Barcode)
 # ==============================================================================
-elif choice == "📦 स्टॉक मॅनेजमेंट / Stock & Barcode":
-    st.title("📦 स्टॉक मॅनेजमेंट आणि बारकोड लेबल जनरेटर")
+elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barcode":
+    st.title("📦 स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर")
     st.write("---")
     
     col_s1, col_s2 = st.columns([1, 2])
     with col_s1:
-        st.subheader("➕ नवीन स्टॉक आणि साईझ जोडा / Add Stock")
+        st.subheader("➕ नवीन स्टॉक आणि साईझ जोडा")
         s_category = st.selectbox("कॅटेगरी / Category:", ["Gold", "Silver"])
         if s_category == "Gold":
             s_type = st.selectbox("प्रकार / Type:", ["Gold 24K", "Gold 22K", "Gold 18K"])
         else:
             s_type = st.selectbox("प्रकार / Type:", ["Silver 99.9", "Silver Ornament"])
             
-        s_item_name = st.text_input("दागिन्याचे नाव (उदा. Ear Tops, राणी हार, तोडे):")
-        s_size = st.text_input("दागिन्याची साईझ / आकार (उदा. Small, Medium, 2.4, 6 No, Lahan):", value="-")
-        s_company = st.text_input("उत्पादक / कंपनी नाव:", value="Own Manufacture")
-        s_grams = st.number_input("दागिन्याचे वजन ग्रॅममध्ये (Weight in Grams):", min_value=0.0, step=0.01, format="%.3f")
-        s_alert = st.number_input("अलर्ट मर्यादा ग्रॅम (Low Stock Limit):", min_value=0.0, value=1.0, step=0.1)
+        s_item_name = st.text_input("दागिन्याचे नाव (उदा. Ear Tops, चैन):")
+        s_size = st.text_input("दागिन्याची साईझ (उदा. Small, Medium, 2.4):", value="-")
+        s_company = st.text_input("उत्पादक कंपनी:", value="Own Manufacture")
+        s_grams = st.number_input("दागिन्याचे वजन ग्रॅममध्ये:", min_value=0.0, step=0.01, format="%.3f")
+        s_alert = st.number_input("कमी स्टॉक अलर्ट मर्यादा (g):", min_value=0.0, value=1.0)
         
-        if st.button("📥 स्टॉक सुरक्षित करा / Save Stock"):
+        if st.button("📥 स्टॉक सुरक्षित करा"):
             if s_item_name == "":
-                st.error("❌ दागिन्याचे नाव टाकणे आवश्यक आहे!")
+                st.error("❌ दागिन्याचे नाव आवश्यक आहे!")
             else:
-                cursor.execute("""
-                INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit, item_size)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (s_category, s_type, s_item_name, s_company, s_grams, s_alert, s_size))
+                cursor.execute("INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit, item_size) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                               (s_category, s_type, s_item_name, s_company, s_grams, s_alert, s_size))
                 conn.commit()
-                st.success(f"✅ {s_item_name} (वजन: {s_grams}g, साईझ: {s_size}) यशस्वीरित्या स्टॉक मध्ये जोडले!")
+                st.success(f"✅ {s_item_name} स्टॉकमध्ये जोडले!")
                 st.rerun()
 
     with col_s2:
         st.subheader("🔍 प्रगत स्टॉक सर्च (वजन व साईझनुसार फिल्टर)")
-        
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            search_name = st.text_input("🔎 दागिन्याचे नाव / प्रकार शोधा:")
+            search_name = st.text_input("🔎 नाव / प्रकार शोधा:")
         with col_f2:
-            search_size = st.text_input("📏 विशिष्ट साईझ शोधा (Size Filter):")
+            search_size = st.text_input("📏 विशिष्ट साईझ शोधा:")
             
-        # SQL Query for filtering
-        query_str = "SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', item_size AS 'साईझ', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock WHERE 1=1"
+        query_str = "SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', item_size AS 'साईझ', stock_grams AS 'वजन (g)', alert_limit FROM items_stock WHERE 1=1"
         params = []
-        
         if search_name:
             query_str += " AND (item_name LIKE ? OR metal_type LIKE ?)"
-            params.append(f"%{search_name}%")
-            params.append(f"%{search_name}%")
+            params.extend([f"%{search_name}%", f"%{search_name}%"])
         if search_size:
             query_str += " AND item_size LIKE ?"
             params.append(f"%{search_size}%")
@@ -466,44 +500,32 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock & Barco
         df_stock = pd.read_sql_query(query_str, conn, params=params)
         
         if df_stock.empty:
-            st.info("ℹ️ शोधलेला किंवा कोणताही स्टॉक उपलब्ध नाही.")
+            st.info("ℹ️ स्टॉक रिकामी आहे.")
         else:
             def highlight_low_stock(row):
                 return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
             st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
             
-            # --- बारकोड कस्टमायझेशन विभाग ---
             st.write("---")
-            st.subheader("🏷️ कस्टमाईज्ड बारकोड प्रिंट करा / Customize Barcode Size")
-            
-            barcode_id = st.selectbox("ज्या दागिन्याचा बारकोड पाहिजे तो आयटम निवडा:", 
-                                      options=df_stock['आयटम ID'].tolist(),
-                                      format_func=lambda x: f"ID: {x} - " + df_stock[df_stock['आयटम ID']==x]['नाव'].values[0] + " (" + str(df_stock[df_stock['आयटम ID']==x]['वजन (g)'].values[0]) + "g)")
+            st.subheader("🏷️ कस्टमाईज्ड बारकोड प्रिंट करा")
+            barcode_id = st.selectbox("आयटम निवडा:", options=df_stock['आयटम ID'].tolist(),
+                                      format_func=lambda x: f"ID: {x} - " + df_stock[df_stock['आयटम ID']==x]['नाव'].values[0])
             
             if barcode_id:
                 selected_row = df_stock[df_stock['आयटम ID'] == barcode_id].iloc[0]
-                b_id = str(selected_row['आयटम ID']).zfill(5) # ५ अंकी युनिक कोड बनवण्यासाठी
+                b_id = str(selected_row['आयटम ID']).zfill(5)
                 b_name = selected_row['नाव']
                 b_weight = selected_row['वजन (g)']
                 b_size = selected_row['साईझ']
                 
-                col_b1, col_b2 = st.columns(2)
-                with col_b1:
-                    bc_layout = st.radio("बारकोडचा आकार निवडा (Ear Tops साठी लहान निवडा):", ["लहान साईझ (Small - for Ear Tops)", "मोठी साईझ (Standard)"], horizontal=True)
-                with col_b2:
-                    st.write("💡 *टिप: कंट्रोल + P (Ctrl+P) दाबून प्रिंट काढा.*")
-                
-                # कस्टमाईज साईझ नुसार CSS बदलणे
-                if bc_layout == "लहान साईझ (Small - for Ear Tops)":
-                    width_px, height_px, font_size, bc_width = "170px", "85px", "9px", "1"
-                else:
-                    width_px, height_px, font_size, bc_width = "260px", "130px", "12px", "2"
+                bc_layout = st.radio("बारकोडचा आकार निवडा:", ["लहान साईझ (Small - for Ear Tops)", "मोठी साईझ (Standard)"], horizontal=True)
+                width_px, height_px, font_size, bc_width = ("170px", "85px", "9px", "1") if bc_layout.startswith("लहान") else ("260px", "130px", "12px", "2")
                 
                 barcode_html = f"""
-                <div style="display: flex; justify-content: center; font-family: Arial, sans-serif; margin-top: 10px;">
-                    <div id="printArea" style="width: {width_px}; height: {height_px}; border: 1px dotted #888; padding: 4px; text-align: center; background: #fff; color: #000; box-sizing: border-box; overflow: hidden;">
-                        <div style="font-size: {font_size}; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">{b_name}</div>
-                        <div style="font-size: {font_size}; margin: 2px 0; font-weight: bold; display: flex; justify-content: space-around; line-height: 1.1;">
+                <div style="display: flex; justify-content: center; font-family: Arial, sans-serif;">
+                    <div style="width: {width_px}; height: {height_px}; border: 1px dotted #888; padding: 4px; text-align: center; background: #fff; color: #000; box-sizing: border-box; overflow: hidden;">
+                        <div style="font-size: {font_size}; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{b_name}</div>
+                        <div style="font-size: {font_size}; margin: 2px 0; font-weight: bold; display: flex; justify-content: space-around;">
                             <span>वजन: <b>{b_weight}g</b></span>
                             <span>साईझ: <b>{b_size}</b></span>
                         </div>
@@ -512,89 +534,62 @@ elif choice == "📦 स्टॉक मॅनेजमेंट / Stock & Barco
                         </div>
                     </div>
                 </div>
-                
-                <!-- JsBarcode Script लोड करणे -->
                 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
                 <script>
                     JsBarcode("#barcode", "{b_id}", {{
-                        format: "CODE128",
-                        width: {bc_width},
-                        height: { "20" if bc_layout.startswith("लहान") else "40" },
-                        displayValue: true,
-                        fontSize: { "8" if bc_layout.startswith("लहान") else "11" },
-                        margin: 0
+                        format: "CODE128", width: {bc_width}, height: { "20" if bc_layout.startswith("लहान") else "40" },
+                        displayValue: true, fontSize: { "8" if bc_layout.startswith("लहान") else "11" }, margin: 0
                     }});
                 </script>
                 """
                 components.html(barcode_html, height=180)
-            
-            st.write("---")
-            st.subheader("🗑️ स्टॉक डिलीट करा")
-            del_id = st.number_input("डिलीट करण्यासाठी आयटम ID टाका:", min_value=1, step=1)
-            if st.button("❌ आयटम कायमचा काढा (Delete Item)"):
-                cursor.execute("DELETE FROM items_stock WHERE id=?", (del_id,))
-                conn.commit()
-                st.warning(f"🗑️ आयटम ID {del_id} डिलीट केला आहे.")
-                st.rerun()
 
 # ==============================================================================
-# विभाग ३: ग्राहक उधारी व इतिहास (Customer Ledger)
+# विभाग ४: ग्राहक उधारी व इतिहास (Customer Ledger)
 # ==============================================================================
-elif choice == "📊 ग्राहक उधारी व इतिहास / Customer Ledger":
-    st.title("📊 ग्राहक उधारी खाते आणि इतिहास / Customer Ledger")
+elif choice == "📊 ग्राहक उधारी / Ledger":
+    st.title("📊 ग्राहक उधारी खाते आणि इतिहास")
     st.write("---")
     
-    df_all_bills = pd.read_sql_query("SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', item_name AS 'दागिना', grand_total AS 'एकूण बिल', cash_paid AS 'जमा रोकड', balance_amount AS 'बाकी उधारी', reminder_date AS 'वायदा तारीख' FROM billing_v4 ORDER BY id DESC", conn)
+    df_all_bills = pd.read_sql_query("SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', grand_total AS 'एकूण बिल', cash_paid AS 'जमा रोकड', balance_amount AS 'बाकी उधारी', reminder_date AS 'वायदा तारीख' FROM billing_v4 ORDER BY id DESC", conn)
     
     if df_all_bills.empty:
-        st.info("ℹ️ अद्याप एकही बिलाची नोंद झालेली नाही.")
+        st.info("ℹ️ अद्याप एकही बिलाची नोंद नाही.")
     else:
-        search_cust = st.text_input("🔍 ग्राहकाचे नाव किंवा मोबाईल नंबर टाकून शोधा:")
-        if search_cust:
-            df_filtered = df_all_bills[df_all_bills['ग्राहक'].str.contains(search_cust, case=False, na=False) | df_all_bills['मोबाईल'].str.contains(search_cust, na=False)]
-        else:
-            df_filtered = df_all_bills
+        search_cust = st.text_input("🔍 ग्राहक नाव किंवा मोबाईल नंबर टाकून शोधा:")
+        df_filtered = df_all_bills[df_all_bills['ग्राहक'].str.contains(search_cust, case=False, na=False) | df_all_bills['मोबाईल'].str.contains(search_cust, na=False)] if search_cust else df_all_bills
             
         st.dataframe(df_filtered, use_container_width=True)
-        
-        total_udhari = df_filtered['बाकी उधारी'].sum()
-        st.subheader(f"🔴 एकूण येणे उधारी (Total Outstanding): ₹{total_udhari:,.2f}")
+        st.subheader(f"🔴 एकूण मार्केट येणे उधारी: ₹{df_filtered['बाकी उधारी'].sum():,.2f}")
         
         st.write("---")
-        st.subheader("💸 उधारी जमा पावती काउंटर / Clear Balance Owed")
+        st.subheader("💸 उधारी जमा पावती काउंटर")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
-            pay_bill_id = st.number_input("ज्या बिलाची उधारी जमा करायची आहे तो 'बिल ID' टाका:", min_value=1, step=1)
-            pay_amount = st.number_input("जमा करायची रक्कम (₹):", min_value=0.0, step=100.0)
-            
+            pay_bill_id = st.number_input("बिल ID टाका:", min_value=1, step=1)
+            pay_amount = st.number_input("जमा रक्कम (₹):", min_value=0.0, step=100.0)
         with col_l2:
-            if st.button("💵 उधारी जमा करा (Update Payment)"):
+            if st.button("💵 उधारी जमा करा"):
                 cursor.execute("SELECT balance_amount, cash_paid, customer_name, customer_phone FROM billing_v4 WHERE id=?", (pay_bill_id,))
                 res = cursor.fetchone()
                 if res:
                     curr_bal, curr_paid, c_name, c_phone = res[0], res[1], res[2], res[3]
                     if pay_amount > curr_bal:
-                        st.error(f"❌ चूक! ग्राहकाची बाकी फक्त ₹{curr_bal} आहे. तुम्ही जास्त रक्कम टाकत आहात.")
+                        st.error(f"❌ चूक! बाकी फक्त ₹{curr_bal} आहे.")
                     else:
                         new_bal = curr_bal - pay_amount
-                        new_paid = curr_paid + pay_amount
-                        cursor.execute("UPDATE billing_v4 SET balance_amount=?, cash_paid=? WHERE id=?", (new_bal, new_paid, pay_bill_id))
+                        cursor.execute("UPDATE billing_v4 SET balance_amount=?, cash_paid=? WHERE id=?", (new_bal, curr_paid + pay_amount, pay_bill_id))
                         conn.commit()
                         st.success(f"✅ ₹{pay_amount} जमा झाले! नवीन बाकी: ₹{new_bal}")
                         
                         confirm_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{c_name}*,\nतुमच्या कडून बिल नंबर *#{pay_bill_id}* साठी ₹{pay_amount:,.2f} ची उधारी रक्कम जमा झाली आहे.\n\n📉 *आता शिल्लक बाकी उधारी:* ₹{new_bal:,.2f}\n\nधन्यवाद! 🙏"
-                        encoded_confirm = urllib.parse.quote(confirm_msg)
-                        confirm_url = f"https://api.whatsapp.com/send?phone=91{c_phone}&text={encoded_confirm}"
-                        st.link_button("📲 जमा पावती WhatsApp वर पाठवा", url=confirm_url, type="primary")
-                else:
-                    st.error("❌ या आयडीचे कोणतेही बिल सापडले नाही.")
+                        st.link_button("📲 जमा पावती WhatsApp वर पाठवा", url=f"https://api.whatsapp.com/send?phone=91{c_phone}&text={urllib.parse.quote(confirm_msg)}", type="primary")
 
 # ==============================================================================
-# विभाग ४: बॅकअप आणि रिस्टोर (Backup Menu Anchor)
+# विभाग ५: बॅकअप (Backup Menu)
 # ==============================================================================
-elif choice == "⚙️ बॅकअप आणि रिस्टोर / Database Backup":
-    st.title("⚙️ सिस्टम बॅकअप / Database Management")
+elif choice == "⚙️ बॅकअप / Backup":
+    st.title("⚙️ सिस्टम डेटाबेस बॅकअप")
     st.write("---")
-    st.info("डेटा सुरक्षित ठेवण्यासाठी नियमितपणे तुमच्या डेटाबेस फाईलचा बॅकअप घ्या.")
     with open(DB_FILE, "rb") as f:
-        st.download_button("📥 सुरक्षित बॅकअप फाईल डाऊनलोड करा (Download Database)", data=f, file_name=DB_FILE, mime="application/octet-stream")
+        st.download_button("📥 सुरक्षित डेटाबेस फाईल डाऊनलोड करा (Download Database)", data=f, file_name=DB_FILE, mime="application/octet-stream")
