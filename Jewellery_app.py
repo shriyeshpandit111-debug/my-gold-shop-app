@@ -50,13 +50,6 @@ CREATE TABLE IF NOT EXISTS items_stock (
 """)
 conn.commit()
 
-try:
-    cursor.execute("ALTER TABLE billing_v4 ADD COLUMN old_gold_type TEXT")
-    cursor.execute("ALTER TABLE billing_v4 ADD COLUMN old_gold_item TEXT")
-    conn.commit()
-except:
-    pass
-
 # ==============================================================================
 # २. प्राथमिक डिझाईन आणि साइडबार (UI Design & Sidebar)
 # ==============================================================================
@@ -87,7 +80,7 @@ if "last_bill" not in st.session_state:
     st.session_state.last_bill = None
 
 # ==============================================================================
-# विभाग १: प्रगत बिल काउंटर (Billing Counter)
+# विभाग १: नवीन बिल काउंटर (Billing Counter)
 # ==============================================================================
 if choice == "🧾 नवीन बिल काउंटर / New Bill":
     st.title("🧾 Advanced Jewellery Billing Counter")
@@ -205,10 +198,10 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             default_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा:", value=default_msg, height=150)
             
-            # Mobile-friendly WhatsApp link with api.whatsapp.com
+            # Mobile-friendly open link (No _blank to avoid popup blockers on phone)
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
-            st.markdown(f'<a href="{whatsapp_url}"><button style="background-color: #25D366; color: white; padding: 14px; border-radius: 6px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">📲 WhatsApp वर मेसेज पाठवा (Mobile Friendly)</button></a>', unsafe_allow_html=True)
+            st.markdown(f'<a href="{whatsapp_url}" target="_top"><button style="background-color: #25D366; color: white; padding: 14px; border-radius: 6px; border:none; width:100%; font-size:16px; font-weight:bold; cursor:pointer; margin-bottom: 20px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">📲 WhatsApp वर मेसेज पाठवा (Mobile Friendly)</button></a>', unsafe_allow_html=True)
 
             with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
                 col_c1, col_c2 = st.columns(2)
@@ -223,7 +216,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
             
             logo_str = "👑<br>" if show_shop_logo else ""
             hallmark_str = "<br>[ BIS HALLMARK ]" if show_hallmark_logo else ""
-            
             formatted_bill_note = b['bill_note'].replace('\n', '<br>')
 
             old_gold_tr = ""
@@ -285,7 +277,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="text-align: center; margin-top: 8px; font-weight: bold; font-size: 12px;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
-                
             elif print_style == "A4 Size Paper":
                 component_height = 720
                 subtotal_val = b['metal_total'] + b['making_charge']
@@ -341,7 +332,6 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="margin-top: 20px; font-size: 13px; text-align: center; border-top: 1px solid #ccc; padding-top: 10px; font-weight: bold;">{custom_footer_msg}{hallmark_str}</div>
                 </div>
                 """
-                
             elif print_style == "Manual Layout (No Tax/Plain)":
                 component_height = 520
                 bill_html = f"""
@@ -366,11 +356,134 @@ if choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <p style="text-align: center; font-size:11px; margin-top:10px; font-weight: bold;">{custom_footer_msg}</p>
                 </div>
                 """
-            
             components.html(bill_html, height=component_height, scrolling=True)
-            st.info("💡 प्रिटींगसाठी बिलाच्या भागावर उजवे (Right) क्लिक करून Print दाबा किंवा Ctrl + P दाबा.")
 
 # ==============================================================================
-# विभाग २: स्टॉक मॅनेजमेंट
+# विभाग २: स्टॉक मॅनेजमेंट (Stock Management)
 # ==============================================================================
-# ... (बाकीचा कोड पूर्वीप्रमाणेच समान राहील)
+elif choice == "📦 स्टॉक मॅनेजमेंट / Stock Management":
+    st.title("📦 स्टॉक मॅनेजमेंट / Stock & Inventory")
+    st.write("---")
+    
+    col_s1, col_s2 = st.columns([1, 2])
+    with col_s1:
+        st.subheader("➕ नवीन स्टॉक जोडा / Add Stock")
+        s_category = st.selectbox("कॅटेगरी / Category:", ["Gold", "Silver"])
+        if s_category == "Gold":
+            s_type = st.selectbox("प्रकार / Type:", ["Gold 24K", "Gold 22K", "Gold 18K"])
+        else:
+            s_type = st.selectbox("प्रकार / Type:", ["Silver 99.9", "Silver Ornament"])
+            
+        s_item_name = st.text_input("दागिन्याचे नाव (उदा. राणी हार, तोडे, छल्ला):")
+        s_company = st.text_input("उत्पादक / कंपनी नाव (Company Name):", value="Own Manufacture")
+        s_grams = st.number_input("एकूण वजन ग्रॅममध्ये (Stock Grams):", min_value=0.0, step=0.1)
+        s_alert = st.number_input("अलर्ट मर्यादा ग्रॅम (Low Stock Limit):", min_value=0.0, value=5.0, step=0.5)
+        
+        if st.button("📥 स्टॉक सुरक्षित करा / Save Stock"):
+            if s_item_name == "":
+                st.error("❌ दागिन्याचे नाव टाकणे आवश्यक आहे!")
+            else:
+                cursor.execute("""
+                INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, (s_category, s_type, s_item_name, s_company, s_grams, s_alert))
+                conn.commit()
+                st.success(f"✅ {s_item_name} स्टॉक यशस्वीरित्या जोडला गेला!")
+                st.rerun()
+
+    with col_s2:
+        st.subheader("📊 उपलब्ध स्टॉक लिस्ट / Available Stock List")
+        df_stock = pd.read_sql_query("SELECT id, metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', company_name AS 'कंपनी', stock_grams AS 'वजन (g)', alert_limit FROM items_stock", conn)
+        
+        if df_stock.empty:
+            st.info("ℹ️ स्टॉकमध्ये सध्या कोणताही माल उपलब्ध नाही.")
+        else:
+            # Low stock alert check
+            def highlight_low_stock(row):
+                return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
+            
+            st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
+            
+            st.subheader("🗑️ स्टॉक डिलीट किंवा अपडेट करा")
+            del_id = st.number_input("डिलीट करण्यासाठी आयटम ID टाका:", min_value=1, step=1)
+            if st.button("❌ आयटम कायमचा काढा (Delete Item)"):
+                cursor.execute("DELETE FROM items_stock WHERE id=?", (del_id,))
+                conn.commit()
+                st.warning(f"🗑️ आयटम ID {del_id} डिलीट केला आहे.")
+                st.rerun()
+
+# ==============================================================================
+# विभाग ३: ग्राहक उधारी व इतिहास (Customer Ledger)
+# ==============================================================================
+elif choice == "📊 ग्राहक उधारी व इतिहास / Customer Ledger":
+    st.title("📊 ग्राहक उधारी खाते आणि इतिहास / Customer Ledger")
+    st.write("---")
+    
+    df_all_bills = pd.read_sql_query("SELECT id AS 'बिल ID', date AS 'तारीख', customer_name AS 'ग्राहक', customer_phone AS 'मोबाईल', item_name AS 'दागिना', grand_total AS 'एकूण बिल', cash_paid AS 'जमा रोकड', balance_amount AS 'बाकी उधारी', reminder_date AS 'वायदा तारीख' FROM billing_v4 ORDER BY id DESC", conn)
+    
+    if df_all_bills.empty:
+        st.info("ℹ️ अद्याप एकही बिलाची नोंद झालेली नाही.")
+    else:
+        search_cust = st.text_input("🔍 ग्राहकाचे नाव किंवा मोबाईल नंबर टाकून शोधा:")
+        if search_cust:
+            df_filtered = df_all_bills[df_all_bills['ग्राहक'].str.contains(search_cust, case=False, na=False) | df_all_bills['मोबाईल'].str.contains(search_cust, na=False)]
+        else:
+            df_filtered = df_all_bills
+            
+        st.dataframe(df_filtered, use_container_width=True)
+        
+        # Balance summary card
+        total_udhari = df_filtered['बाकी उधारी'].sum()
+        st.subheader(f"🔴 एकूण येणे उधारी (Total Outstanding): ₹{total_udhari:,.2f}")
+        
+        st.write("---")
+        st.subheader("💸 उधारी जमा पावती काउंटर / Clear Balance Owed")
+        col_l1, col_l2 = st.columns(2)
+        with col_l1:
+            pay_bill_id = st.number_input("ज्या बिलाची उधारी जमा करायची आहे तो 'बिल ID' टाका:", min_value=1, step=1)
+            pay_amount = st.number_input("जमा करायची रक्कम (₹):", min_value=0.0, step=100.0)
+            
+        with col_l2:
+            if st.button("💵 उधारी जमा करा (Update Payment)"):
+                cursor.execute("SELECT balance_amount, cash_paid, customer_name, customer_phone FROM billing_v4 WHERE id=?", (pay_bill_id,))
+                res = cursor.fetchone()
+                if res:
+                    curr_bal, curr_paid, c_name, c_phone = res[0], res[1], res[2], res[3]
+                    if pay_amount > curr_bal:
+                        st.error(f"❌ चूक! ग्राहकाची बाकी फक्त ₹{curr_bal} आहे. तुम्ही जास्त रक्कम टाकत आहात.")
+                    else:
+                        new_bal = curr_bal - pay_amount
+                        new_paid = curr_paid + pay_amount
+                        cursor.execute("UPDATE billing_v4 SET balance_amount=?, cash_paid=? WHERE id=?", (new_bal, new_paid, pay_bill_id))
+                        conn.commit()
+                        st.success(f"✅ ₹{pay_amount} जमा झाले! नवीन बाकी: ₹{new_bal}")
+                        
+                        # Send notification message on WhatsApp for payment confirmation
+                        confirm_msg = f"✨ *{shop_name}* ✨\n\nप्रिय *{c_name}*,\nतुमच्या कडून बिल नंबर *#{pay_bill_id}* साठी ₹{pay_amount:,.2f} ची उधारी रक्कम जमा झाली आहे.\n\n📉 *आता शिल्लक बाकी उधारी:* ₹{new_bal:,.2f}\n\nधन्यवाद! 🙏"
+                        encoded_confirm = urllib.parse.quote(confirm_msg)
+                        confirm_url = f"https://api.whatsapp.com/send?phone=91{c_phone}&text={encoded_confirm}"
+                        st.markdown(f'<a href="{confirm_url}" target="_top"><button style="background-color: #25D366; color: white; padding: 10px; border-radius: 5px; border:none; cursor:pointer;">📲 जमा पावती WhatsApp वर पाठवा</button></a>', unsafe_allow_html=True)
+                else:
+                    st.error("❌ या आयडीचे कोणतेही बिल अस्तित्वात नाही!")
+
+# ==============================================================================
+# विभाग ४: बॅकअप आणि रिस्टोर (Database Backup & Restore)
+# ==============================================================================
+elif choice == "⚙️ बॅकअप आणि रिस्टोर / Database Backup":
+    st.title("⚙️ सुरक्षितता: बॅकअप आणि रिस्टोर पर्याय")
+    st.write("---")
+    
+    st.subheader("📥 डेटाबेस फाईल डाउनलोड करा")
+    st.write("तुमचा संपूर्ण डेटा सुरक्षित ठेवण्यासाठी वेळोवेळी डेटाबेस फाईल डाउनलोड करून ठेवावी.")
+    
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "rb") as f:
+            db_bytes = f.read()
+        st.download_button(
+            label="💾 क्लिक करा आणि सुरक्षित बॅकअप डाउनलोड करा (.db फाईल)",
+            data=db_bytes,
+            file_name=f"jewellery_backup_{datetime.now().strftime('%Y%m%d')}.db",
+            mime="application/octet-stream"
+        )
+    else:
+        st.error("❌ डेटाबेस फाईल सापडली नाही!")
