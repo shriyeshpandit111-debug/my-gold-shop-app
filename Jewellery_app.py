@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS items_stock (
 """)
 conn.commit()
 
-# इमेज कन्व्हर्टर फंक्शन
+# इमेज कंव्हर्टर फंक्शन
 def get_image_base64(uploaded_file):
     if uploaded_file is not None:
         try:
@@ -67,7 +67,7 @@ def get_image_base64(uploaded_file):
 # ==============================================================================
 st.set_page_config(page_title="साईप्रसाद ज्वेलर्स ERP", page_icon="👑", layout="wide")
 
-# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे
+# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे (ERROR FIXED HERE)
 st.markdown("""
 <style>
     /* मुख्य बॅकग्राउंड आणि फॉन्ट */
@@ -99,7 +99,7 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
 </style>
-""", unsafe_index=True)
+""", unsafe_allow_html=True)  # <-- इथे चूक झाली होती, आता फिक्स केली आहे.
 
 # साइडबार कॉन्फिगरेशन
 st.sidebar.markdown("<h2 style='text-align: center; color: #AA7C11;'>⚙️ सेटिंग्स पॅनेल</h2>", unsafe_allow_html=True)
@@ -326,7 +326,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
-                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईन निवड:", ["solid", "dashed", "double", "none"], index=0)
+                    custom_border_style = st.selectbox("बिलाची बॉर्डर डिझाईनं निवड:", ["solid", "dashed", "double", "none"], index=0)
                 with col_c2:
                     custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे?:", value="धन्यवाद! पुन्हा भेट द्या.")
                     custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
