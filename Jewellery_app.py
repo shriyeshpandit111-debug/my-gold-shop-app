@@ -67,17 +67,14 @@ def get_image_base64(uploaded_file):
 # ==============================================================================
 st.set_page_config(page_title="साईप्रसाद ज्वेलर्स ERP", page_icon="👑", layout="wide")
 
-# CSS द्वारे मुख्य पेज आणि कार्ड्स मॉडर्न बनवणे
 st.markdown("""
 <style>
-    /* मुख्य बॅकग्राउंड आणि फॉन्ट */
     .main .block-container { padding-top: 2rem; }
     h1, h2, h3 { font-family: 'Helvetica Neue', sans-serif; color: #2C3E50; }
     
-    /* मॉडर्न डॅशबोर्ड कार्ड्स */
     .metric-card {
         background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-        border-left: 5px solid #D4AF37; /* Gold Border */
+        border-left: 5px solid #D4AF37;
         border-radius: 12px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.05);
         padding: 20px;
@@ -88,7 +85,6 @@ st.markdown("""
     .metric-title { font-size: 14px; color: #7F8C8D; font-weight: bold; text-transform: uppercase; }
     .metric-value { font-size: 24px; color: #2C3E50; font-weight: bold; margin-top: 5px; }
     
-    /* बटन डिझाईन */
     .stButton>button {
         background: linear-gradient(135deg, #D4AF37 0%, #AA7C11 100%) !important;
         color: white !important;
@@ -119,8 +115,12 @@ gold_22k_rate = st.sidebar.number_input("22K सोने दर (/gm):", value=
 gold_18k_rate = st.sidebar.number_input("18K सोने दर (/gm):", value=5625.0)
 silver_rate = st.sidebar.number_input("चांदी दर (/gm):", value=90.0)
 
+# सेशन स्टेट मध्ये सिलेक्टेड बारकोड आयटम ठेवण्यासाठी
+if "selected_barcode_item" not in st.session_state:
+    st.session_state.selected_barcode_item = None
+
 # ==============================================================================
-# ३. मॉडर्न नेव्हिगेशन मेनू (Modern Navigation Tabs)
+# ३. मॉडर्न नेव्हिगेशन मेनू
 # ==============================================================================
 menu = [
     "🏠 मुख्य डॅशबोर्ड / Home",
@@ -138,7 +138,7 @@ logo64_1 = get_image_base64(logo_file_1)
 logo64_2 = get_image_base64(logo_file_2)
 
 # ==============================================================================
-# विभाग १: नवीन मॉडर्न होम पेज / डॅशबोर्ड (Home Dashboard)
+# विभाग १: मुख्य डॅशबोर्ड
 # ==============================================================================
 if choice == "🏠 मुख्य डॅशबोर्ड / Home":
     st.markdown(f"""
@@ -169,31 +169,8 @@ if choice == "🏠 मुख्य डॅशबोर्ड / Home":
     with c4:
         st.markdown(f'<div class="metric-card" style="border-left-color: #bdc3c7;"><div class="metric-title">🥈 चांदी एकूण स्टॉक</div><div class="metric-value">{total_s_stock:.3f} g</div></div>', unsafe_allow_html=True)
 
-    st.write("")
-    st.markdown("<h3 style='margin-bottom:15px; color:#2c3e50;'>💰 आजचे सोन्या-चांदीचे दर</h3>", unsafe_allow_html=True)
-    r1, r2, r3, r4 = st.columns(4)
-    with r1:
-        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने २४ कॅरेट (24K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_24k_rate:,.2f}</div></div>', unsafe_allow_html=True)
-    with r2:
-        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने २२ कॅरेट (22K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_22k_rate:,.2f}</div></div>', unsafe_allow_html=True)
-    with r3:
-        st.markdown(f'<div class="metric-card" style="background:#fffdf3;"><div class="metric-title">सोने १८ कॅरेट (18K)</div><div class="metric-value" style="color:#AA7C11;">₹{gold_18k_rate:,.2f}</div></div>', unsafe_allow_html=True)
-    with r4:
-        st.markdown(f'<div class="metric-card" style="background:#f4f6f7;"><div class="metric-title">शुद्ध चांदी (Silver)</div><div class="metric-value" style="color:#7f8c8d;">₹{silver_rate:,.2f}</div></div>', unsafe_allow_html=True)
-
-    st.markdown("""
-    <div style="background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; margin-top: 20px;">
-        <h4>🚀 क्विक शेड्युल आणि मदत टिप्स:</h4>
-        <ul style="font-size: 14px; color: #555;">
-            <li>नवीन गिराईक आल्यावर वर दिलेल्या <b>'नवीन बिल काउंटर'</b> टॅब मध्ये जाऊन झटपट बिल बनवा.</li>
-            <li>आयटमची साईझ आणि वजनानुसार बारकोड काढण्यासाठी <b>'स्टॉक आणि बारकोड'</b> पॅनेल वापरा.</li>
-            <li>जर एखादा स्टॉक संपत आला असेल (अलर्ट मर्यादेपेक्षा कमी), तर स्टॉक टेबलमध्ये तो <b>लाल रंगात</b> हायलाइट होईल.</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
-
 # ==============================================================================
-# विभाग २: नवीन बिल काउंटर (Billing Counter)
+# विभाग २: नवीन बिल काउंटर
 # ==============================================================================
 elif choice == "🧾 नवीन बिल काउंटर / New Bill":
     st.title("🧾 Advanced Jewellery Billing Counter")
@@ -265,13 +242,10 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
             grand_total = subtotal + gst_amt
             
             st.metric("दागिन्याची एकूण किंमत (Grand Total)", f"₹{grand_total:,.2f}")
-            
             max_cash_allowed = float(max(0.0, grand_total - old_value))
             cash_paid = st.number_input("जमा रोकड (Cash Paid):", min_value=0.0, max_value=max_cash_allowed, value=0.0)
-            
             balance_amount = grand_total - old_value - cash_paid
             st.metric("शिल्लक उधारी (Remaining Balance)", f"₹{balance_amount:,.2f}")
-            
             reminder_date = st.date_input("उधारी वायदा तारीख:", value=datetime.today().date())
 
         if st.button("💾 बिल सेव्ह करा (Save Bill)"):
@@ -281,7 +255,6 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                 st.error("❌ कृपया दागिन्याचे वजन ०पेक्षा जास्त टाका!")
             else:
                 today_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
                 cursor.execute("""
                 INSERT INTO billing_v4 (date, customer_name, customer_phone, item_name, metal_type, company_name, weight, rate_per_gm, making_charge, gst_percent, old_gold_type, old_gold_item, old_value, grand_total, cash_paid, balance_amount, reminder_date, bill_note)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -305,21 +278,19 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
         if st.session_state.last_bill:
             b = st.session_state.last_bill
             st.write("---")
-            st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय (WhatsApp & Print Options)")
+            st.subheader("𖏉 व्हॉट्सॲप आणि प्रिंट पर्याय")
             
             old_gold_details_msg = f"\n🔄 *जुनी मोड वजा:* {b['old_gold_item']} ({b['old_gold_type']}) - ₹{b['old_value']:,.2f}" if b['old_value'] > 0 else ""
-            
             default_msg = f"✨ *{shop_name}* ✨\n\nHello *{b['cust_name']}*,\nतुमचे बिल यशस्वीरित्या तयार झाले आहे:\n\n🧾 *बिल नंबर:* #{b['bill_id']}\n💍 *दागिना:* {b['i_name']} ({b['m_cat']})\n⚖️ *वजन:* {b['weight']}g\n💰 *एकूण बिल:* ₹{b['grand_total']:,.2f}{old_gold_details_msg}\n💵 *जमा रोकड:* ₹{b['cash_paid']:,.2f}\n🔴 *बाकी उधारी:* ₹{b['balance_amount']:,.2f}\n\nआमच्या दुकानाला भेट दिल्याबद्दल धन्यवाद! 🙏"
             
             custom_wp_text = st.text_area("💬 व्हॉट्सॲप मेसेज एडिट करा (Customize Message):", value=default_msg, height=150)
-            
             encoded_text = urllib.parse.quote(custom_wp_text)
             whatsapp_url = f"https://api.whatsapp.com/send?phone=91{b['cust_phone']}&text={encoded_text}"
             
             st.link_button("📲 WhatsApp वर मेसेज पाठवा", url=whatsapp_url, use_container_width=True, type="primary")
             st.write("")
 
-            with st.expander("⚙️ बिल कस्टमाइज करा (Customize Bill Layout)"):
+            with st.expander("⚙️ बिल कस्टमाइज करा"):
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     custom_font_size = st.slider("बिलाचा फॉन्ट साईझ बदला (Font Size px):", min_value=11, max_value=20, value=14)
@@ -328,7 +299,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                     custom_footer_msg = st.text_input("बिलाच्या अगदी शेवटी काय दाखवायचे?:", value="धन्यवाद! पुन्हा भेट द्या.")
                     custom_bg_color = st.color_picker("बिलाचा बॅकग्राउंड रंग निवडा:", value="#FFFFFF")
 
-            print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper", "Manual Layout (No Tax/Plain)"], horizontal=True)
+            print_style = st.radio("बिलाचा आकार निवडा:", ["A4 Size Paper", "80mm Thermal Paper"], horizontal=True)
             
             html_logo_section = "<div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'>"
             if logo64_1:
@@ -366,7 +337,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     <div><b>बिल नंबर:</b> #{b['bill_id']}</div>
                     <div><b>तारीख:</b> {b['today_now']}</div>
-                    <div><b>ग्राहक:</b> {b['cust_name']}</div>
+                    <div><b>ग्राहक नाव:</b> {b['cust_name']}</div>
                     <div style="border-top: 1px dashed #000; margin: 8px 0;"></div>
                     <div style="font-weight: bold;">{b['i_name']} ({b['m_cat']})</div>
                     <div>वजन: {b['weight']}g | दर: ₹{b['live_rate']}</div>
@@ -394,9 +365,9 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
                     {html_logo_section}
                     <table style="width: 100%; margin-bottom: 10px;">
                         <tr>
-                            <td style="font-size: 11px; text-align: left; width: 35%;">* Subject to Sangola Jurisdiction *</td>
+                            <td style="font-size: 11px; text-align: left; width: 40%;">* Subject to Sangola Jurisdiction *</td>
                             <td style="font-size: 14px; font-weight: bold; text-align: center; width: 30%;">॥ श्री गणेश प्रसन्न ॥</td>
-                            <td style="width: 35%;"></td>
+                            <td style="width: 30%;"></td>
                         </tr>
                     </table>
                     <table style="width: 100%;">
@@ -446,7 +417,7 @@ elif choice == "🧾 नवीन बिल काउंटर / New Bill":
             components.html(bill_html, height=component_height, scrolling=True)
 
 # ==============================================================================
-# विभाग ३: स्टॉक मॅनेजमेंट आणि बारकोड (Stock Management & Barcode)
+# विभाग ३: स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर (सुधारित विभाग)
 # ==============================================================================
 elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barcode":
     st.title("📦 स्टॉक मॅनेजमेंट आणि बारकोड जनरेटर")
@@ -474,7 +445,8 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
                 cursor.execute("INSERT INTO items_stock (metal_category, metal_type, item_name, company_name, stock_grams, alert_limit, item_size) VALUES (?, ?, ?, ?, ?, ?, ?)", 
                                (s_category, s_type, s_item_name, s_company, s_grams, s_alert, s_size))
                 conn.commit()
-                st.success(f"✅ {s_item_name} स्टॉकमध्ये जोडले!")
+                inserted_id = cursor.lastrowid
+                st.success(f"✅ {s_item_name} (ID: #{inserted_id}) स्टॉकमध्ये यशस्वीरित्या जोडले!")
                 st.rerun()
 
     with col_s2:
@@ -485,7 +457,7 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
         with col_f2:
             search_size = st.text_input("📏 विशिष्ट साईझ शोधा:")
             
-        query_str = "SELECT id AS 'आयटम ID', metal_category AS 'कॅटेगरी', metal_type AS 'प्रकार', item_name AS 'नाव', item_size AS 'साईझ', stock_grams AS 'वजन (g)', alert_limit FROM items_stock WHERE 1=1"
+        query_str = "SELECT id, metal_category, metal_type, item_name, item_size, stock_grams, alert_limit FROM items_stock WHERE 1=1"
         params = []
         if search_name:
             query_str += " AND (item_name LIKE ? OR metal_type LIKE ?)"
@@ -499,9 +471,42 @@ elif choice == "📦 स्टॉक आणि बारकोड / Stock & Barc
         if df_stock.empty:
             st.info("ℹ️ स्टॉक खाली आहे.")
         else:
-            def highlight_low_stock(row):
-                return ['background-color: #ffcccc' if row['वजन (g)'] <= row['alert_limit'] else '' for _ in row]
-            st.dataframe(df_stock.style.apply(highlight_low_stock, axis=1), use_container_width=True)
+            # युझरला पाहण्यासाठी सुंदर टेबल डिस्प्ले
+            display_df = df_stock.rename(columns={
+                'id': 'आयटम ID', 'metal_category': 'कॅटेगरी', 'metal_type': 'प्रकार',
+                'item_name': 'नाव', 'item_size': 'साईझ', 'stock_grams': 'वजन (g)'
+            })
+            st.dataframe(display_df.drop(columns=['alert_limit']), use_container_width=True)
+            
+            st.write("---")
+            st.markdown("#### 🖨️ बारकोड प्रिंट करण्यासाठी आयटम निवडा:")
+            
+            # रो वाईज किंवा ड्रॉपडाऊन पद्धतीने बारकोड काढण्यासाठी सोपा पर्याय
+            barcode_options = {row['id']: f"ID: #{row['id']} | {row['item_name']} ({row['stock_grams']}g)" for idx, row in df_stock.iterrows()}
+            selected_b_id = st.selectbox("बारकोड लेबल प्रिंट करण्यासाठी निवडा:", options=list(barcode_options.keys()), format_func=lambda x: barcode_options[x])
+            
+            if selected_b_id:
+                # निवडलेल्या आयटमची माहिती काढणे
+                item_row = df_stock[df_stock['id'] == selected_b_id].iloc[0]
+                
+                # बारकोड स्टिकर डिझाईन (Standard Jewelry Tag Size - 50mm x 25mm layout)
+                barcode_html = f"""
+                <div id="barcode-sticker" style="width: 260px; border: 1px solid #000; padding: 10px; font-family: Arial, sans-serif; text-align: center; background: #fff; color: #000; margin: 10px auto;">
+                    <div style="font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing:0.5px;">{shop_name}</div>
+                    <div style="font-size: 11px; margin: 2px 0;"><b>{item_row['item_name']}</b> [{item_row['item_size']}]</div>
+                    
+                    <!-- जनरेटेड सिम्बॉलिक बारकोड लाईन्स -->
+                    <div style="letter-spacing: 3px; font-size: 22px; font-family: 'Courier New', monospace; font-weight: bold; margin: 4px 0; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 6px); height: 30px; width: 80%; margin-left:10%;"></div>
+                    
+                    <div style="font-size: 11px; font-weight: bold;">CODE: *J{item_row['id']:05d}*</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; margin-top: 5px; padding: 0 5px; border-top: 1px dashed #ccc; padding-top:4px;">
+                        <span><b>Type:</b> {item_row['metal_type']}</span>
+                        <span><b>Wt:</b> {item_row['stock_grams']} g</span>
+                    </div>
+                    <button onclick="window.print();" style="margin-top: 8px; font-size: 10px; padding: 2px 8px; cursor: pointer;">🖨️ Print Label</button>
+                </div>
+                """
+                components.html(barcode_html, height=160)
 
 # ==============================================================================
 # विभाग ४: ग्राहक उधारी (Ledger)
@@ -516,22 +521,18 @@ elif choice == "📊 ग्राहक उधारी / Ledger":
         st.dataframe(df_ledger, use_container_width=True)
 
 # ==============================================================================
-# विभाग ५: बॅकअप आणि रिस्टोर (Backup & Restore)
+# विभाग ५: बॅकअप आणि रिस्टोर
 # ==============================================================================
 elif choice == "⚙️ बॅकअप / Backup":
     st.title("⚙️ डेटाबेस बॅकअप आणि रिस्टोर पॅनेल")
     st.write("---")
     
     col_b1, col_b2 = st.columns(2)
-    
     with col_b1:
         st.subheader("📥 डेटाबेस बॅकअप घ्या (Download Backup)")
-        st.write("तुमचा सुरक्षित डेटा भविष्यासाठी सेव्ह करून ठेवण्यासाठी खालील बटणावर क्लिक करून बॅकअप फाईल डाउनलोड करा.")
-        
         try:
             with open(DB_FILE, "rb") as f:
                 db_bytes = f.read()
-            
             current_date = datetime.now().strftime("%d-%m-%Y")
             backup_filename = f"jewellery_erp_backup_{current_date}.db"
             
@@ -542,36 +543,23 @@ elif choice == "⚙️ बॅकअप / Backup":
                 mime="application/octet-stream",
                 use_container_width=True
             )
-            st.info("💡 टीप: ही डाउनलोड केलेली फाईल पेनड्राईव्ह किंवा गुगल ड्राईव्हवर सुरक्षित ठेवा.")
         except Exception as e:
-            st.error(f"❌ बॅकअप फाईल तयार करताना चूक झाली: {e}")
+            st.error(f"❌ बॅकअप एरर: {e}")
 
     with col_b2:
         st.subheader("📤 जुना बॅकअप रिस्टोर करा (Restore Backup)")
-        st.write("⚠️ **सावधान:** जुना डेटा रिस्टोर केल्यास सध्याचा चालू डेटा पूर्णपणे बदलला जाईल!")
-        
         uploaded_backup_file = st.file_uploader("तुमची बॅकअप (.db) फाईल निवडा:", type=["db"])
-        
         if uploaded_backup_file is not None:
-            confirm_restore = st.checkbox("होय, मला जुना डेटा रिस्टोर करायचा आहे आणि मी सध्याचा चालू डेटा बदलण्यास तयार आहे.")
-            
+            confirm_restore = st.checkbox("होय, मला जुना डेटा रिस्टोर करायचा आहे.")
             if st.button("🔄 डेटा रिस्टोर करा (Confirm Restore)", type="primary", use_container_width=True):
                 if confirm_restore:
                     try:
                         conn.close()
-                        
                         with open(DB_FILE, "wb") as f:
                             f.write(uploaded_backup_file.getbuffer())
-                        
                         conn = sqlite3.connect(DB_FILE, check_same_thread=False)
                         cursor = conn.cursor()
-                        
-                        st.success("🎉 तुमचा जुना डेटा यशस्वीरित्या रिस्टोर (Restore) झाला आहे!")
-                        st.warning("🔄 बदल पूर्णपणे पाहण्यासाठी कृपया पेज एकदा 'Refresh' करा.")
-                        st.balloons()
-                    except Exception as e:
-                        st.error(f"❌ डेटा रिस्टोर करताना समस्या आली: {e}")
-                        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-                        cursor = conn.cursor()
+                        st.success("🎉 डेटा यशस्वीरित्या रिस्टोर झाला!")
+                        st.rerun()
                 else:
-                    st.error("❌ कृपया वरील चेकबॉक्सवर टिक करून होय म्हणा (Confirm करा).")
+                    st.error("❌ कृपया वरील चेकबॉक्सवर टिक करा.")
