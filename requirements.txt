@@ -1,4 +1,4 @@
 streamlit
-cctx
+ccxt
 pandas
 nump
