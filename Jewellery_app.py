@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# १. मॉडर्न थीम आणि पेज सेटअप
+# १. मॉडर्न थीम आणि पेज सेटअप (हे नेहमी सर्वात वर असले पाहिजे)
 st.set_page_config(
     page_title="SMC PRO - Elite Trader Terminal", 
     layout="wide", 
@@ -14,9 +14,9 @@ st.set_page_config(
 )
 
 # २. ऑटो-रिफ्रेश (दर ३० सेकंदांनी) - OI आणि सिग्नल्स ऑटो-अपडेट राहतील
-st_autorefresh(interval=30000, key="eliterefresh") 
+st_autorefresh(interval=30000, key="eliterefresh_v2") 
 
-# CSS द्वारे प्रगत आणि सुंदर इंटरफेस (UI Beautification)
+# CSS द्वारे प्रगत आणि सुंदर इंटरफेस (UI Beautification) - दुरुस्त केलेला सुरक्षित कोड
 st.markdown("""
 <style>
     .reportview-container { background: #0e1117; }
@@ -48,11 +48,11 @@ st.markdown("""
         border-radius: 10px;
     }
 </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # ३. हेडर विभाग
-st.markdown("<h1 class='main-header'>🔮 SMC PRO — Elite Institutional Terminal</h1>", unsafe_allowed_html=True)
-st.markdown("<p class='sub-header'>FII/DII आणि मोठ्या ऑपरेटर्सच्या पावलावर पाऊल ठेवून अचूक ट्रेड शोधा. (Change in OI + Order Blocks)</p>", unsafe_allowed_html=True)
+st.markdown("<h1 class='main-header'>🔮 SMC PRO — Elite Institutional Terminal</h1>", unsafe_allow_html=True)
+st.markdown("<p class='sub-header'>FII/DII आणि मोठ्या ऑपरेटर्सच्या पावलावर पाऊल ठेवून अचूक ट्रेड शोधा. (Change in OI + Order Blocks)</p>", unsafe_allow_html=True)
 
 # ४. साईडबार सेटअप (Sidebar)
 st.sidebar.image("https://img.icons8.com/nolan/96/bullish.png", width=80)
@@ -129,14 +129,12 @@ def get_daily_trend(ticker_symbol):
 
 # ६. प्रगत इंडिकेटर्स आणि 'Premium vs Discount' गणना
 def add_advanced_indicators(df):
-    # ATR (व्होलॅटॅलिटी मोजण्यासाठी)
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     df['atr'] = np.max(ranges, axis=1).rolling(14).mean()
 
-    # RSI (Exhaustion मोजण्यासाठी)
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -144,8 +142,6 @@ def add_advanced_indicators(df):
     
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
 
-    # Premium vs Discount Zone (Equilibrium)
-    # शेवटच्या २० कॅन्डल्सचा हाय आणि लो स्विंग शोधणे
     df['swing_high'] = df['high'].rolling(20).max()
     df['swing_low'] = df['low'].rolling(20).min()
     df['equilibrium'] = (df['swing_high'] + df['swing_low']) / 2
@@ -164,15 +160,12 @@ def analyze_elite_smc(df, daily_trend, target_rr):
         close_price = df['close'].iloc[i]
         eq_price = df['equilibrium'].iloc[i]
         
-        # व्हॉल्युम स्प्रैड ॲनालिसिस (VSA): जर आकार मोठा आणि व्हॉल्युम चांगला असेल तरच
         is_high_volume = current_vol > (1.3 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
 
-        # अ) Discount Zone मधील परफेक्ट BUY सिग्नल्स (Order Block / Liquidity Sweep)
-        if close_price < eq_price:  # स्वस्त किमतीत खरेदी (Discount Zone)
+        if close_price < eq_price: 
             prev_15_low = df['low'].iloc[i-15:i].min()
             is_sweep_buy = (df['low'].iloc[i] < prev_15_low) and (df['close'].iloc[i] > prev_15_low)
             
-            # जर RSI अति-विक्री (Oversold) दर्शवत असेल आणि वॉल्युम मोठा असेल
             if is_sweep_buy and rsi_val < 45 and is_high_volume:
                 entry = close_price
                 stop_loss = df['low'].iloc[i] - (0.3 * atr_val)
@@ -189,8 +182,7 @@ def analyze_elite_smc(df, daily_trend, target_rr):
                         'Pattern': 'Liquidity Hunt + Bullish Order Block'
                     })
 
-        # ब) Premium Zone मधील परफेक्ट SELL सिग्नल्स (Order Block / Liquidity Sweep)
-        elif close_price > eq_price:  # महाग किमतीत विक्री (Premium Zone)
+        elif close_price > eq_price: 
             prev_15_high = df['high'].iloc[i-15:i].max()
             is_sweep_sell = (df['high'].iloc[i] > prev_15_high) and (df['close'].iloc[i] < prev_15_high)
             
@@ -214,30 +206,24 @@ def analyze_elite_smc(df, daily_trend, target_rr):
 
 # ८. लाइव्ह चेंज इन ओपन इंटरेस्ट (Change in OI) ग्राफिक्स विभाग
 def render_oi_chart(current_price, asset_name):
-    # भारतीय निर्देशांकासाठी योग्य स्ट्राइक प्राईज स्टेप ठरवणे
     step = 100 if "BANK" in asset_name else 50 if "NIFTY" in asset_name else round(current_price * 0.01)
     if step == 0: step = 10
     
-    # चालू मार्केट किमतीच्या जवळच्या १० स्ट्राइक प्राईजेस निवडणे
     atm_strike = round(current_price / step) * step
     strikes = [atm_strike + (i * step) for i in range(-5, 6)]
     
-    # FIIs/Pro-Traders च्या हालचालीनुसार रिअल-टाइम सिम्युलेटेड प्रिसिजन डेटा बनवणे
-    np.random.seed(int(current_price) % 1000) # रँडमनेस मर्यादित ठेवण्यासाठी सीड
+    np.random.seed(int(current_price) % 1000) 
     change_in_call_oi = np.random.randint(5000, 85000, size=len(strikes))
     change_in_put_oi = np.random.randint(4000, 90000, size=len(strikes))
     
-    # कॉल साईडला थोडा दबाव दाखवण्यासाठी (उदाहरणादाखल)
     for idx, strike in enumerate(strikes):
         if strike > atm_strike:
-            change_in_call_oi[idx] = int(change_in_call_oi[idx] * 1.4) # वरच्या बाजूला Call Writing जास्त असते
+            change_in_call_oi[idx] = int(change_in_call_oi[idx] * 1.4) 
         else:
-            change_in_put_oi[idx] = int(change_in_put_oi[idx] * 1.3)  # खालच्या बाजूला Put Writing जास्त असते
+            change_in_put_oi[idx] = int(change_in_put_oi[idx] * 1.3)  
 
-    # Plotly ने बनवलेला अत्यंत सुंदर २-रंगी बार चार्ट (Graphics Bar Chart)
     fig = go.Figure()
     
-    # 🔴 Call OI Change (Bearish Resistance)
     fig.add_trace(go.Bar(
         x=strikes,
         y=change_in_call_oi,
@@ -246,7 +232,6 @@ def render_oi_chart(current_price, asset_name):
         opacity=0.85
     ))
     
-    # 🟢 Put OI Change (Bullish Support)
     fig.add_trace(go.Bar(
         x=strikes,
         y=change_in_put_oi,
@@ -281,7 +266,6 @@ if df_data is not None:
     df_data = add_advanced_indicators(df_data)
     current_price = df_data['close'].iloc[-1]
     
-    # रिअल-टाइम मुख्य डॅशबोर्ड कार्ड्स
     col_m1, col_m2, col_m3 = st.columns(3)
     
     with col_m1:
@@ -293,29 +277,24 @@ if df_data is not None:
         st.metric(label="🎯 MAIN DAILY TREND", value=daily_trend)
         
     with col_m3:
-        # शेवटचा झोन ओळखणे (किंमत सध्या स्वस्त झोनमध्ये आहे की महाग?)
         eq_val = df_data['equilibrium'].iloc[-1]
         current_zone = "🟣 DISCOUNT (Best to Buy)" if current_price < eq_val else "🟠 PREMIUM (Best to Short)"
         st.metric(label="🧭 MARKET VALUE ZONE", value=current_zone)
 
     st.markdown("---")
     
-    # ⚡ चेंज इन ओआय विभाग (विशेषतः भारतीय इंडेक्स/मार्केटसाठी)
     render_oi_chart(current_price, asset_choice)
     st.caption("ℹ️ *हा तक्ता दर ३० सेकंदांनी आपोआप लाइव्ह रिफ्रेश होतो. कॉल रायटर्स (लाल बार) वाढल्यास तिथे मोठा अडथळा (Resistance) असतो आणि पुट रायटर्स (हिरवा बार) वाढल्यास तिथे मोठा आधार (Support) असतो.*")
     
     st.markdown("---")
     
-    # 🎯 लाइव्ह सिग्नल्स विभाग
     st.subheader("🔮 Live Smart Money (SMC) OB Signals")
     
     signals_df = analyze_elite_smc(df_data, daily_trend, rr_ratio)
     
     if not signals_df.empty:
-        # सर्वात शेवटचे सिग्नल्स आधी दाखवा (Reverse ऑर्डर)
         st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         
-        # शेवटचा जो सिग्नल आला आहे, त्याचे 'टार्गेट मॅनेजमेंट' दाखवणे
         latest_sig = signals_df.iloc[-1]
         st.markdown("### ⚡ Active Signal Executer (पार्सल नफा बुकिंग सल्ला)")
         
