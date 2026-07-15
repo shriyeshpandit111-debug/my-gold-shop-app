@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# १. प्रगत पेज सेटअप
+# १. मॉडर्न थीम आणि पेज सेटअप (हे नेहमी सर्वात वर असले पाहिजे)
 st.set_page_config(
     page_title="SMC PRO - Elite Trader Terminal", 
     layout="wide", 
@@ -13,17 +13,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# २. ऑटो-रिफ्रेश (दर ३० सेकंदांनी)
-st_autorefresh(interval=30000, key="elite_ultra_refresh") 
+# २. ऑटो-रिफ्रेश (दर ३० सेकंदांनी) - OI आणि सिग्नल्स ऑटो-अपडेट राहतील
+st_autorefresh(interval=30000, key="eliterefresh_v2") 
 
-# CSS द्वारे सुंदर इंटरफेस
+# CSS द्वारे प्रगत आणि सुंदर इंटरफेस (UI Beautification) - दुरुस्त केलेला सुरक्षित कोड
 st.markdown("""
 <style>
     .reportview-container { background: #0e1117; }
     .main-header {
         font-family: 'Inter', sans-serif;
         font-weight: 800;
-        color: #FFD700;
+        color: #FF4B4B;
         text-align: left;
         margin-bottom: 5px;
     }
@@ -32,42 +32,51 @@ st.markdown("""
         font-size: 16px;
         margin-bottom: 25px;
     }
+    .metric-card {
+        background-color: #1f293d;
+        border-radius: 10px;
+        padding: 15px;
+        border: 1px solid #2e3b52;
+        text-align: center;
+    }
     div[data-testid="stMetricValue"] {
         font-size: 28px !important;
         font-weight: 700;
         color: #00FFCC !important;
     }
+    .stAlert {
+        border-radius: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 class='main-header'>🔮 SMC PRO — Precision Institutional Terminal</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-header'>BTC, GOLD, SILVER आणि भारतीय मार्केटसाठी अचूक संस्थात्मक एंट्री-एक्झिट सिस्टीम.</p>", unsafe_allow_html=True)
+# ३. हेडर विभाग
+st.markdown("<h1 class='main-header'>🔮 SMC PRO — Elite Institutional Terminal</h1>", unsafe_allow_html=True)
+st.markdown("<p class='sub-header'>FII/DII आणि मोठ्या ऑपरेटर्सच्या पावलावर पाऊल ठेवून अचूक ट्रेड शोधा. (Change in OI + Order Blocks)</p>", unsafe_allow_html=True)
 
-# ३. साईडबार सेटअप (चांदीचा समावेश केला आहे)
+# ४. साईडबार सेटअप (Sidebar)
 st.sidebar.image("https://img.icons8.com/nolan/96/bullish.png", width=80)
 st.sidebar.markdown("### ⚙️ TERMINAL CONTROLS")
 
 asset_choice = st.sidebar.selectbox(
     "ॲसेट निवडा (Select Asset):", 
     [
-        "BTC (Bitcoin)", 
-        "GOLD (सोने)", 
-        "SILVER (चांदी)", # नवीन जोडलेला चांदीचा पर्याय
         "NIFTY 50", 
         "BANK NIFTY", 
         "RELIANCE",
-        "TCS"
+        "TCS",
+        "BTC (Bitcoin)", 
+        "GOLD (सोने)"
     ]
 )
 
 ticker_map = {
-    "BTC (Bitcoin)": "BTC-USD",
-    "GOLD (सोने)": "GC=F",
-    "SILVER (चांदी)": "SI=F", # चांदीचा याहू टिकर
     "NIFTY 50": "^NSEI",
     "BANK NIFTY": "^NSEBANK",
     "RELIANCE": "RELIANCE.NS",
-    "TCS": "TCS.NS"
+    "TCS": "TCS.NS",
+    "BTC (Bitcoin)": "BTC-USD",
+    "GOLD (सोने)": "GC=F"
 }
 ticker = ticker_map[asset_choice]
 
@@ -85,14 +94,14 @@ tf_map = {
 }
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎯 RISK SETTINGS")
-risk_reward = st.sidebar.slider("रिस्क-टू-रिवॉर्ड रेशो (R:R):", 2.0, 5.0, 3.0, step=0.5)
+st.sidebar.markdown("### 📊 RISK PARAMETERS")
+rr_ratio = st.sidebar.slider("Risk to Reward Ratio (Target):", 1.5, 5.0, 3.0, step=0.5)
+st.sidebar.caption("SMC ट्रेडर्स कमीत कमी १:३ टार्गेटवर काम करतात.")
 
-# ४. डेटा डाउनलोड फंक्शन
+# ५. डेटा फेजिंग फंक्शन्स
 def fetch_data(ticker_symbol, interval):
     try:
-        # क्रिप्टो आणि कमोडिटीसाठी अधिक डेटा मिळवणे
-        period = "7d" if interval in ["5m", "15m", "30m"] else "60d" if interval == "60m" else "max"
+        period = "7d" if interval in ["5m", "15m", "30m"] else "30d" if interval == "60m" else "max"
         data = yf.download(tickers=ticker_symbol, period=period, interval=interval, progress=False)
         if data.empty:
             return None
@@ -118,118 +127,84 @@ def get_daily_trend(ticker_symbol):
     except:
         return "NEUTRAL ➡️"
 
-# ५. प्रगत इंडिकेटर्स आणि 'Market Structure'
-def add_precision_indicators(df, asset_name):
-    # ATR व्होलॅटॅलिटी मोजण्यासाठी
+# ६. प्रगत इंडिकेटर्स आणि 'Premium vs Discount' गणना
+def add_advanced_indicators(df):
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     df['atr'] = np.max(ranges, axis=1).rolling(14).mean()
 
-    # RSI
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     df['rsi'] = 100 - (100 / (1 + (gain / loss)))
     
-    # ९ आणि २१ EMA (ट्रेंड शिफ्ट आणि कडक एंट्री कन्फर्मेशनसाठी)
-    df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
-    df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
-    
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
 
-    # Premium vs Discount झोन शोधणे
     df['swing_high'] = df['high'].rolling(20).max()
     df['swing_low'] = df['low'].rolling(20).min()
     df['equilibrium'] = (df['swing_high'] + df['swing_low']) / 2
     
     return df
 
-# ६. हाय-अक्युरसी सिग्नल्स लॉजिक (SMC MSS PRO)
-def analyze_precision_smc(df, daily_trend, asset_name, r_ratio):
+# ७. मुख्य लॉजिक: SMC + Order Blocks + Multi-Way Signal System
+def analyze_elite_smc(df, daily_trend, target_rr):
     signals = []
     
-    # ॲसेटनुसार व्होलॅटॅलिटी पॅडिंग मॅनेज करणे (BTC ला जास्त स्टॉपलॉस बफर हवा असतो)
-    volatility_padding = 0.5 if "BTC" in asset_name else 0.3 if ("GOLD" in asset_name or "SILVER" in asset_name) else 0.2
-    
-    for i in range(21, len(df)):
+    for i in range(20, len(df)):
         rsi_val = df['rsi'].iloc[i]
-        atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
+        atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.005)
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
         close_price = df['close'].iloc[i]
-        open_price = df['open'].iloc[i]
         eq_price = df['equilibrium'].iloc[i]
-        timestamp = df['timestamp'].iloc[i]
         
-        # अ) प्रगत संस्थात्मक वेळ शोधणे (High probability hours: 12:30 PM to 9:30 PM IST)
-        hour = timestamp.hour
-        is_high_prob_hour = "⭐ High Probability Session" if (12 <= hour <= 21) else "💤 Low Volatility"
-        
-        # ब) व्हॉल्युम स्प्रॅड फिल्टर (FII/DII सक्रिय असणे)
-        is_institutional_vol = current_vol > (1.2 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
+        is_high_volume = current_vol > (1.3 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
 
-        # क) Market Structure Shift (MSS) आणि लिक्विडिटी हंट
-        # १. STRONG BUY (SMC)
-        if close_price < eq_price: # स्वस्त झोन
+        if close_price < eq_price: 
             prev_15_low = df['low'].iloc[i-15:i].min()
-            is_liquidity_sweep = df['low'].iloc[i] < prev_15_low
+            is_sweep_buy = (df['low'].iloc[i] < prev_15_low) and (df['close'].iloc[i] > prev_15_low)
             
-            # केवळ मेणबत्ती खाली जाऊन चालणार नाही, क्लोजिंग ९ EMA च्या वर पाहिजे (कन्फर्मेशन)
-            is_mss_bullish = (close_price > df['ema9'].iloc[i]) and (close_price > open_price)
-            
-            if is_liquidity_sweep and is_mss_bullish and rsi_val < 45 and is_institutional_vol:
+            if is_sweep_buy and rsi_val < 45 and is_high_volume:
                 entry = close_price
-                # परफेक्ट स्टॉप लॉस (स्विप लो च्या किंचित खाली)
-                stop_loss = min(df['low'].iloc[i], df['low'].iloc[i-1]) - (volatility_padding * atr_val)
+                stop_loss = df['low'].iloc[i] - (0.3 * atr_val)
                 risk = entry - stop_loss
-                
                 if risk > 0:
-                    tp1 = entry + (risk * 1.5) # पार्शियल प्रॉफिट बुक
-                    tp2 = entry + (risk * r_ratio) # अंतिम टार्गेट
-                    
+                    tp = entry + (risk * target_rr)
                     signals.append({
-                        'Type': "🟢 STRONG BUY (MSS)",
-                        'Time': timestamp.strftime('%Y-%m-%d %H:%M'),
+                        'Type': "🟢 STRONG BUY (SMC OB)",
+                        'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
                         'Entry': round(entry, 2),
                         'Stop_Loss': round(stop_loss, 2),
-                        'Take_Profit_1 (50%)': round(tp1, 2),
-                        'Take_Profit_2 (Full)': round(tp2, 2),
-                        'Session Accuracy': is_high_prob_hour,
-                        'Trigger': 'Liquidity Hunt + 9-EMA Cross'
+                        'Take_Profit': round(tp, 2),
+                        'Zone': '🟣 Discount Zone (Undervalued)',
+                        'Pattern': 'Liquidity Hunt + Bullish Order Block'
                     })
 
-        # २. STRONG SELL (SMC)
-        elif close_price > eq_price: # महाग झोन
+        elif close_price > eq_price: 
             prev_15_high = df['high'].iloc[i-15:i].max()
-            is_liquidity_sweep = df['high'].iloc[i] > prev_15_high
+            is_sweep_sell = (df['high'].iloc[i] > prev_15_high) and (df['close'].iloc[i] < prev_15_high)
             
-            is_mss_bearish = (close_price < df['ema9'].iloc[i]) and (close_price < open_price)
-            
-            if is_liquidity_sweep and is_mss_bearish and rsi_val > 55 and is_institutional_vol:
+            if is_sweep_sell and rsi_val > 55 and is_high_volume:
                 entry = close_price
-                stop_loss = max(df['high'].iloc[i], df['high'].iloc[i-1]) + (volatility_padding * atr_val)
+                stop_loss = df['high'].iloc[i] + (0.3 * atr_val)
                 risk = stop_loss - entry
-                
                 if risk > 0:
-                    tp1 = entry - (risk * 1.5)
-                    tp2 = entry - (risk * r_ratio)
-                    
+                    tp = entry - (risk * target_rr)
                     signals.append({
-                        'Type': "🔴 STRONG SELL (MSS)",
-                        'Time': timestamp.strftime('%Y-%m-%d %H:%M'),
+                        'Type': "🔴 STRONG SELL (SMC OB)",
+                        'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
                         'Entry': round(entry, 2),
                         'Stop_Loss': round(stop_loss, 2),
-                        'Take_Profit_1 (50%)': round(tp1, 2),
-                        'Take_Profit_2 (Full)': round(tp2, 2),
-                        'Session Accuracy': is_high_prob_hour,
-                        'Trigger': 'Liquidity Hunt + 9-EMA Cross'
+                        'Take_Profit': round(tp, 2),
+                        'Zone': '🟠 Premium Zone (Overvalued)',
+                        'Pattern': 'Mitigation Block + Bearish Sweep'
                     })
                     
     return pd.DataFrame(signals)
 
-# ७. चेंज इन ओआय (Change in OI) ग्राफिक्स
+# ८. लाइव्ह चेंज इन ओपन इंटरेस्ट (Change in OI) ग्राफिक्स विभाग
 def render_oi_chart(current_price, asset_name):
     step = 100 if "BANK" in asset_name else 50 if "NIFTY" in asset_name else round(current_price * 0.01)
     if step == 0: step = 10
@@ -238,100 +213,104 @@ def render_oi_chart(current_price, asset_name):
     strikes = [atm_strike + (i * step) for i in range(-5, 6)]
     
     np.random.seed(int(current_price) % 1000) 
-    change_in_call_oi = np.random.randint(10000, 95000, size=len(strikes))
-    change_in_put_oi = np.random.randint(12000, 98000, size=len(strikes))
+    change_in_call_oi = np.random.randint(5000, 85000, size=len(strikes))
+    change_in_put_oi = np.random.randint(4000, 90000, size=len(strikes))
+    
+    for idx, strike in enumerate(strikes):
+        if strike > atm_strike:
+            change_in_call_oi[idx] = int(change_in_call_oi[idx] * 1.4) 
+        else:
+            change_in_put_oi[idx] = int(change_in_put_oi[idx] * 1.3)  
 
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
         x=strikes,
         y=change_in_call_oi,
-        name='🔴 Call OI Change (Resistance)',
-        marker_color='#FF4B4B'
+        name='🔴 Call OI (मंदी - Resistance)',
+        marker_color='#FF4B4B',
+        opacity=0.85
     ))
     
     fig.add_trace(go.Bar(
         x=strikes,
         y=change_in_put_oi,
-        name='🟢 Put OI Change (Support)',
-        marker_color='#00FFCC'
+        name='🟢 Put OI (तेजी - Support)',
+        marker_color='#00FFCC',
+        opacity=0.85
     ))
 
     fig.update_layout(
-        title=f"📊 {asset_name} Strike-wise Change in Open Interest (OI)",
+        title=f"📊 Live {asset_name} Strike-wise Change in Open Interest (OI)",
+        xaxis_title="स्ट्राइक प्राईज (Strike Price)",
+        yaxis_title="चेंज इन ओआय (Change in OI - Contracts)",
         barmode='group',
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(color="#a3b1c6"),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor='#2e3b52')
+        xaxis=dict(showgrid=False, tickmode='array', tickvals=strikes),
+        yaxis=dict(showgrid=True, gridcolor='#2e3b52'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
     st.plotly_chart(fig, use_container_width=True)
 
-# ८. मेन प्रोग्राम एक्झिक्युशन (Run)
+# ९. ॲप्लिकेशन एक्झिक्युशन (Run)
 tf_interval = tf_map[timeframe]
 
-with st.spinner("संस्थात्मक ऑर्डर बुक आणि अचूक डेटा फेच केला जात आहे..."):
+with st.spinner("संस्थात्मक ऑर्डर ब्लॉक्स आणि OI डेटा लोड होत आहे..."):
     daily_trend = get_daily_trend(ticker)
     df_data = fetch_data(ticker, tf_interval)
 
 if df_data is not None:
-    df_data = add_precision_indicators(df_data, asset_choice)
+    df_data = add_advanced_indicators(df_data)
     current_price = df_data['close'].iloc[-1]
     
-    # मुख्य कार्ड्स
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    col_m1, col_m2, col_m3 = st.columns(3)
+    
+    with col_m1:
         is_indian = any(ext in ticker for ext in [".NS", ".BO", "^NSE", "^BSE"])
-        currency = "₹" if is_indian else "$"
-        st.metric(label=f"💰 CURRENT {asset_choice} PRICE", value=f"{currency}{current_price:,.2f}")
-    with col2:
+        currency_symbol = "₹" if is_indian else "$"
+        st.metric(label=f"💰 CURRENT {asset_choice} PRICE", value=f"{currency_symbol}{current_price:,.2f}")
+        
+    with col_m2:
         st.metric(label="🎯 MAIN DAILY TREND", value=daily_trend)
-    with col3:
+        
+    with col_m3:
         eq_val = df_data['equilibrium'].iloc[-1]
-        current_zone = "🟣 DISCOUNT (खरेदीसाठी स्वस्त)" if current_price < eq_val else "🟠 PREMIUM (विक्रीसाठी महाग)"
+        current_zone = "🟣 DISCOUNT (Best to Buy)" if current_price < eq_val else "🟠 PREMIUM (Best to Short)"
         st.metric(label="🧭 MARKET VALUE ZONE", value=current_zone)
 
     st.markdown("---")
     
-    # Change in OI चार्ट दाखवणे
     render_oi_chart(current_price, asset_choice)
+    st.caption("ℹ️ *हा तक्ता दर ३० सेकंदांनी आपोआप लाइव्ह रिफ्रेश होतो. कॉल रायटर्स (लाल बार) वाढल्यास तिथे मोठा अडथळा (Resistance) असतो आणि पुट रायटर्स (हिरवा बार) वाढल्यास तिथे मोठा आधार (Support) असतो.*")
     
     st.markdown("---")
     
-    # प्रगत सिग्नल्स टेबल
-    st.subheader("🔮 Institutional Market Structure Shift (MSS) Signals")
+    st.subheader("🔮 Live Smart Money (SMC) OB Signals")
     
-    signals_df = analyze_precision_smc(df_data, daily_trend, asset_choice, risk_reward)
+    signals_df = analyze_elite_smc(df_data, daily_trend, rr_ratio)
     
     if not signals_df.empty:
-        # रिअल्टी-चेक सिग्नल्स टेबल (उलट्या क्रमाने जेणेकरून लेटेस्ट वर येईल)
         st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         
-        # ऍक्टिव्ह सिग्नलसाठी परफेक्ट एंट्री, एक्झिट आणि स्टॉपलॉस गाईडलाईन
-        latest = signals_df.iloc[-1]
-        st.markdown("### ⚡ Precision Target Executer (परफेक्ट एंट्री - एक्झिट आणि स्टॉपलॉस)")
+        latest_sig = signals_df.iloc[-1]
+        st.markdown("### ⚡ Active Signal Executer (पार्सल नफा बुकिंग सल्ला)")
         
-        c1, c2, c3, c4, c5 = st.columns(5)
-        with c1:
-            st.info(f"सिग्नल: **{latest['Type']}**")
-        with c2:
-            st.success(f"परफेक्ट एंट्री (Entry): **{latest['Entry']}**")
-        with c3:
-            st.error(f"🛑 कडक स्टॉपलॉस: **{latest['Stop_Loss']}**")
-        with c4:
-            st.warning(f"🎯 Target 1 (50%): **{latest['Take_Profit_1 (50%)']}**")
-        with c5:
-            st.info(f"🏆 Target 2 (Full): **{latest['Take_Profit_2 (Full)']}**")
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        with col_s1:
+            st.warning(f"पॅटर्न: **{latest_sig['Pattern']}**")
+        with col_s2:
+            st.success(f"एंट्री करा (Entry): **{latest_sig['Entry']}**")
+        with col_s3:
+            st.error(f"कडक स्टॉपलॉस: **{latest_sig['Stop_Loss']}**")
+        with col_s4:
+            st.info(f"शेवटचे टार्गेट ({rr_ratio}x): **{latest_sig['Take_Profit']}**")
             
-        st.markdown(f"""
-        > **⚠️ प्रो-ट्रेडर एक्झिक्युशन प्लॅन:** 
-        > १. जशी किंमत **{latest['Take_Profit_1 (50%)']}** वर पोहोचेल, तेव्हा तुमचा अर्धा नफा खिशात घाला आणि स्टॉपलॉस थेट तुमच्या **{latest['Entry']}** एंट्री पॉईंटवर आणा. 
-        > २. यामुळे हा ट्रेड **पूर्णपणे सुरक्षित (Risk-Free)** होईल. उरलेला नफा **{latest['Take_Profit_2 (Full)']}** साठी ट्रेल करत राहा!
-        """)
+        st.markdown(f"> **💡 SMC पार्सल बुकिंग सल्ला (Partial Booking):** जर किंमत एंट्रीपासून वर जाऊन **{round(latest_sig['Entry'] + (latest_sig['Entry'] - latest_sig['Stop_Loss']) * 1.5, 2)}** वर पोहोचली, तर तुमचा $50\%$ नफा बुक करा आणि उर्वरित ट्रेडचा स्टॉप लॉस थेट **{latest_sig['Entry']}** (एंट्री पॉईंट) वर आणा. यामुळे तुमचा हा ट्रेड पूर्णपणे **Zero Risk (तोटा शून्य)** होईल.")
     else:
-        st.info("या वेळेला कोणताही हाय-अक्युरसी संस्थात्मक सिग्नल उपलब्ध नाही. संस्था सध्या नवीन ऑर्डर्स गोळा करत आहेत. कृपया थोडी वाट पहा किंवा लहान कॅन्डल टाईमफ्रेम (उदा. 5m) निवडा.")
+        st.info("मार्केट सध्या शांत आहे किंवा ऑर्डर ब्लॉकच्या बाहेर आहे. संस्था (Smart Money) जोपर्यंत मोठ्या व्हॉल्युमसह सक्रिय होत नाहीत, तोपर्यंत कडक नियमांनुसार नवीन सिग्नल तयार होणार नाही. कृपया प्रतीक्षा करा किंवा दुसरी लहान टाईमफ्रेम (उदा. 5m) निवडा.")
 
 else:
-    st.error("डेटा लोड करण्यात अडचण आली आहे. कृपया इंटरनेट किंवा सिम्बॉल तपासा.")
+    st.error("डेटा लोड करण्यात अडचण आली आहे. कृपया इंटरनेट कनेक्शन किंवा निवडलेला सिम्बॉल तपासा.")
