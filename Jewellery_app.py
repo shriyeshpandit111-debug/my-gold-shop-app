@@ -64,20 +64,17 @@ tf_map = {
     "30m": "30m", "1h": "60m", "4h": "1h", "1d": "1d"
 }
 
-# डेटा फेचिंग फंक्शन सुधारित केले आहे
 def fetch_data(ticker_symbol, interval):
     try:
-        # लोड कमी करण्यासाठी आणि जलद रिस्पॉन्ससाठी टाईम लिमिट्स कमी केल्या आहेत
         if interval in ["1m"]:
-            period = "2d"  # ७ दिवसांऐवजी २ दिवसांचा डेटा
+            period = "2d" 
         elif interval in ["5m", "10m", "15m", "30m"]:
-            period = "5d"  # ३० दिवसांऐवजी ५ दिवसांचा डेटा (इंट्राडेसाठी पुरेसा आहे)
+            period = "5d" 
         elif interval in ["60m", "1h"]:
             period = "1mo"
         else:
             period = "1y"
             
-        # timeout पॅरामीटर जोडून ब्लॉक होणे टाळले आहे
         data = yf.download(tickers=ticker_symbol, period=period, interval=interval, progress=False, timeout=10)
         if data is None or data.empty: 
             return None
@@ -124,7 +121,7 @@ def add_indicators(df):
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
-# --- 🔥 [अल्ट्रा-ॲक्युरेट] पिनपॉईंट ग्लोबल रिव्हर्सल इंजिन ---
+# --- 🔥 [अल्ट्रा-फिक्स] नो-गोंधळ प्रगत पिनपॉईंट सिग्नल्स इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
     bullish_blocks = []
@@ -134,18 +131,20 @@ def analyze_smc_pro_v2(df, daily_trend):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
-        
         high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
         
-        # मागील ४ कॅंडल्सचे स्विंग्स
+        # स्विंग्स ट्रॅकिंग
         prev_4_low = df['low'].iloc[i-4:i].min()
         prev_4_high = df['high'].iloc[i-4:i].max()
         
-        # Wick Rejection & Sweep Logic
-        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['low'].iloc[i])
-        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['high'].iloc[i])
+        # १. STRICT LIQUIDITY SWEEP CONDITIONAL LOGIC (कॅंडलचा क्लोजिंग पॅटर्न अनिवार्य केला आहे)
+        # Bullish Sweep साठी कॅंडल हिरवी (Close > Open) आणि लो मागील स्विंगच्या खाली असावा.
+        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
         
-        # ChoCh & Imbalance
+        # Bearish Sweep साठी कॅंडल लाल (Close < Open) आणि हाय मागील स्विंगच्या वर असावा.
+        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
+        
+        # २. ChoCh & Imbalance
         is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-3:i].max()
         is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-3:i].min()
         
@@ -160,14 +159,21 @@ def analyze_smc_pro_v2(df, daily_trend):
         mitigated_bullish = any(not b['mitigated'] and df['low'].iloc[i] <= b['high'] for b in bullish_blocks)
         mitigated_bearish = any(not b['mitigated'] and df['high'].iloc[i] >= b['low'] for b in bearish_blocks)
 
-        # 🟢 EXACT POINT BUY SIGNAL
-        if (is_bullish_sweep and high_volume) or (is_choch_bullish and (is_bullish_fvg or mitigated_bullish)):
+        # अंतिम निर्णय फिल्टर (दोन्ही पैकी एकच सिलेक्ट होईल - 'or' ऐवजी स्वतंत्र कठोर नियम)
+        buy_triggered = (is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg and df['close'].iloc[i] > df['open'].iloc[i])
+        sell_triggered = (is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg and df['close'].iloc[i] < df['open'].iloc[i])
+
+        # सुरक्षा कवच: जर मार्केट खूप जास्त व्होलॅटाईल असेल आणि दोन्ही कंडिशन्स मॅच होत असतील, तर सिग्नल देणे टाळा.
+        if buy_triggered and sell_triggered:
+            continue
+
+        # 🟢 PERFECT BUY
+        if buy_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
             risk = entry - stop_loss
-            
             if risk > 0:
-                take_profit = entry + (risk * 3.0)
+                take_profit = entry + (risk * 2.5)
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -178,14 +184,13 @@ def analyze_smc_pro_v2(df, daily_trend):
                     'Trigger Reason': 'Sharp Bottom Turnaround Confirmed'
                 })
 
-        # 🔴 EXACT POINT SELL SIGNAL
-        if (is_bearish_sweep and high_volume) or (is_choch_bearish and (is_bearish_fvg or mitigated_bearish)):
+        # 🔴 PERFECT SELL
+        elif sell_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
             risk = stop_loss - entry
-            
             if risk > 0:
-                take_profit = entry - (risk * 3.0)
+                take_profit = entry - (risk * 2.5)
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -240,7 +245,6 @@ def render_image_style_oi_dashboard(current_price, asset_name):
 
 tf_interval = tf_map[timeframe]
 
-# डेटा गोळा करताना स्पिनर फक्त डेटा येईपर्यंत दिसेल, त्यानंतर बंद होईल
 df_ltf = None
 with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
     daily_trend = get_daily_trend(ticker)
@@ -283,4 +287,4 @@ if df_ltf is not None and not df_ltf.empty:
     st.subheader("📈 SMC Price Chart (Reference)")
     st.line_chart(df_ltf.set_index('timestamp')['close'].tail(50))
 else:
-    st.error(f"🚨 '{ticker}' चा डेटा Yahoo Finance वरून वेळेत लोड होऊ शकला नाही. तुमच्या इंटरनेट कनेक्शनमध्ये अडचण असू शकते किंवा टिकरचे नाव चुकले असू शकते. कृपया काही सेकंदांनंतर पेज मॅन्युअली रिफ्रेश करून पहा.")
+    st.error(f"🚨 '{ticker}' चा डेटा Yahoo Finance वरून वेळेत लोड होऊ शकला नाही. कृपया काही सेकंदांनंतर पुन्हा पहा.")
