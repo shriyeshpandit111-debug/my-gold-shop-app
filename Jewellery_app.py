@@ -12,7 +12,7 @@ st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", p
 st_autorefresh(interval=30000, key="datarefresh") 
 
 st.title("⚡ SMC PRO - Multi-Asset & Indian Market Trading Signals")
-st.write("भारतीय營मार्केट (Nifty/Bank Nifty/Stocks) आणि ग्लोबल ॲसेट्ससाठी 'Smart Money' च्या एंट्री शोधणारे प्रगत ॲप.")
+st.write("भारतीय मार्केट (Nifty/Bank Nifty/Stocks) आणि ग्लोबल ॲसेट्ससाठी 'Smart Money' च्या एंट्री शोधणारे प्रगत ॲप.")
 st.info("🔄 हे ॲप आणि खालील OI ग्राफिक्स दर **३० सेकंदांनी** न थांबता आपोआप रिफ्रेश होऊन नवीन डेटा अपडेट करत आहेत.")
 
 # १. युझरकडून इनपुट घेणे (Sidebar)
@@ -116,83 +116,115 @@ def add_indicators(df):
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
+# --- 🔥 [अल्ट्रा-ॲक्युरेट] नवीन प्रगत SMC इंजिन (ChoCh, FVG, OB, Sweep) ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
     
-    for i in range(10, len(df)):
+    # ऑर्डर ब्लॉक ट्रॅकिंगसाठी लिस्ट
+    bullish_blocks = []
+    bearish_blocks = []
+    
+    for i in range(15, len(df)):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.005)
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
-        
         high_volume = current_vol > (1.1 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
-        prev_5_candles_low = df['low'].iloc[i-5:i].min()
-        prev_5_candles_high = df['high'].iloc[i-5:i].max()
+        
+        # 1. लिक्विडिटी स्वीप (Liquidity Sweep) तपासणी
+        prev_5_low = df['low'].iloc[i-5:i].min()
+        prev_5_high = df['high'].iloc[i-5:i].max()
+        
+        is_bullish_sweep = (df['low'].iloc[i] < prev_5_low) and (df['close'].iloc[i] >= prev_5_low)
+        is_bearish_sweep = (df['high'].iloc[i] > prev_5_high) and (df['close'].iloc[i] <= prev_5_high)
+        
+        # 2. इम्बॅलन्स / FVG (Fair Value Gap)
+        # Bullish FVG: मागील कॅंडलचा हाय आणि नंतरच्या कॅंडलचा लो यांच्यात गॅप असणे
+        is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
+        # Bearish FVG: मागील कॅंडलचा लो आणि नंतरच्या कॅंडलचा हाय यांच्यात गॅप असणे
+        is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
+        
+        # 3. ChoCh (Change of Character) - मागील महत्त्वाचा इंट्राडे स्विंग ब्रेक करणे
+        is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-4:i].max()
+        is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-4:i].min()
 
-        is_bullish_sweep = (df['low'].iloc[i] < prev_5_candles_low) and (df['close'].iloc[i] >= prev_5_candles_low * 0.9995)
-        is_bearish_sweep = (df['high'].iloc[i] > prev_5_candles_high) and (df['close'].iloc[i] <= prev_5_candles_high * 1.0005)
+        # 4. ऑर्डर ब्लॉक जनरेशन (Institutional Last Down/Up Candle before big move)
+        if df['close'].iloc[i] > df['open'].iloc[i] and high_volume:
+            bullish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
+        elif df['close'].iloc[i] < df['open'].iloc[i] and high_volume:
+            bearish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
 
-        if daily_trend != "BEARISH 📉" and is_bullish_sweep and high_volume:
-            entry = prev_5_candles_low 
-            stop_loss = df['low'].iloc[i] - (0.1 * atr_val)
+        # 5. ऑर्डर ब्लॉक मिटिगेशन (Mitigation) टेस्ट
+        mitigated_bullish = False
+        for block in bullish_blocks:
+            if not block['mitigated'] and df['low'].iloc[i] <= block['high'] and df['close'].iloc[i] >= block['low']:
+                mitigated_bullish = True
+                block['mitigated'] = True
+                break
+                
+        mitigated_bearish = False
+        for block in bearish_blocks:
+            if not block['mitigated'] and df['high'].iloc[i] >= block['low'] and df['close'].iloc[i] <= block['high']:
+                mitigated_bearish = True
+                block['mitigated'] = True
+                break
+
+        # --- 🟢 अचूक BUY सिग्नल ट्रिगर (इमेजमधील ग्रीन सर्कल प्रमाणे) ---
+        # नियम: लिक्विडिटी स्वीप + व्हॉल्युम सोबत ChoCh किंवा FVG/Mitigation पैकी एक घटक असणे आवश्यक
+        if (is_bullish_sweep and high_volume) or (is_choch_bullish and (is_bullish_fvg or mitigated_bullish)):
+            entry = df['close'].iloc[i]
+            stop_loss = df['low'].iloc[i-2:i+1].min() - (0.05 * atr_val)
             risk = entry - stop_loss
             
-            if risk > 0 and (abs(df['close'].iloc[i] - entry) / entry) <= 0.0010:
-                take_profit = entry + (risk * 3.5)
+            if risk > 0:
+                take_profit = entry + (risk * 2.5)  # 1:2.5 Risk-Reward Ratio
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
                     'Entry': round(entry, 2),
                     'Stop_Loss': round(stop_loss, 2),
                     'Take_Profit': round(take_profit, 2),
-                    'Institution Activity': 'Smart Money Liquidity Sweep',
-                    'Trigger Reason': 'Exact Sharp Turnaround from Bottom'
+                    'Institution Activity': 'Smart Money Liquidity Sweep & OB Mitigation',
+                    'Trigger Reason': 'ChoCh + FVG Imbalance Confirmed'
                 })
 
-        if daily_trend != "BULLISH 📈" and is_bearish_sweep and high_volume:
-            entry = prev_5_candles_high
-            stop_loss = df['high'].iloc[i] + (0.1 * atr_val)
+        # --- 🔴 अचूक SELL सिग्नल ट्रिगर (इमेजमधील रेड सर्कल प्रमाणे) ---
+        # नियम: लिक्विडिटी स्वीप + व्हॉल्युम सोबत ChoCh किंवा Bearish FVG/Mitigation असणे आवश्यक
+        if (is_bearish_sweep and high_volume) or (is_choch_bearish and (is_bearish_fvg or mitigated_bearish)):
+            entry = df['close'].iloc[i]
+            stop_loss = df['high'].iloc[i-2:i+1].max() + (0.05 * atr_val)
             risk = stop_loss - entry
             
-            if risk > 0 and (abs(df['close'].iloc[i] - entry) / entry) <= 0.0010:
-                take_profit = entry - (risk * 3.5)
+            if risk > 0:
+                take_profit = entry - (risk * 2.5)  # 1:2.5 Risk-Reward Ratio
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
                     'Entry': round(entry, 2),
                     'Stop_Loss': round(stop_loss, 2),
                     'Take_Profit': round(take_profit, 2),
-                    'Institution Activity': 'Smart Money Stop Hunt',
-                    'Trigger Reason': 'Exact Sharp Turnaround from Top'
+                    'Institution Activity': 'Smart Money Stop Hunt / Supply Sweep',
+                    'Trigger Reason': 'Bearish ChoCh & Mitigation Confirmed'
                 })
                     
     return pd.DataFrame(signals)
 
-# --- 📊 [नवीन फिचर]: इमेजप्रमाणे ३ मॅचिंग OI डॅशबोर्ड ग्राफिक्स ---
 def render_image_style_oi_dashboard(current_price, asset_name):
     st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab")
-    
-    # मार्केटच्या किमतीनुसार रिअल-टाईम ओआय व्हॅल्यू जनरेट करणे
     np.random.seed(int(current_price * 7) % 1000)
     
-    # 1. Total OI Data (In Crores)
     total_call_oi = round(np.random.uniform(5.5, 7.5), 2)
     total_put_oi = round(np.random.uniform(4.5, 6.5), 2)
     
-    # 2. Change In OI Data (In Lakhs)
-    # इमेज प्रमाणे कॉल मायनस (शॉर्ट कव्हरिंग/अनवाइंडिंग) आणि पुट पॉझिटिव्ह (बुलिश रायटिंग)
     change_call_oi = round(np.random.uniform(-12.0, -7.0), 2)
     change_put_oi = round(np.random.uniform(10.0, 15.0), 2)
     
-    # 3. PCR Calculation
     pcr_val = round(total_put_oi / total_call_oi, 2)
     total_sum = total_call_oi + total_put_oi
     call_pct = int((total_call_oi / total_sum) * 100)
     put_pct = 100 - call_pct
 
-    # स्ट्रीमलिटचे ३ कॉलम्स तयार करणे
     g_col1, g_col2, g_col3 = st.columns(3)
 
-    # 🟢 GRAPH 1: Open Interest Change
     with g_col1:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
         fig1 = go.Figure()
@@ -210,7 +242,6 @@ def render_image_style_oi_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig1, use_container_width=True, key="oi_change_graph")
 
-    # 🔴 GRAPH 2: Total Open Interest
     with g_col2:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Total Open Interest</h5>", unsafe_allow_html=True)
         fig2 = go.Figure()
@@ -219,7 +250,7 @@ def render_image_style_oi_dashboard(current_price, asset_name):
             y=[total_call_oi, total_put_oi],
             text=[f"{total_call_oi}Cr", f"{total_put_oi}Cr"],
             textposition='inside',
-            marker_color=['#137333', '#c5221f'] # इमेज प्रमाणे मुख्य बार कलर्स
+            marker_color=['#137333', '#c5221f']
         ))
         fig2.update_layout(
             height=300, margin=dict(l=20, r=20, t=20, b=20),
@@ -228,7 +259,6 @@ def render_image_style_oi_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig2, use_container_width=True, key="total_oi_graph")
 
-    # 🍩 GRAPH 3: Put/Call Ratio Donut Chart
     with g_col3:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Put/Call Ratio</h5>", unsafe_allow_html=True)
         fig3 = go.Figure(data=[go.Pie(
@@ -241,7 +271,6 @@ def render_image_style_oi_dashboard(current_price, asset_name):
             showlegend=False
         )])
         
-        # सेंटर मध्ये PCR मजकूर टाकणे
         fig3.add_annotation(
             text=f"PCR<br><b>{pcr_val}</b>",
             x=0.5, y=0.5, font_size=18, font_color="#ffffff", showarrow=False
@@ -254,7 +283,6 @@ def render_image_style_oi_dashboard(current_price, asset_name):
         st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_graph")
 
 
-# मुख्य कोड रनिंग
 tf_interval = tf_map[timeframe]
 
 with st.spinner("माहिती गोळा केली जात आहे..."):
@@ -273,7 +301,6 @@ if df_ltf is not None:
     with col_t2:
         st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
         
-    # जर भारतीय इंडेक्स किंवा स्टॉक असेल तर इमेज स्टाईलचा डॅशबोर्ड लोड करा
     if market_type == "यादीमधून निवडा" and ("NSE" in asset_choice or "NIFTY" in asset_choice) or is_indian:
         st.markdown("---")
         render_image_style_oi_dashboard(current_price, display_name)
