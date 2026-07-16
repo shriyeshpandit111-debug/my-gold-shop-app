@@ -8,14 +8,34 @@ from streamlit_autorefresh import st_autorefresh
 # पानाची रचना सेट करा
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", page_icon="⚡")
 
-# --- 🔄 ऑटो-रिफ्रेश सेट करणे (दर ३0 सेकंदांनी) ---
-st_autorefresh(interval=30000, key="datarefresh") 
-
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
-st.write("भारतीय मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
-st.info("🔄 हे ॲप आणि खालील ग्राफिक्स दर **३० सेकंदांनी** न थांबता आपोआप रिफ्रेश होऊन नवीन डेटा अपडेट करत आहेत.")
+st.write("भारतीय營मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
 
-# १. युझरकडून इनपुट घेणे (Sidebar)
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar सेटिंग ---
+st.sidebar.header("⏱️ Auto Refresh Settings")
+refresh_choice = st.sidebar.selectbox(
+    "रिफ्रेश वेळ निवडा (Refresh Interval):",
+    ["३० सेकंद", "१ मिनिट", "२ मिनिट", "३ मिनिट", "४ मिनिट", "५ मिनिट"],
+    index=0  # बाय डीफॉल्ट ३० सेकंद सेट असेल
+)
+
+# निवडीनुसार मिलिसेकंद (Milliseconds) सेट करणे
+refresh_map = {
+    "३० सेकंद": 30000,
+    "१ मिनिट": 60000,
+    "२ मिनिट": 120000,
+    "३ मिनिट": 180000,
+    "४ मिनिट": 240000,
+    "५ मिनिट": 300000
+}
+chosen_interval = refresh_map[refresh_choice]
+
+# निवडलेल्या वेळेनुसार ऑटो-रिफ्रेश ट्रिगर करणे
+st_autorefresh(interval=chosen_interval, key="datarefresh") 
+
+st.info(f"🔄 हे ॲप आणि खालील ग्राफिक्स तुमच्या निवडीनुसार दर **{refresh_choice}** नंतर आपोआप रिफ्रेश होतील.")
+
+# २. युझरकडून इनपुट घेणे (Sidebar)
 st.sidebar.header("⚙️ Market & Settings")
 
 market_type = st.sidebar.radio("मार्केट निवडण्याची पद्धत:", ["यादीमधून निवडा", "मॅन्युअली नाव टाईप करा", "Forex (फॉरेक्स मॅन्युअल)"])
@@ -67,7 +87,6 @@ tf_map = {
 # --- 🕒 अचूक टाईमझोनसह डेटा फेचिंग ---
 def fetch_data(ticker_symbol, interval):
     try:
-        # लोड कमी करण्यासाठी लिमिट्स कमी केल्या आहेत
         if interval in ["1m"]:
             period = "2d" 
         elif interval in ["5m", "10m", "15m", "30m"]:
@@ -89,7 +108,6 @@ def fetch_data(ticker_symbol, interval):
             'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         })
         
-        # टाईमझोन थेट स्थानिक वेळेत (IST - Asia/Kolkata) कन्व्हर्ट करणे
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         if df['timestamp'].dt.tz is None:
             df['timestamp'] = df['timestamp'].dt.localize('UTC').dt.tz_convert('Asia/Kolkata')
@@ -142,15 +160,12 @@ def analyze_smc_pro_v2(df, daily_trend):
         avg_vol = df['vol_sma'].iloc[i]
         high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
         
-        # स्विंग्स ट्रॅकिंग (मागील ४ कॅंडल्स)
         prev_4_low = df['low'].iloc[i-4:i].min()
         prev_4_high = df['high'].iloc[i-4:i].max()
         
-        # Strict Liquidity Sweep & Candle Close Check
         is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
         is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
         
-        # ChoCh & Imbalance
         is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-3:i].max()
         is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-3:i].min()
         
@@ -165,11 +180,9 @@ def analyze_smc_pro_v2(df, daily_trend):
         mitigated_bullish = any(not b['mitigated'] and df['low'].iloc[i] <= b['high'] for b in bullish_blocks)
         mitigated_bearish = any(not b['mitigated'] and df['high'].iloc[i] >= b['low'] for b in bearish_blocks)
 
-        # निर्णय फिल्टर (स्वतंत्र नियम)
         buy_triggered = (is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg and df['close'].iloc[i] > df['open'].iloc[i])
         sell_triggered = (is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg and df['close'].iloc[i] < df['open'].iloc[i])
 
-        # दोन्ही एकाच वेळी ट्रिगर झाल्यास वगळणे (Mutual Exclusion Guard)
         if buy_triggered and sell_triggered:
             continue
 
@@ -278,7 +291,6 @@ if df_ltf is not None and not df_ltf.empty:
     
     st.subheader("🎯 Live SMC PRO Institutional Signals (Ultra-High Accuracy)")
     if not signals_df.empty:
-        # वेळ वाचण्यासाठी आणि अचूक दिसण्यासाठी शेवटचे सिग्नल्स उलट्या क्रमाने (नवीन सर्वात वर) दाखवणे
         st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         
         latest = signals_df.iloc[-1]
