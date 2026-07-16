@@ -64,17 +64,23 @@ tf_map = {
     "30m": "30m", "1h": "60m", "4h": "1h", "1d": "1d"
 }
 
+# डेटा फेचिंग फंक्शन सुधारित केले आहे
 def fetch_data(ticker_symbol, interval):
     try:
+        # लोड कमी करण्यासाठी आणि जलद रिस्पॉन्ससाठी टाईम लिमिट्स कमी केल्या आहेत
         if interval in ["1m"]:
-            period = "7d"
-        elif interval in ["5m", "15m", "30m", "60m", "1h"]:
-            period = "30d"
+            period = "2d"  # ७ दिवसांऐवजी २ दिवसांचा डेटा
+        elif interval in ["5m", "10m", "15m", "30m"]:
+            period = "5d"  # ३० दिवसांऐवजी ५ दिवसांचा डेटा (इंट्राडेसाठी पुरेसा आहे)
+        elif interval in ["60m", "1h"]:
+            period = "1mo"
         else:
-            period = "max"
+            period = "1y"
             
-        data = yf.download(tickers=ticker_symbol, period=period, interval=interval, progress=False)
-        if data.empty: return None
+        # timeout पॅरामीटर जोडून ब्लॉक होणे टाळले आहे
+        data = yf.download(tickers=ticker_symbol, period=period, interval=interval, progress=False, timeout=10)
+        if data is None or data.empty: 
+            return None
             
         df = data.reset_index()
         df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
@@ -91,10 +97,10 @@ def fetch_data(ticker_symbol, interval):
 def get_daily_trend(ticker_symbol):
     try:
         df_daily = fetch_data(ticker_symbol, "1d")
-        if df_daily is not None and len(df_daily) > 50:
-            ema50 = df_daily['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        if df_daily is not None and len(df_daily) > 20:
+            ema20 = df_daily['close'].ewm(span=20, adjust=False).mean().iloc[-1]
             last_price = df_daily['close'].iloc[-1]
-            if last_price > ema50:
+            if last_price > ema20:
                 return "BULLISH 📈"
             else:
                 return "BEARISH 📉"
@@ -118,7 +124,7 @@ def add_indicators(df):
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
-# --- 🔥 [अल्ट्रा-ॲक्युरेट] पिनपॉईंट ग्लोबल रिव्हर्सल इंजिन (क्रिप्टो, फॉरेक्स, गोल्ड आणि शेअर्ससाठी) ---
+# --- 🔥 [अल्ट्रा-ॲक्युरेट] पिनपॉईंट ग्लोबल रिव्हर्सल इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
     bullish_blocks = []
@@ -129,38 +135,35 @@ def analyze_smc_pro_v2(df, daily_trend):
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
         
-        # क्रिप्टो/फॉरेक्स 24/7 चालू असल्याने व्हॉल्युम फिल्टर थोडा लवचिक केला आहे
         high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
         
-        # इमेजप्रमाणे टोकदार 'At-the-point' एंट्रीसाठी मागील ३ ते ४ कॅंडल्सचे स्विंग्स तपासणे
+        # मागील ४ कॅंडल्सचे स्विंग्स
         prev_4_low = df['low'].iloc[i-4:i].min()
         prev_4_high = df['high'].iloc[i-4:i].max()
         
-        # Wick Rejection & Sweep Logic (इमेजमधील परफेक्ट यू-टर्न मॅचिंग)
+        # Wick Rejection & Sweep Logic
         is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['low'].iloc[i])
         is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['high'].iloc[i])
         
-        # ChoCh & Imbalance घटक
+        # ChoCh & Imbalance
         is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-3:i].max()
         is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-3:i].min()
         
         is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
         is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
 
-        # ऑर्डर ब्लॉक रेकॉर्ड ठेवणे
         if df['close'].iloc[i] > df['open'].iloc[i] and high_volume:
             bullish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
         elif df['close'].iloc[i] < df['open'].iloc[i] and high_volume:
             bearish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
 
-        # मिटिगेशन ट्रॅकिंग
         mitigated_bullish = any(not b['mitigated'] and df['low'].iloc[i] <= b['high'] for b in bullish_blocks)
         mitigated_bearish = any(not b['mitigated'] and df['high'].iloc[i] >= b['low'] for b in bearish_blocks)
 
-        # 🟢 EXACT POINT BUY SIGNAL (इमेजमधील निळ्या/हिरव्या सर्कल प्रमाणे थेट खालून)
+        # 🟢 EXACT POINT BUY SIGNAL
         if (is_bullish_sweep and high_volume) or (is_choch_bullish and (is_bullish_fvg or mitigated_bullish)):
             entry = df['close'].iloc[i]
-            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)  # अगदी जवळचा स्टॉप लॉस
+            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
             risk = entry - stop_loss
             
             if risk > 0:
@@ -175,10 +178,10 @@ def analyze_smc_pro_v2(df, daily_trend):
                     'Trigger Reason': 'Sharp Bottom Turnaround Confirmed'
                 })
 
-        # 🔴 EXACT POINT SELL SIGNAL (इमेजमधील रेड सर्कल प्रमाणे थेट वरून)
+        # 🔴 EXACT POINT SELL SIGNAL
         if (is_bearish_sweep and high_volume) or (is_choch_bearish and (is_bearish_fvg or mitigated_bearish)):
             entry = df['close'].iloc[i]
-            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)  # अगदी जवळचा स्टॉप लॉस
+            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
             risk = stop_loss - entry
             
             if risk > 0:
@@ -237,11 +240,13 @@ def render_image_style_oi_dashboard(current_price, asset_name):
 
 tf_interval = tf_map[timeframe]
 
-with st.spinner("माहिती गोळा केली जात आहे..."):
+# डेटा गोळा करताना स्पिनर फक्त डेटा येईपर्यंत दिसेल, त्यानंतर बंद होईल
+df_ltf = None
+with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
     daily_trend = get_daily_trend(ticker)
     df_ltf = fetch_data(ticker, tf_interval)
 
-if df_ltf is not None:
+if df_ltf is not None and not df_ltf.empty:
     df_ltf = add_indicators(df_ltf)
     current_price = df_ltf['close'].iloc[-1]
     
@@ -278,4 +283,4 @@ if df_ltf is not None:
     st.subheader("📈 SMC Price Chart (Reference)")
     st.line_chart(df_ltf.set_index('timestamp')['close'].tail(50))
 else:
-    st.error(f"'{ticker}' चा डेटा मिळू शकला नाही. कृपया नाव तपासून घ्या.")
+    st.error(f"🚨 '{ticker}' चा डेटा Yahoo Finance वरून वेळेत लोड होऊ शकला नाही. तुमच्या इंटरनेट कनेक्शनमध्ये अडचण असू शकते किंवा टिकरचे नाव चुकले असू शकते. कृपया काही सेकंदांनंतर पेज मॅन्युअली रिफ्रेश करून पहा.")
