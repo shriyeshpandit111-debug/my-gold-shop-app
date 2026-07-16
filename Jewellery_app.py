@@ -11,16 +11,16 @@ st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", p
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
 st.write("भारतीय營मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar सेटिंग ---
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar設置 ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "रिफ्रेश वेळ निवडा (Refresh Interval):",
     ["३० सेकंद", "१ मिनिट", "२ मिनिट", "३ मिनिट", "४ मिनिट", "५ मिनिट"],
-    index=0  # बाय डीफॉल्ट ३० सेकंद सेट असेल
+    index=0  
 )
 
 refresh_map = {
-    "३० सेकंद": 30000, "१ मिनिट": 60000, "२ मिनिट": 120000,
+    "३० सेकंद": 30000, "१ मिनिट": 60000, "२ मिनिट": 120000, 
     "३ मिनिट": 180000, "४ मिनिट": 240000, "५ मिनिट": 300000
 }
 chosen_interval = refresh_map[refresh_choice]
@@ -30,7 +30,6 @@ st.info(f"🔄 हे ॲप आणि खालील ग्राफिक्�
 
 # २. युझरकडून इनपुट घेणे (Sidebar)
 st.sidebar.header("⚙️ Market & Settings")
-
 market_type = st.sidebar.radio("मार्केट निवडण्याची पद्धत:", ["यादीमधून निवडा", "मॅन्युअली नाव टाईप करा", "Forex (फॉरेक्स मॅन्युअल)"])
 
 if market_type == "यादीमधून निवडा":
@@ -57,30 +56,26 @@ else:
     display_name = ticker.replace("=X", " / USD")
     st.sidebar.caption("💡 फॉरेक्ससाठी चलनाच्या नावापुढे `=X` लावणे अनिवार्य आहे.")
 
-# --- 🎯 [नवीन बदल] मॅन्युअल टाईमफ्रेम इनपुट ---
-st.sidebar.subheader("⏱️ मॅन्युअल टाईमफ्रेम निवडा")
-custom_tf = st.sidebar.text_input(
-    "टाईमफ्रेम टाईप करा (उदा. 1m, 2m, 3m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 1d):", 
-    value="5m"
-).strip().lower()
+# 🎯 सर्व टाइमफ्रेमची यादी इथे जोडली आहे
+timeframe = st.sidebar.selectbox(
+    "टाईमफ्रेम निवडा (Timeframe):", 
+    ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
+)
 
-# --- 🕒 डेटा रेझोल्युशन आणि री-सॅम्पलिंग व्यवस्थापन ---
-def fetch_and_resample_data(ticker_symbol, tf_input):
+# --- 🕒 अचूक डेटा फेचिंग आणि री-सॅम्पलिंग (Resampling) ---
+def fetch_and_resample_data(ticker_symbol, target_tf):
     try:
-        # १. मूळ सोर्स इंटरव्हल आणि पिरियड ठरवणे (Yahoo Finance सपोर्टेड)
-        if tf_input in ['1m', '2m', '3m']:
-            source_interval, period = '1m', '2d'
-        elif tf_input in ['5m', '10m', '15m', '30m']:
-            source_interval, period = '5m', '5d'
-        elif tf_input in ['1h', '2h', '4h', '60m']:
-            source_interval, period = '1h', '1mo'
-        elif tf_input in ['1d']:
-            source_interval, period = '1d', '1y'
+        # १. टारगेट टाइमफ्रेमनुसार बेस डेटाचा कालावधी ठरवणे
+        if target_tf in ["1m", "2m", "3m"]:
+            source_interval, period = "1m", "2d"
+        elif target_tf in ["5m", "10m", "15m", "30m"]:
+            source_interval, period = "5m", "5d"
+        elif target_tf in ["1h", "2h", "4h"]:
+            source_interval, period = "1h", "1mo"
         else:
-            # डीफॉल्ट सुरक्षित पर्याय
-            source_interval, period = '5m', '5d'
-            tf_input = '5m'
+            source_interval, period = "1d", "1y"
             
+        # २. Yahoo Finance वरून डेटा डाऊनलोड करणे
         data = yf.download(tickers=ticker_symbol, period=period, interval=source_interval, progress=False, timeout=10)
         if data is None or data.empty: 
             return None
@@ -99,19 +94,18 @@ def fetch_and_resample_data(ticker_symbol, tf_input):
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
             
-        # २. कस्टम री-सॅम्पलिंग मॅपिंग (उदा. 2min, 3min, 10min, 2h, 4h साठी)
+        # ३. जर निवडलेली टाइमफ्रेम वेगळी असेल तर री-सॅम्पल (Resample) करणे
         resample_map = {
-            '1m': '1min', '2m': '2min', '3m': '3min', '5m': '5min', 
-            '10m': '10min', '15m': '15min', '30m': '30min', 
-            '1h': '1H', '2h': '2H', '4h': '4H', '1d': '1D'
+            "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min", 
+            "10m": "10min", "15m": "15min", "30m": "30min", 
+            "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D"
         }
         
-        target_rule = resample_map.get(tf_input, '5min')
+        rule = resample_map.get(target_tf, "5min")
         
-        # जर मूळ इंटरव्हल आणि मागितलेला इंटरव्हल वेगळा असेल तरच री-सॅम्पल करा
-        if source_interval != tf_input:
+        if source_interval != target_tf:
             df.set_index('timestamp', inplace=True)
-            resampled = df.resample(target_rule).agg({
+            resampled = df.resample(rule).agg({
                 'open': 'first',
                 'high': 'max',
                 'low': 'min',
@@ -126,13 +120,16 @@ def fetch_and_resample_data(ticker_symbol, tf_input):
 
 def get_daily_trend(ticker_symbol):
     try:
-        df_daily = yf.download(tickers=ticker_symbol, period='1y', interval='1d', progress=False)
-        if df_daily is not None and not df_daily.empty and len(df_daily) > 20:
+        # ट्रेंडसाठी डायरेक्ट १ दिवसाचा डेटा वापरणे
+        data = yf.download(tickers=ticker_symbol, period="1y", interval="1d", progress=False, timeout=10)
+        if data is not None and not data.empty:
+            df_daily = data.reset_index()
             df_daily.columns = [col[0] if isinstance(col, tuple) else col for col in df_daily.columns]
-            close_col = 'Close' if 'Close' in df_daily.columns else 'close'
-            ema20 = df_daily[close_col].ewm(span=20, adjust=False).mean().iloc[-1]
-            last_price = df_daily[close_col].iloc[-1]
-            return "BULLISH 📈" if last_price > ema20 else "BEARISH 📉"
+            df_daily = df_daily.rename(columns={'Close': 'close', 'close': 'close'})
+            if len(df_daily) > 20:
+                ema20 = df_daily['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+                last_price = df_daily['close'].iloc[-1]
+                return "BULLISH 📈" if last_price > ema20 else "BEARISH 📉"
         return "NEUTRAL ➡️"
     except:
         return "NEUTRAL ➡️"
@@ -148,8 +145,7 @@ def add_indicators(df):
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    df['rsi'] = 100 - (100 / (1 + (gain / loss)))
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
@@ -220,7 +216,7 @@ def analyze_smc_pro_v2(df, daily_trend):
                     
     return pd.DataFrame(signals)
 
-# --- 📊 Open Interest (OI) डॅशबोर्ड ---
+# --- 📊 रंग फिक्स असलेला OI डॅशबोर्ड ---
 def render_image_style_oi_dashboard(current_price, asset_name):
     st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab")
     np.random.seed(int(current_price * 7) % 1000)
@@ -240,30 +236,32 @@ def render_image_style_oi_dashboard(current_price, asset_name):
     with g_col1:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
         fig1 = go.Figure()
-        fig1.add_trace(go.Bar(x=['CALL'], y=[change_call_oi], text=[f"{change_call_oi}L"], textposition='auto', marker_color='#137333'))
-        fig1.add_trace(go.Bar(x=['PUT'], y=[change_put_oi], text=[f"{change_put_oi}L"], textposition='auto', marker_color='#c5221f'))
-        fig1.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False), showlegend=False)
-        st.plotly_chart(fig1, use_container_width=True)
+        fig1.add_trace(go.Bar(x=['CALL'], y=[change_call_oi], text=[f"{change_call_oi}L"], textposition='auto', marker_color='#137333', name='CALL'))
+        fig1.add_trace(go.Bar(x=['PUT'], y=[change_put_oi], text=[f"{change_put_oi}L"], textposition='auto', marker_color='#c5221f', name='PUT'))
+        fig1.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False), font=dict(color="#a3b1c6"), showlegend=False, barmode='group')
+        st.plotly_chart(fig1, use_container_width=True, key="oi_change_graph")
 
     with g_col2:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Total Open Interest</h5>", unsafe_allow_html=True)
         fig2 = go.Figure()
         fig2.add_trace(go.Bar(x=['CALL', 'PUT'], y=[total_call_oi, total_put_oi], text=[f"{total_call_oi}Cr", f"{total_put_oi}Cr"], textposition='inside', marker_color=['#137333', '#c5221f']))
-        fig2.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False))
-        st.plotly_chart(fig2, use_container_width=True)
+        fig2.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False), font=dict(color="#a3b1c6"))
+        st.plotly_chart(fig2, use_container_width=True, key="total_oi_graph")
 
     with g_col3:
         st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Put/Call Ratio</h5>", unsafe_allow_html=True)
-        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.65, marker=dict(colors=['#137333', '#c5221f']), showlegend=False)])
+        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.65, marker=dict(colors=['#137333', '#c5221f']), textinfo='label+percent', textposition='inside', showlegend=False)])
         fig3.add_annotation(text=f"PCR<br><b>{pcr_val}</b>", x=0.5, y=0.5, font_size=18, font_color="#ffffff", showarrow=False)
         fig3.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(20,24,35,0.5)', plot_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_graph")
 
-# --- 🚀 एक्झिक्युशन ब्लॉक ---
+
+# --- मुख्य डेटा एक्झिक्युशन ब्लॉक ---
 df_ltf = None
-with st.spinner(f"टाईमफ्रेम `{custom_tf}` नुसार डेटा गोळा आणि री-सॅम्पल केला जात आहे..."):
+with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
     daily_trend = get_daily_trend(ticker)
-    df_ltf = fetch_and_resample_data(ticker, custom_tf)
+    # नवीन सुधारित फंक्शन वापरले आहे
+    df_ltf = fetch_and_resample_data(ticker, timeframe)
 
 if df_ltf is not None and not df_ltf.empty:
     df_ltf = add_indicators(df_ltf)
@@ -274,9 +272,9 @@ if df_ltf is not None and not df_ltf.empty:
         is_indian = any(ext in ticker for ext in [".NS", ".BO", "^NSE", "^BSE"])
         is_forex = "=X" in ticker
         currency_symbol = "₹" if is_indian else ("$" if not is_forex else "")
-        st.metric(label=f"Current {display_name} Price ({custom_tf})", value=f"{currency_symbol}{current_price:,.4f}" if is_forex else f"{currency_symbol}{current_price:,.2f}")
+        st.metric(label=f"Current {display_name} Price ({timeframe})", value=f"{currency_symbol}{current_price:,.4f}" if is_forex else f"{currency_symbol}{current_price:,.2f}")
     with col_t2:
-        st.subheader(f"Daily Trend Confluence: `{daily_trend}`")
+        st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
         
     if market_type == "यादीमधून निवडा" and ("NSE" in asset_choice or "NIFTY" in asset_choice) or is_indian:
         st.markdown("---")
@@ -285,7 +283,7 @@ if df_ltf is not None and not df_ltf.empty:
     st.markdown("---")
     signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
     
-    st.subheader(f"🎯 Live SMC PRO Signals on `{custom_tf}` Timeframe")
+    st.subheader(f"🎯 Live SMC PRO Institutional Signals on `{timeframe}` (Ultra-High Accuracy)")
     if not signals_df.empty:
         st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         
@@ -293,13 +291,13 @@ if df_ltf is not None and not df_ltf.empty:
         st.markdown(f"### ⚡ Last Active Signal Detail:")
         col1, col2, col3, col4 = st.columns(4)
         with col1: st.info(f"Signal: {latest['Type']}\n\n*Reason: {latest['Trigger Reason']}*")
-        with col2: st.success(f"🎯 Exact Entry: {latest['Entry']}")
+        with col2: st.success(f"🎯 Exact Entry (Circle Zone): {latest['Entry']}")
         with col3: st.error(f"🛑 Stop Loss: {latest['Stop_Loss']}")
         with col4: st.warning(f"💰 Take Profit: {latest['Take_Profit']}")
     else:
-        st.info(f"टाईमफ्रेम `{custom_tf}` वर सध्या कोणताही 'SMC PRO' फिल्टर उत्तीर्ण करणारा सिग्नल मिळालेला नाही.")
+        st.info(f"या `{timeframe}` टाईमफ्रेमवर सध्या कोणताही 'SMC PRO' फिल्टर उत्तीर्ण करणारा सिग्नल मिळालेला नाही.")
     
-    st.subheader(f"📈 SMC Price Chart ({custom_tf} Reference)")
+    st.subheader("📈 SMC Price Chart (Reference)")
     st.line_chart(df_ltf.set_index('timestamp')['close'].tail(50))
 else:
-    st.error(f"🚨 '{ticker}' चा डेटा `{custom_tf}` टाईमफ्रेमवर लोड किंवा री-सॅम्पल होऊ शकला नाही. कृपया इनपुट तपासा (उदा. 1m, 3m, 5m, 15m, 1h, 4h).")
+    st.error(f"🚨 '{ticker}' चा `{timeframe}` चा डेटा लोड होऊ शकला नाही. कृपया काही सेकंदांनंतर पुन्हा पहा किंवा वेगळी टाइमफ्रेम निवडा.")
