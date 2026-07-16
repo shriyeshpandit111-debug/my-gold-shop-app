@@ -9,7 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", page_icon="⚡")
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
-st.write("भारतीय營मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
+st.write("भारतीय मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
 
 # --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
@@ -148,7 +148,7 @@ def add_indicators(df):
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
-# --- 🔥 [अल्ट्रा-फिक्स] नो-गोंधळ प्रगत पिनपॉईंट सिग्नल्स इंजिन ---
+# --- 🔥 [नवीन सुधारित] प्रगत पिनपॉईंट आणि फिल्टर सिग्नल्स इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
     bullish_blocks = []
@@ -158,30 +158,35 @@ def analyze_smc_pro_v2(df, daily_trend):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
-        high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
+        high_volume = current_vol > (1.1 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
+        rsi_val = df['rsi'].iloc[i] if not pd.isna(df['rsi'].iloc[i]) else 50
         
+        # स्विंग्स ट्रॅकिंग
         prev_4_low = df['low'].iloc[i-4:i].min()
         prev_4_high = df['high'].iloc[i-4:i].max()
         
-        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
-        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
+        # Strict Liquidity Sweep
+        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i])
+        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i])
         
-        is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-3:i].max()
-        is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-3:i].min()
+        # ChoCh (Trend shift detect करणे)
+        is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-2:i].max()
+        is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-2:i].min()
         
+        # FVG
         is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
         is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
 
-        if df['close'].iloc[i] > df['open'].iloc[i] and high_volume:
-            bullish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
-        elif df['close'].iloc[i] < df['open'].iloc[i] and high_volume:
-            bearish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
+        # --- 🚨 ट्रेंड आणि फेक सिग्नल फिल्टर्स (Trend & Fake Filters) ---
+        # १. जोपर्यंत RSI ३५ च्या खाली आहे, तोपर्यंत नवीन SELL सिग्नल येणार नाही (तळाला येणारे उशिरा सेल ब्लॉक करण्यासाठी)
+        # २. जोपर्यंत RSI ६५ च्या वर आहे, तोपर्यंत नवीन BUY सिग्नल येणार नाही (फेक टॉप बाय ब्लॉक करण्यासाठी)
+        # ३. जर Daily Trend बेअरिश असेल तर बाय सिग्नल्स फिल्टर करणे
+        
+        buy_allowed = (rsi_val < 65) and (daily_trend != "BEARISH 📉" or rsi_val < 30)
+        sell_allowed = (rsi_val > 35) and (daily_trend != "BULLISH 📈" or rsi_val > 70)
 
-        mitigated_bullish = any(not b['mitigated'] and df['low'].iloc[i] <= b['high'] for b in bullish_blocks)
-        mitigated_bearish = any(not b['mitigated'] and df['high'].iloc[i] >= b['low'] for b in bearish_blocks)
-
-        buy_triggered = (is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg and df['close'].iloc[i] > df['open'].iloc[i])
-        sell_triggered = (is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg and df['close'].iloc[i] < df['open'].iloc[i])
+        buy_triggered = buy_allowed and ((is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg))
+        sell_triggered = sell_allowed and ((is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg))
 
         if buy_triggered and sell_triggered:
             continue
@@ -189,10 +194,10 @@ def analyze_smc_pro_v2(df, daily_trend):
         # 🟢 PERFECT BUY
         if buy_triggered:
             entry = df['close'].iloc[i]
-            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
+            stop_loss = df['low'].iloc[i] - (0.05 * atr_val)
             risk = entry - stop_loss
             if risk > 0:
-                take_profit = entry + (risk * 2.5)
+                take_profit = entry + (risk * 2.0)
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -206,10 +211,10 @@ def analyze_smc_pro_v2(df, daily_trend):
         # 🔴 PERFECT SELL
         elif sell_triggered:
             entry = df['close'].iloc[i]
-            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
+            stop_loss = df['high'].iloc[i] + (0.05 * atr_val)
             risk = stop_loss - entry
             if risk > 0:
-                take_profit = entry - (risk * 2.5)
+                take_profit = entry - (risk * 2.0)
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
