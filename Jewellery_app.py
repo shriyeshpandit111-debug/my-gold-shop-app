@@ -146,16 +146,13 @@ def add_indicators(df):
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
-    
-    # ट्रेंड फिल्टरसाठी ५० EMA जोडणे (Intraday Trend Confluence)
-    df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
-    
     return df
 
-# --- 🔥 [नवीन सुधारित] 'सिग्नल फिल्टर' प्रगत सिग्नल्स इंजिन ---
+# --- 🔥 [नवीन सुधारित] प्रगत पिनपॉईंट आणि फिल्टर सिग्नल्स इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
-    last_signal_type = None  # सलग एकाच प्रकारचे सिग्नल्स रोखण्यासाठी व्हेरिएबल
+    bullish_blocks = []
+    bearish_blocks = []
     
     for i in range(12, len(df)):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
@@ -163,11 +160,6 @@ def analyze_smc_pro_v2(df, daily_trend):
         avg_vol = df['vol_sma'].iloc[i]
         high_volume = current_vol > (1.1 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
         rsi_val = df['rsi'].iloc[i] if not pd.isna(df['rsi'].iloc[i]) else 50
-        
-        # ५० EMA वरून चालू कॅंडलचा ट्रेंड शोधणे
-        current_close = df['close'].iloc[i]
-        ema_val = df['ema_50'].iloc[i]
-        intraday_bullish = current_close > ema_val
         
         # स्विंग्स ट्रॅकिंग
         prev_4_low = df['low'].iloc[i-4:i].min()
@@ -185,11 +177,13 @@ def analyze_smc_pro_v2(df, daily_trend):
         is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
         is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
 
-        # --- 🚨 ट्रेंड आधारित अचूक फिल्टर सिस्टीम ---
-        # १. जर इंट्राडे ट्रेंड Bullish असेल तर फक्त BUY सिग्नल्स मान्य केले जातील.
-        # २. जर इंट्राडे ट्रेंड Bearish असेल तर फक्त SELL सिग्नल्स मान्य केले जातील.
-        buy_allowed = intraday_bullish and (rsi_val < 60)
-        sell_allowed = (not intraday_bullish) and (rsi_val > 40)
+        # --- 🚨 ट्रेंड आणि फेक सिग्नल फिल्टर्स (Trend & Fake Filters) ---
+        # १. जोपर्यंत RSI ३५ च्या खाली आहे, तोपर्यंत नवीन SELL सिग्नल येणार नाही (तळाला येणारे उशिरा सेल ब्लॉक करण्यासाठी)
+        # २. जोपर्यंत RSI ६५ च्या वर आहे, तोपर्यंत नवीन BUY सिग्नल येणार नाही (फेक टॉप बाय ब्लॉक करण्यासाठी)
+        # ३. जर Daily Trend बेअरिश असेल तर बाय सिग्नल्स फिल्टर करणे
+        
+        buy_allowed = (rsi_val < 65) and (daily_trend != "BEARISH 📉" or rsi_val < 30)
+        sell_allowed = (rsi_val > 35) and (daily_trend != "BULLISH 📈" or rsi_val > 70)
 
         buy_triggered = buy_allowed and ((is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg))
         sell_triggered = sell_allowed and ((is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg))
@@ -198,12 +192,12 @@ def analyze_smc_pro_v2(df, daily_trend):
             continue
 
         # 🟢 PERFECT BUY
-        if buy_triggered and last_signal_type != 'BUY':
+        if buy_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['low'].iloc[i] - (0.05 * atr_val)
             risk = entry - stop_loss
             if risk > 0:
-                take_profit = entry + (risk * 2.0) # RR 1:2
+                take_profit = entry + (risk * 2.0)
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -211,17 +205,16 @@ def analyze_smc_pro_v2(df, daily_trend):
                     'Stop_Loss': round(stop_loss, 4 if "X" in ticker or "USD" in ticker else 2),
                     'Take_Profit': round(take_profit, 4 if "X" in ticker or "USD" in ticker else 2),
                     'Institution Activity': 'Smart Money Liquidity Sweep & Wick Rejection',
-                    'Trigger Reason': 'Intraday Bullish Trend - Sharp Turnaround'
+                    'Trigger Reason': 'Sharp Bottom Turnaround Confirmed'
                 })
-                last_signal_type = 'BUY' # सलग येणारे सिग्नल्स लॉक करणे
 
         # 🔴 PERFECT SELL
-        elif sell_triggered and last_signal_type != 'SELL':
+        elif sell_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['high'].iloc[i] + (0.05 * atr_val)
             risk = stop_loss - entry
             if risk > 0:
-                take_profit = entry - (risk * 2.0) # RR 1:2 (TP हा एन्ट्रीपेक्षा कमी असेल)
+                take_profit = entry - (risk * 2.0)
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -229,9 +222,8 @@ def analyze_smc_pro_v2(df, daily_trend):
                     'Stop_Loss': round(stop_loss, 4 if "X" in ticker or "USD" in ticker else 2),
                     'Take_Profit': round(take_profit, 4 if "X" in ticker or "USD" in ticker else 2),
                     'Institution Activity': 'Smart Money Stop Hunt & Supply Sweep',
-                    'Trigger Reason': 'Intraday Bearish Trend - Sharp Turnaround'
+                    'Trigger Reason': 'Sharp Top Turnaround Confirmed'
                 })
-                last_signal_type = 'SELL' # सलग येणारे सिग्नल्स लॉक करणे
                     
     return pd.DataFrame(signals)
 
