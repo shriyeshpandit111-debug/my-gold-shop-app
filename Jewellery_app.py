@@ -9,37 +9,55 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", page_icon="⚡")
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
-st.write("भारतीय營मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
+st.write("भारतीय मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar設置 ---
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "रिफ्रेश वेळ निवडा (Refresh Interval):",
     ["३० सेकंद", "१ मिनिट", "२ मिनिट", "३ मिनिट", "४ मिनिट", "५ मिनिट"],
-    index=0  
+    index=0  # बाय डीफॉल्ट ३० सेकंद सेट असेल
 )
 
+# निवडीनुसार मिलिसेकंद (Milliseconds) सेट करणे
 refresh_map = {
-    "३० सेकंद": 30000, "१ मिनिट": 60000, "२ मिनिट": 120000, 
-    "३ मिनिट": 180000, "४ मिनिट": 240000, "५ मिनिट": 300000
+    "३० सेकंद": 30000,
+    "१ मिनिट": 60000,
+    "२ मिनिट": 120000,
+    "३ मिनिट": 180000,
+    "४ मिनिट": 240000,
+    "५ मिनिट": 300000
 }
 chosen_interval = refresh_map[refresh_choice]
+
+# निवडलेल्या वेळेनुसार ऑटो-रिफ्रेश ट्रिगर करणे
 st_autorefresh(interval=chosen_interval, key="datarefresh") 
 
 st.info(f"🔄 हे ॲप आणि खालील ग्राफिक्स तुमच्या निवडीनुसार दर **{refresh_choice}** नंतर आपोआप रिफ्रेश होतील.")
 
 # २. युझरकडून इनपुट घेणे (Sidebar)
 st.sidebar.header("⚙️ Market & Settings")
+
 market_type = st.sidebar.radio("मार्केट निवडण्याची पद्धत:", ["यादीमधून निवडा", "मॅन्युअली नाव टाईप करा", "Forex (फॉरेक्स मॅन्युअल)"])
 
 if market_type == "यादीमधून निवडा":
     asset_choice = st.sidebar.selectbox(
         "ॲसेट निवडा (Asset):", 
-        ["NIFTY 50 (NSE)", "BANK NIFTY (NSE)", "BTC (Bitcoin)", "GOLD (सोने)", "SILVER (चांदी)"]
+        [
+            "NIFTY 50 (NSE)", 
+            "BANK NIFTY (NSE)", 
+            "BTC (Bitcoin)", 
+            "GOLD (सोने)", 
+            "SILVER (चांदी)"
+        ]
     )
+    
     ticker_map = {
-        "NIFTY 50 (NSE)": "^NSEI", "BANK NIFTY (NSE)": "^NSEBANK",
-        "BTC (Bitcoin)": "BTC-USD", "GOLD (सोने)": "GC=F", "SILVER (चांदी)": "SI=F"
+        "NIFTY 50 (NSE)": "^NSEI",
+        "BANK NIFTY (NSE)": "^NSEBANK",
+        "BTC (Bitcoin)": "BTC-USD",
+        "GOLD (सोने)": "GC=F",
+        "SILVER (चांदी)": "SI=F"
     }
     ticker = ticker_map[asset_choice]
     display_name = asset_choice
@@ -54,28 +72,28 @@ else:
     forex_ticker = st.sidebar.text_input("Forex Ticker टाका (उदा. EURUSD=X, GBPUSD=X, AUDUSD=X):", value="EURUSD=X")
     ticker = forex_ticker.strip()
     display_name = ticker.replace("=X", " / USD")
-    st.sidebar.caption("💡 फॉरेक्ससाठी चलनाच्या नावापुढे `=X` लावणे अनिवार्य आहे.")
+    st.sidebar.caption("💡 फॉरेक्ससाठी चलनाच्या नावापुढे `=X` लावणे अनिवार्य आहे. उदा. `EURUSD=X` किंवा `USDJPY=X`")
 
-# 🎯 सर्व टाइमफ्रेमची यादी इथे जोडली आहे
+# 🎯 १. नवीन ११ टाइमफ्रेमची यादी (Timeframe Dropdown Selection)
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Timeframe):", 
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
 )
 
-# --- 🕒 अचूक डेटा फेचिंग आणि री-सॅम्पलिंग (Resampling) ---
+# --- 🕒 अचूक टाईमझोन आणि स्मार्ट री-सॅम्पलिंगसह डेटा फेचिंग ---
 def fetch_and_resample_data(ticker_symbol, target_tf):
     try:
-        # १. टारगेट टाइमफ्रेमनुसार बेस डेटाचा कालावधी ठरवणे
+        # २. टारगेट टाइमफ्रेमनुसार डाऊनलोड करण्यासाठी योग्य बेस इंटरव्हल आणि पिरियड ठरवणे
         if target_tf in ["1m", "2m", "3m"]:
             source_interval, period = "1m", "2d"
         elif target_tf in ["5m", "10m", "15m", "30m"]:
             source_interval, period = "5m", "5d"
         elif target_tf in ["1h", "2h", "4h"]:
             source_interval, period = "1h", "1mo"
-        else:
+        else: # "1d" साठी
             source_interval, period = "1d", "1y"
             
-        # २. Yahoo Finance वरून डेटा डाऊनलोड करणे
+        # डेटा गोळा करणे
         data = yf.download(tickers=ticker_symbol, period=period, interval=source_interval, progress=False, timeout=10)
         if data is None or data.empty: 
             return None
@@ -94,7 +112,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
             
-        # ३. जर निवडलेली टाइमफ्रेम वेगळी असेल तर री-सॅम्पल (Resample) करणे
+        # ३. Pandas Resampling मॅपिंग (निवडलेल्या टाइमफ्रेममध्ये डेटा रूपांतरित करणे)
         resample_map = {
             "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min", 
             "10m": "10min", "15m": "15min", "30m": "30min", 
@@ -103,6 +121,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         
         rule = resample_map.get(target_tf, "5min")
         
+        # जर निवडलेला टाइमफ्रेम हा मूळ डाऊनलोड केलेल्या डेटापेक्षा वेगळा असेल तर रि-सॅम्पल करणे
         if source_interval != target_tf:
             df.set_index('timestamp', inplace=True)
             resampled = df.resample(rule).agg({
@@ -120,16 +139,19 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
 
 def get_daily_trend(ticker_symbol):
     try:
-        # ट्रेंडसाठी डायरेक्ट १ दिवसाचा डेटा वापरणे
+        # डेली ट्रेंडसाठी थेट १ दिवसाचा डेटा मागवणे
         data = yf.download(tickers=ticker_symbol, period="1y", interval="1d", progress=False, timeout=10)
         if data is not None and not data.empty:
             df_daily = data.reset_index()
             df_daily.columns = [col[0] if isinstance(col, tuple) else col for col in df_daily.columns]
-            df_daily = df_daily.rename(columns={'Close': 'close', 'close': 'close'})
+            df_daily = df_daily.rename(columns={'Close': 'close', 'close': 'close', 'Date': 'timestamp', 'timestamp': 'timestamp'})
             if len(df_daily) > 20:
                 ema20 = df_daily['close'].ewm(span=20, adjust=False).mean().iloc[-1]
                 last_price = df_daily['close'].iloc[-1]
-                return "BULLISH 📈" if last_price > ema20 else "BEARISH 📉"
+                if last_price > ema20:
+                    return "BULLISH 📈"
+                else:
+                    return "BEARISH 📉"
         return "NEUTRAL ➡️"
     except:
         return "NEUTRAL ➡️"
@@ -145,37 +167,42 @@ def add_indicators(df):
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    df['rsi'] = 100 - (100 / (1 + (gain / loss)))
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
-# --- 🔥 प्रगत पिनपॉईंट आणि फिल्टर सिग्नल्स इंजिन ---
+# --- 🔥 [अल्ट्रा-फिक्स] नो-गोंधळ प्रगत पिनपॉईंट सिग्नल्स इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
+    bullish_blocks = []
+    bearish_blocks = []
+    
     for i in range(12, len(df)):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
         current_vol = df['volume'].iloc[i]
         avg_vol = df['vol_sma'].iloc[i]
-        high_volume = current_vol > (1.1 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
-        rsi_val = df['rsi'].iloc[i] if not pd.isna(df['rsi'].iloc[i]) else 50
+        high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
         
         prev_4_low = df['low'].iloc[i-4:i].min()
         prev_4_high = df['high'].iloc[i-4:i].max()
         
-        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i])
-        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i])
+        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
+        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
         
-        is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-2:i].max()
-        is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-2:i].min()
+        is_choch_bullish = df['close'].iloc[i] > df['high'].iloc[i-3:i].max()
+        is_choch_bearish = df['close'].iloc[i] < df['low'].iloc[i-3:i].min()
         
         is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
         is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
 
-        buy_allowed = (rsi_val < 65) and (daily_trend != "BEARISH 📉" or rsi_val < 30)
-        sell_allowed = (rsi_val > 35) and (daily_trend != "BULLISH 📈" or rsi_val > 70)
+        if df['close'].iloc[i] > df['open'].iloc[i] and high_volume:
+            bullish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
+        elif df['close'].iloc[i] < df['open'].iloc[i] and high_volume:
+            bearish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
 
-        buy_triggered = buy_allowed and ((is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg))
-        sell_triggered = sell_allowed and ((is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg))
+        buy_triggered = (is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg and df['close'].iloc[i] > df['open'].iloc[i])
+        sell_triggered = (is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg and df['close'].iloc[i] < df['open'].iloc[i])
 
         if buy_triggered and sell_triggered:
             continue
@@ -183,10 +210,10 @@ def analyze_smc_pro_v2(df, daily_trend):
         # 🟢 PERFECT BUY
         if buy_triggered:
             entry = df['close'].iloc[i]
-            stop_loss = df['low'].iloc[i] - (0.05 * atr_val)
+            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
             risk = entry - stop_loss
             if risk > 0:
-                take_profit = entry + (risk * 2.0)
+                take_profit = entry + (risk * 2.5)
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -200,10 +227,10 @@ def analyze_smc_pro_v2(df, daily_trend):
         # 🔴 PERFECT SELL
         elif sell_triggered:
             entry = df['close'].iloc[i]
-            stop_loss = df['high'].iloc[i] + (0.05 * atr_val)
+            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
             risk = stop_loss - entry
             if risk > 0:
-                take_profit = entry - (risk * 2.0)
+                take_profit = entry - (risk * 2.5)
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
@@ -256,11 +283,11 @@ def render_image_style_oi_dashboard(current_price, asset_name):
         st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_graph")
 
 
-# --- मुख्य डेटा एक्झिक्युशन ब्लॉक ---
+# --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
 with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
     daily_trend = get_daily_trend(ticker)
-    # नवीन सुधारित फंक्शन वापरले आहे
+    # नवीन सुधारित स्मार्ट डेटा फंक्शनचा वापर
     df_ltf = fetch_and_resample_data(ticker, timeframe)
 
 if df_ltf is not None and not df_ltf.empty:
@@ -300,4 +327,4 @@ if df_ltf is not None and not df_ltf.empty:
     st.subheader("📈 SMC Price Chart (Reference)")
     st.line_chart(df_ltf.set_index('timestamp')['close'].tail(50))
 else:
-    st.error(f"🚨 '{ticker}' चा `{timeframe}` चा डेटा लोड होऊ शकला नाही. कृपया काही सेकंदांनंतर पुन्हा पहा किंवा वेगळी टाइमफ्रेम निवडा.")
+    st.error(f"🚨 '{ticker}' चा `{timeframe}` डेटा Yahoo Finance वरून वेळेत लोड होऊ शकला नाही. कृपया काही सेकंदांनंतर पुन्हा प्रयत्न करा.")
