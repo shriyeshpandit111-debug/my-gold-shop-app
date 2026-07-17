@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -14,75 +13,10 @@ st.title("⚡ SMC PRO - Option Chain & Signals Dashboard")
 # --- ⚙️ Upstox API Configuration Sidebar ---
 st.sidebar.header("🔑 Upstox API Configuration")
 
-# युझरकडून API Credentials घेणे
-client_id = st.sidebar.text_input("Enter Upstox API Key (Client ID):", type="password")
-client_secret = st.sidebar.text_input("Enter Upstox API Secret:", type="password")
+# थेट डेव्हलपर साईटवरून मिळवलेला Access Token इथे टाकण्यासाठी रकाना
+access_token = st.sidebar.text_input("Enter Upstox Access Token:", type="password", help="Upstox Developer Console वरून जनरेट केलेला Access Token इथे पेस्ट करा.")
 
-# तुमच्या लाईव्ह डॅशबोर्डची लिंक
-redirect_uri = "https://my-gold-shop-app-9klufwulfrshfxa8ns46rr.streamlit.app/"
-
-# --- 🔐 AUTOMATIC OAUTH LOGIN FLOW ---
-# १. ब्राउझरच्या URL मधून 'code' आला आहे का ते तपासणे
-query_params = st.query_params
-auth_code = query_params.get("code")
-
-# सेशन्स स्टेटमध्ये टोकन साठवण्यासाठी जागा तयार करणे
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
-
-# जर URL मध्ये 'code' मिळाला आणि सेशन्समध्ये अजून टोकन नसेल, तर टोकन जनरेट करणे
-if auth_code and not st.session_state.access_token:
-    if client_id and client_secret:
-        with st.spinner("Upstox कडून Access Token मिळवला जात आहे..."):
-            token_url = "https://api.upstox.com/v2/login/authorization/token"
-            payload = {
-                "code": auth_code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code"
-            }
-            headers = {
-                "accept": "application/json",
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
-            try:
-                response = requests.post(token_url, data=payload, headers=headers)
-                if response.status_code == 200:
-                    st.session_state.access_token = response.json().get("access_token")
-                    st.success("🎉 Upstox लॉगिन यशस्वी! टोकन सेव्ह झाले आहे.")
-                    # URL मधील ?code= स्वच्छ करणे
-                    st.query_params.clear()
-                else:
-                    st.error(f"टोकन मिळवताना एरर आला: {response.text}")
-            except Exception as e:
-                st.error(f"कनेक्शन एरर: {str(e)}")
-    else:
-        st.warning("⚠️ कृपया डाव्या बाजूस आधी 'API Key' आणि 'API Secret' भरा, मग लॉगिन करा.")
-
-# लॉगिन बटण दाखवणे (टोकन नसेल तर)
-if not st.session_state.access_token:
-    st.sidebar.subheader("🔒 Upstox Account Login")
-    if client_id:
-        # लॉगिनची लिंक तयार करणे
-        auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
-        # target="_blank" चा वापर करून नवीन टॅबमध्ये सुरक्षितपणे लॉगिन उघडणे
-        st.sidebar.markdown(
-            f'<a href="{auth_url}" target="_blank">'
-            f'<button style="background-color: #10b981; color: white; padding: 10px 20px; '
-            f'border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">'
-            f'🟢 Click here to Login to Upstox</button></a>', 
-            unsafe_allow_html=True
-        )
-    else:
-        st.sidebar.info("💡 लॉगिन करण्यासाठी आधी तुमची 'API Key' वर टाका.")
-else:
-    st.sidebar.success("✅ Upstox Connected!")
-    if st.sidebar.button("🔴 Logout Upstox"):
-        st.session_state.access_token = None
-        st.rerun()
-
-# --- ⏱️ ऑटो-रिफ्रेश設定 ---
+# --- ⏱️ ऑटो-रिफ्रेश सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox("रिफ्रेश वेळ निवडा:", ["३० सेकंद", "१ मिनिट", "२ मिनिट", "५ मिनिट"], index=0)
 refresh_map = {"३० सेकंद": 30000, "१ मिनिट": 60000, "२ मिनिट": 120000, "५ मिनिट": 300000}
@@ -91,10 +25,52 @@ st_autorefresh(interval=refresh_map[refresh_choice], key="datarefresh")
 # मार्केट निवडणे
 st.sidebar.header("⚙️ Market Settings")
 asset_choice = st.sidebar.selectbox("ॲसेट निवडा:", ["NIFTY", "BANKNIFTY"])
-upstox_instrument_map = {"NIFTY": "NSE_INDEX|Nifty 50", "BANKNIFTY": "NSE_INDEX|Nifty Bank"}
-instrument_key = upstox_instrument_map[asset_choice]
-ticker = "^NSEI" if asset_choice == "NIFTY" else "^NSEBANK"
+
+# Upstox साठी इन्स्ट्रुमेंट मॅपिंग
+upstox_instrument_map = {
+    "NIFTY": {"option_key": "NSE_INDEX|Nifty 50", "history_key": "NSE_INDEX|Nifty 50"},
+    "BANKNIFTY": {"option_key": "NSE_INDEX|Nifty Bank", "history_key": "NSE_INDEX|Nifty Bank"}
+}
+instrument_info = upstox_instrument_map[asset_choice]
 display_name = f"{asset_choice} (NSE)"
+
+# --- 📈 Upstox कडून थेट चार्ट डेटा (Historical Candle) मिळवणे ---
+def fetch_candles_from_upstox(instrument_key, token):
+    # ५ मिनिटांच्या कॅंडल्ससाठी Upstox API (मागील ५ दिवसांचा डेटा)
+    url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/2026-07-17" # २०२६ नुसार चालू तारीख
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    try:
+        # तारीख डायनॅमिक मिळवणे जेणेकरून मागील ५ दिवसांचा डेटा अचूक येईल
+        today_str = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%Y-%m-%d')
+        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/{today_str}"
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            res_data = response.json()
+            if res_data.get("status") == "success" and res_data.get("data", {}).get("candles"):
+                candles = res_data["data"]["candles"]
+                # Upstox डेटा फॉरमॅट: [timestamp, open, high, low, close, volume, open_interest]
+                df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
+                
+                # जुना डेटा आधी आणि नवीन डेटा शेवटी करण्यासाठी सॉर्टिंग
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.sort_values('timestamp').reset_index(drop=True)
+                df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
+                
+                # तांत्रिक इंडिकेटर (ATR आणि Vol SMA) जोडणे
+                high_low = df['high'] - df['low']
+                high_close = np.abs(df['high'] - df['close'].shift())
+                low_close = np.abs(df['low'] - df['close'].shift())
+                df['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
+                df['vol_sma'] = df['volume'].rolling(window=20).mean()
+                return df
+        return None
+    except Exception as e:
+        print(f"Upstox Candle Error: {e}")
+        return None
 
 # --- 🎯 Upstox Live Option Chain Data Fetcher ---
 def get_upstox_option_chain_data(inst_key, token):
@@ -140,46 +116,6 @@ def get_upstox_option_chain_data(inst_key, token):
     except Exception as e:
         return None, str(e)
 
-# --- 📈 Yahoo Data for SMC PRO Signals (Error Handling सह) ---
-def fetch_candles_for_smc(ticker_symbol):
-    try:
-        # डेटा फेचिंग अधिक सुरक्षित करणे
-        ticker_obj = yf.Ticker(ticker_symbol)
-        data = ticker_obj.history(period="5d", interval="5m")
-        
-        # जर ५ मिनिटांचा डेटा रिकामा मिळाला, तर १५ मिनिटांचा डेटा मागवणे
-        if data is None or data.empty: 
-            data = ticker_obj.history(period="5d", interval="15m")
-            
-        if data is None or data.empty:
-            return None
-            
-        df = data.reset_index()
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-        
-        # कॉलमच्या नावांचे रिनेमिंग अचूक करणे
-        if 'Datetime' in df.columns:
-            df = df.rename(columns={'Datetime': 'timestamp'})
-        elif 'Date' in df.columns:
-            df = df.rename(columns={'Date': 'timestamp'})
-        else:
-            df.rename(columns={df.columns[0]: 'timestamp'}, inplace=True)
-            
-        df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
-        
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
-        
-        # ATR आणि SMA इंडिकेटर जोडणे
-        high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        df['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
-        df['vol_sma'] = df['volume'].rolling(window=20).mean()
-        return df
-    except Exception as e:
-        print(f"Yahoo Finance Error: {e}")
-        return None
-
 # --- 🔥 SMC PRO Signals Engine ---
 def analyze_smc_pro_v2(df):
     signals = []
@@ -223,7 +159,7 @@ def analyze_smc_pro_v2(df):
                 })
     return pd.DataFrame(signals)
 
-# --- 📊 [Render Live Option Chain Layout] ---
+# --- 📊 Render Live Option Chain Layout ---
 def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
     st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) [⚡ UPSTOX LIVE]")
     
@@ -284,29 +220,29 @@ def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
         st.plotly_chart(fig3, use_container_width=True, key="upstox_pcr_donut")
 
 # --- मुख्य प्रोग्राम एक्झिक्युशन ---
-df_ltf = fetch_candles_for_smc(ticker)
-
-if df_ltf is not None and not df_ltf.empty:
-    current_price = df_ltf['close'].iloc[-1]
-    st.metric(label=f"Current {display_name} Spot Price", value=f"₹{current_price:,.2f}")
-    
-    # जर सेशन्समध्ये ऍक्टिव्ह टोकन असेल तर अपस्टॉक्स ऑप्शन डेटा लोड करणे
-    if st.session_state.access_token:
+if access_token:
+    with st.spinner("Upstox वरून चार्ट डेटा लोड केला जात आहे..."):
+        df_ltf = fetch_candles_from_upstox(instrument_info["history_key"], access_token)
+        
+    if df_ltf is not None and not df_ltf.empty:
+        current_price = df_ltf['close'].iloc[-1]
+        st.metric(label=f"Current {display_name} Spot Price", value=f"₹{current_price:,.2f}")
+        
         with st.spinner("Connecting Upstox Realtime Option Chain API..."):
-            opt_data, err_msg = get_upstox_option_chain_data(instrument_key, st.session_state.access_token)
+            opt_data, err_msg = get_upstox_option_chain_data(instrument_info["option_key"], access_token)
             if opt_data:
                 render_upstox_oi_dashboard(opt_data, df_ltf, asset_choice)
             else:
                 st.error(f"❌ अपस्टॉक्स कनेक्शन एरर: {err_msg}")
+                
+        st.markdown("---")
+        signals_df = analyze_smc_pro_v2(df_ltf)
+        st.subheader("🎯 Live SMC PRO Institutional Signals (Ultra-High Accuracy)")
+        if not signals_df.empty:
+            st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+        else:
+            st.info("सध्या कोणताही नवीन सिग्नल मिळालेला नाही.")
     else:
-        st.warning("👉 डाव्या बाजूला 'API Key' आणि 'API Secret' टाकून हिरव्या रंगाच्या 'Login to Upstox' बटणावर क्लिक करा.")
-        
-    st.markdown("---")
-    signals_df = analyze_smc_pro_v2(df_ltf)
-    st.subheader("🎯 Live SMC PRO Institutional Signals (Ultra-High Accuracy)")
-    if not signals_df.empty:
-        st.dataframe(signals_df.iloc[::-1], use_container_width=True)
-    else:
-        st.info("सध्या कोणताही नवीन सिग्नल मिळालेला नाही.")
+        st.error("🚨 Upstox कडून चार्ट डेटा लोड होऊ शकला नाही. कृपया तुमचा 'Access Token' अचूक आहे ना, याची खात्री करा.")
 else:
-    st.error("🚨 डेटा लोड होऊ शकला नाही. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा किंवा इंटरनेट कनेक्शन तपासा.")
+    st.warning("👈 डाव्या बाजूला आधी तुमचा 'Upstox Access Token' टाका, म्हणजे डेटा लोड होईल.")
