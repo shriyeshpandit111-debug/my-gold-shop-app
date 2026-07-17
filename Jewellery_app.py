@@ -17,7 +17,9 @@ st.sidebar.header("🔑 Upstox API Configuration")
 # युझरकडून API Credentials घेणे
 client_id = st.sidebar.text_input("Enter Upstox API Key (Client ID):", type="password")
 client_secret = st.sidebar.text_input("Enter Upstox API Secret:", type="password")
-redirect_uri = "http://localhost:8501"  # तुमच्या Upstox App मध्ये हाच Redirect URL असावा
+
+# तुमच्या लाईव्ह डॅशबोर्डची नवीन अचूक लिंक (शेवटी स्लॅशसह)
+redirect_uri = "https://my-gold-shop-app-9klufwulfrshfxa8ns46rr.streamlit.app/"
 
 # --- 🔐 AUTOMATIC OAUTH LOGIN FLOW ---
 # १. ब्राउझरच्या URL मधून 'code' आला आहे का ते तपासणे
@@ -56,7 +58,7 @@ if auth_code and not st.session_state.access_token:
             except Exception as e:
                 st.error(f"कनेक्शन एरर: {str(e)}")
     else:
-        st.warning("⚠️ कृपया डाव्या बाजूस आधी 'API Key' आणि 'API Secret' भरा, मग लॉगिन करा.")
+        st.warning("⚠️ कृपया डाव्या बाजूस आधी 'API Key' and 'API Secret' भरा, मग लॉगिन करा.")
 
 # लॉगिन बटण दाखवणे (टोकन नसेल तर)
 if not st.session_state.access_token:
@@ -64,7 +66,14 @@ if not st.session_state.access_token:
     if client_id:
         # लॉगिनची लिंक तयार करणे
         auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
-        st.sidebar.markdown(f'<a href="{auth_url}" target="_self"><button style="background-color: #10b981; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; width: 100%;">🟢 Click here to Login to Upstox</button></a>', unsafe_allow_html=True)
+        # target="_blank" चा वापर करून नवीन टॅबमध्ये सुरक्षितपणे लॉगिन उघडणे
+        st.sidebar.markdown(
+            f'<a href="{auth_url}" target="_blank">'
+            f'<button style="background-color: #10b981; color: white; padding: 10px 20px; '
+            f'border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">'
+            f'🟢 Click here to Login to Upstox</button></a>', 
+            unsafe_allow_html=True
+        )
     else:
         st.sidebar.info("💡 लॉगिन करण्यासाठी आधी तुमची 'API Key' वर टाका.")
 else:
