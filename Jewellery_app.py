@@ -8,15 +8,24 @@ from datetime import datetime, timedelta
 import urllib.parse
 
 # पानाची रचना सेट करा
-st.set_page_config(page_title="SMC PRO Smart Signal Dashboard with Upstox", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", page_icon="⚡")
 
-st.title("⚡ SMC PRO - Option Chain & Signals Dashboard")
+st.title("⚡ SMC PRO - Multi-Asset & Multi-Timeframe Signals")
 
 # --- ⚙️ Upstox API Configuration Sidebar ---
 st.sidebar.header("🔑 Upstox API Configuration")
 
-# थेट डेव्हलपर साईटवरून मिळवलेला Access Token इथे टाकण्यासाठी रकाना
-access_token = st.sidebar.text_input("Enter Upstox Access Token:", type="password", help="Upstox Developer Console वरून जनरेट केलेला Access Token इथे पेस्ट करा.")
+# URL मधून टोकन वाचण्याचा प्रयत्न करणे
+query_params = st.query_params
+url_token = query_params.get("token", "")
+
+# टोकन इनपुट बॉक्स
+access_token = st.sidebar.text_input(
+    "Enter Upstox Access Token:", 
+    value=url_token,
+    type="password", 
+    help="Upstox Developer Console वरून जनरेट केलेला Access Token इथे पेस्ट करा."
+)
 
 # --- ⏱️ ऑटो-रिफ्रेश सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
@@ -24,42 +33,117 @@ refresh_choice = st.sidebar.selectbox("रिफ्रेश वेळ निव
 refresh_map = {"३० सेकंद": 30000, "१ मिनिट": 60000, "२ मिनिट": 120000, "५ मिनिट": 300000}
 st_autorefresh(interval=refresh_map[refresh_choice], key="datarefresh") 
 
-# Market Settings
+# --- ⚙️ Market Settings ---
 st.sidebar.header("⚙️ Market Settings")
-asset_choice = st.sidebar.selectbox("ॲसेट निवडा:", ["NIFTY", "BANKNIFTY"])
+asset_choice = st.sidebar.selectbox("ॲसेट निवडा:", ["NIFTY", "BANKNIFTY", "GOLD", "SILVER", "BTC"])
 
-# Upstox साठी अत्यंत अचूक इन्स्ट्रुमेंट मॅपिंग
-upstox_instrument_map = {
-    "NIFTY": {
-        "option_key": "NSE_INDEX|Nifty 50", 
-        "history_key": "NSE_INDEX|Nifty 50"
-    },
-    "BANKNIFTY": {
-        "option_key": "NSE_INDEX|Nifty Bank", 
-        "history_key": "NSE_INDEX|Nifty Bank"
-    }
+# --- ⏳ Time Frame Selection (नवीन जोडलेले) ---
+st.sidebar.header("⏳ Time Frame Settings")
+tf_choice = st.sidebar.selectbox(
+    "टाईम फ्रेम निवडा (Time Frame):", 
+    ["1 min", "2 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "2 hr", "4 hr", "1 Day", "1 Week"],
+    index=3 # बाय-डीफॉल्ट 5 Min सिलेक्ट राहील
+)
+
+# टाइमफ्रेमला Pandas च्या सुसंगत कोडमध्ये मॅप करणे
+tf_map = {
+    "1 min": "1T", "2 min": "2T", "3 min": "3T", "5 min": "5T", "10 min": "10T", 
+    "15 min": "15T", "30 min": "30T", "1 hr": "1H", "2 hr": "2H", "4 hr": "4H", 
+    "1 Day": "1D", "1 Week": "1W"
 }
-instrument_info = upstox_instrument_map[asset_choice]
-display_name = f"{asset_choice} (NSE)"
 
-# --- 📅 चालू किंवा नजीकची एक्सपायरी शोधणारे फंक्शन ---
+# Upstox आणि Binance साठी सर्व इन्स्ट्रुमेंट्सची माहिती
+instrument_map = {
+    "NIFTY": {"history_key": "NSE_INDEX|Nifty 50", "type": "equity"},
+    "BANKNIFTY": {"history_key": "NSE_INDEX|Nifty Bank", "type": "equity"},
+    "GOLD": {"history_key": "MCX_FO|GOLD", "type": "commodity"},       # MCX Gold Future
+    "SILVER": {"history_key": "MCX_FO|SILVER", "type": "commodity"},   # MCX Silver Future
+    "BTC": {"symbol": "BTCUSDT", "type": "crypto"}                     # Binance Crypto
+}
+
+asset_info = instrument_map[asset_choice]
+
+# --- 🔄 डेटा रि-सॅम्पलिंग फंक्शन (Re-sampling for Custom Timeframes) ---
+def resample_data(df, interval_code):
+    """
+    1-मिनिटाच्या डेटाला युझरने निवडलेल्या टाइमफ्रेममध्ये रूपांतरित करते.
+    """
+    if df is None or df.empty:
+        return df
+    
+    # इंडेक्स म्हणून टाइमस्टॅम्प सेट करणे
+    df = df.set_index('timestamp')
+    
+    # OHLC आणि Volume रि-सँपल करणे
+    resampled = df.resample(interval_code).agg({
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum'
+    }).dropna()
+    
+    resampled = resampled.reset_index()
+    
+    # तांत्रिक इंडिकेटर्स पुन्हा तयार करणे
+    high_low = resampled['high'] - resampled['low']
+    high_close = np.abs(resampled['high'] - resampled['close'].shift())
+    low_close = np.abs(resampled['low'] - resampled['close'].shift())
+    resampled['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
+    resampled['vol_sma'] = resampled['volume'].rolling(window=20).mean()
+    
+    return resampled
+
+# --- 📅 एक्सपायरी कॅल्क्युलेटर ---
 def get_upcoming_expiry_date():
     today = datetime.now().date()
     days_ahead = (3 - today.weekday()) % 7
     upcoming_thursday = today + timedelta(days=days_ahead)
     return upcoming_thursday.strftime('%Y-%m-%d')
 
-# --- 📈 Upstox कडून थेट चार्ट डेटा (Historical Candle) मिळवणे ---
+# --- 🌐 Binance API कडून BTC चा डेटा मिळवणे ---
+@st.cache_data(ttl=30)
+def fetch_btc_from_binance():
+    try:
+        url = "https://api.binance.com/api/v3/klines"
+        # जास्तीत जास्त डेटा ओढणे जेणेकरून मोठ्या टाइमफ्रेमसाठी पुरेसा डेटा मिळेल
+        params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 1000}
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume', 
+                'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore'
+            ])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms').dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+            return df, None
+        return None, "Binance API कडून डेटा मिळाला नाही."
+    except Exception as e:
+        return None, str(e)
+
+# --- 📈 Upstox कडून चार्ट डेटा मिळवणे ---
 def fetch_candles_from_upstox(instrument_key, token):
     try:
         today = datetime.now()
-        start_date = today - timedelta(days=5)
+        # १ दिवसापेक्षा मोठी टाइमफ्रेम असेल तर मागील ३० दिवसांचा डेटा घेणे, अन्यथा ७ दिवसांचा घेणे
+        days_to_fetch = 30 if "Day" in tf_choice or "Week" in tf_choice else 7
+        start_date = today - timedelta(days=days_to_fetch)
         
         to_date_str = today.strftime('%Y-%m-%d')
         from_date_str = start_date.strftime('%Y-%m-%d')
         
         safe_key = urllib.parse.quote(instrument_key)
-        url = f"https://api.upstox.com/v2/historical-candle/{safe_key}/1minute/{to_date_str}/{from_date_str}"
+        
+        # Upstox कडून बेस १-मिनिटाचा डेटा मागवणे (मोठ्या टाईमफ्रेमसाठी आपण 'day' पॅरामीटर थेट वापरू शकतो)
+        api_interval = "1minute"
+        if tf_choice == "1 Day":
+            api_interval = "day"
+        elif tf_choice == "1 Week":
+            api_interval = "week"
+            
+        url = f"https://api.upstox.com/v2/historical-candle/{safe_key}/{api_interval}/{to_date_str}/{from_date_str}"
         
         headers = {
             "Accept": "application/json",
@@ -78,158 +162,48 @@ def fetch_candles_from_upstox(instrument_key, token):
                 df = df.sort_values('timestamp').reset_index(drop=True)
                 
                 df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
-                
-                high_low = df['high'] - df['low']
-                high_close = np.abs(df['high'] - df['close'].shift())
-                low_close = np.abs(df['low'] - df['close'].shift())
-                df['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
-                df['vol_sma'] = df['volume'].rolling(window=20).mean()
                 return df, None
             else:
-                return None, "API कडून कोणताही कॅंडल डेटा मिळाला नाही."
+                return None, "API कडून डेटा रिकामा मिळाला (मार्केट बंद असू शकते)."
         else:
             try:
                 err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
             except:
                 err_details = response.text
             return None, f"HTTP Error {response.status_code}: {err_details}"
-            
     except Exception as e:
-        return None, f"Exception: {str(e)}"
+        return None, str(e)
 
-# --- 🎯 Upstox Live Option Chain Data Fetcher ---
-def get_upstox_option_chain_data(inst_key, token):
-    url = "https://api.upstox.com/v2/option/chain"
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+# --- 📊 Render Price Chart ---
+def render_price_chart(df, asset_name, tf_name):
+    st.subheader(f"📈 {asset_name} ({tf_name}) - Realtime Candle Trend")
+    # चार्टवर शेवटच्या ५० कॅंडल्स दाखवणे
+    df_plot = df.tail(50).reset_index(drop=True)
     
-    expiry_date = get_upcoming_expiry_date()
-    params = {"instrument_key": inst_key, "expiry_date": expiry_date}
-    
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=8)
+    # टाईम फॉरमॅट सेट करणे (दिवस/आठवड्यासाठी तारीख आणि मिनिटांसाठी वेळ)
+    if "Day" in tf_name or "Week" in tf_name:
+        x_format = df_plot['timestamp'].dt.strftime('%d-%b')
+    else:
+        x_format = df_plot['timestamp'].dt.strftime('%d %b, %I:%M %p')
         
-        # Fallback प्रयत्न
-        is_empty = False
-        if response.status_code == 200:
-            res_data = response.json()
-            if not res_data.get("data"):
-                is_empty = True
-        else:
-            is_empty = True
-            
-        if is_empty or response.status_code != 200:
-            params = {"instrument_key": inst_key, "expiry_date": ""}
-            response = requests.get(url, headers=headers, params=params, timeout=8)
-
-        if response.status_code == 200:
-            res_data = response.json()
-            if res_data.get("status") == "success" and res_data.get("data"):
-                chain_list = res_data["data"]
-                total_call_oi = 0
-                total_put_oi = 0
-                total_call_oi_chg = 0
-                total_put_oi_chg = 0
-                
-                for strike_data in chain_list:
-                    call_info = strike_data.get("call_options")
-                    if call_info:
-                        market_data = call_info.get("market_data", {})
-                        total_call_oi += market_data.get("oi", 0)
-                        total_call_oi_chg += market_data.get("oi_change", 0)
-                        
-                    put_info = strike_data.get("put_options")
-                    if put_info:
-                        market_data = put_info.get("market_data", {})
-                        total_put_oi += market_data.get("oi", 0)
-                        total_put_oi_chg += market_data.get("oi_change", 0)
-                
-                if total_call_oi > 0 or total_put_oi > 0:
-                    return {
-                        "last_call_oi": round(total_call_oi / 10000000, 2), # Crores
-                        "last_put_oi": round(total_put_oi / 10000000, 2),   # Crores
-                        "last_call_chg": round(total_call_oi_chg / 100000, 2), # Lakhs
-                        "last_put_chg": round(total_put_oi_chg / 100000, 2),   # Lakhs
-                        "pcr_val": round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0,
-                        "mode": "Live"
-                    }, None
-                    
-    except Exception as e:
-        pass
-        
-    # --- 🛡️ फॉलबॅक मोड (Fallback Simulation): API ने डेटा न दिल्यास सुरक्षितपणे डॅशबोर्ड सुरू ठेवणे ---
-    return {
-        "last_call_oi": 12.5,
-        "last_put_oi": 14.2,
-        "last_call_chg": 4.2,
-        "last_put_chg": 5.8,
-        "pcr_val": 1.14,
-        "mode": "Simulated"
-    }, None
-
-# --- 📊 Render Live Option Chain Layout ---
-def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
-    # डेटा कुठून येत आहे त्यानुसार लेबल बदलणे
-    mode_label = "⚡ UPSTOX LIVE" if opt_data["mode"] == "Live" else "🔄 SMART ESTIMATED"
-    st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) [{mode_label}]")
-    
-    last_call_oi = opt_data["last_call_oi"]
-    last_put_oi = opt_data["last_put_oi"]
-    last_call_chg = opt_data["last_call_chg"]
-    last_put_chg = opt_data["last_put_chg"]
-    pcr_val = opt_data["pcr_val"]
-    
-    df_plot = df_prices.tail(15).reset_index(drop=True)
-    time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
-    
-    call_oi_trend = np.linspace(last_call_oi - 0.5, last_call_oi, len(df_plot))
-    put_oi_trend = np.linspace(last_put_oi - 0.4, last_put_oi, len(df_plot))
-
-    col_line1, col_line2 = st.columns(2)
-    with col_line1:
-        st.markdown("<h5 style='color: #1e293b;'>📈 Trend: Open Interest Change</h5>", unsafe_allow_html=True)
-        fig_line1 = go.Figure()
-        fig_line1.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
-        fig_line1.add_trace(go.Scatter(x=time_labels, y=np.linspace(last_call_chg-1.5, last_call_chg, len(df_plot)), name='Call Chg', line=dict(color='#22c55e', width=2), yaxis='y2'))
-        fig_line1.add_trace(go.Scatter(x=time_labels, y=np.linspace(last_put_chg-1.2, last_put_chg, len(df_plot)), name='Put Chg', line=dict(color='#ef4444', width=2), yaxis='y2'))
-        fig_line1.update_layout(height=260, margin=dict(l=40, r=40, t=10, b=40), plot_bgcolor='white', showlegend=False, xaxis=dict(tickangle=-45), yaxis2=dict(overlaying='y', side='right'))
-        st.plotly_chart(fig_line1, use_container_width=True, key="upstox_chg_line")
-
-    with col_line2:
-        st.markdown("<h5 style='color: #1e293b;'>📈 Trend: Total Open Interest</h5>", unsafe_allow_html=True)
-        fig_line2 = go.Figure()
-        fig_line2.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
-        fig_line2.add_trace(go.Scatter(x=time_labels, y=call_oi_trend, name='Total Call', line=dict(color='#137333', width=2), yaxis='y2'))
-        fig_line2.add_trace(go.Scatter(x=time_labels, y=put_oi_trend, name='Total Put', line=dict(color='#c5221f', width=2), yaxis='y2'))
-        fig_line2.update_layout(height=260, margin=dict(l=40, r=40, t=10, b=40), plot_bgcolor='white', showlegend=False, xaxis=dict(tickangle=-45), yaxis2=dict(overlaying='y', side='right'))
-        st.plotly_chart(fig_line2, use_container_width=True, key="upstox_total_line")
-
-    st.markdown("---")
-    col_bar1, col_bar2, col_donut = st.columns(3)
-    
-    with col_bar1:
-        st.markdown("<h5 style='text-align: center;'>📊 Open Interest Change (Lakhs)</h5>", unsafe_allow_html=True)
-        fig_bar1 = go.Figure(go.Bar(x=['CALL', 'PUT'], y=[last_call_chg, last_put_chg], marker_color=['#137333', '#c5221f'], text=[f"{last_call_chg}L", f"{last_put_chg}L"], textposition='auto', width=0.4))
-        fig_bar1.update_layout(height=250, margin=dict(l=30, r=30, t=20, b=30), plot_bgcolor='#f8fafc', xaxis=dict(tickfont=dict(size=12)))
-        st.plotly_chart(fig_bar1, use_container_width=True, key="live_oi_change_bar")
-        
-    with col_bar2:
-        st.markdown("<h5 style='text-align: center;'>📊 Total Open Interest (Crores)</h5>", unsafe_allow_html=True)
-        fig_bar2 = go.Figure(go.Bar(x=['CALL', 'PUT'], y=[last_call_oi, last_put_oi], marker_color=['#137333', '#c5221f'], text=[f"{last_call_oi}Cr", f"{last_put_oi}Cr"], textposition='auto', width=0.4))
-        fig_bar2.update_layout(height=250, margin=dict(l=30, r=30, t=20, b=30), plot_bgcolor='#f8fafc', xaxis=dict(tickfont=dict(size=12)))
-        st.plotly_chart(fig_bar2, use_container_width=True, key="live_total_oi_bar")
-        
-    with col_donut:
-        st.markdown("<h5 style='text-align: center;'>📊 Put/Call Ratio (PCR)</h5>", unsafe_allow_html=True)
-        total_sum = last_call_oi + last_put_oi
-        call_pct = int((last_call_oi / total_sum) * 100) if total_sum > 0 else 50
-        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, 100-call_pct], hole=.7, marker=dict(colors=['#137333', '#c5221f']), textinfo='none', showlegend=False)])
-        fig3.add_annotation(text=f"PCR<br><span style='font-size:24px; font-weight:bold;'>{pcr_val}</span>", x=0.5, y=0.5, showarrow=False)
-        fig3.update_layout(height=230, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig3, use_container_width=True, key="upstox_pcr_donut")
+    fig = go.Figure(data=[go.Candlestick(
+        x=x_format,
+        open=df_plot['open'],
+        high=df_plot['high'],
+        low=df_plot['low'],
+        close=df_plot['close'],
+        increasing_line_color='#22c55e', 
+        decreasing_line_color='#ef4444'
+    )])
+    fig.update_layout(height=380, margin=dict(l=40, r=40, t=10, b=40), plot_bgcolor='white', xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True, key=f"chart_{asset_name}_{tf_name}")
 
 # --- 🔥 SMC PRO Signals Engine ---
 def analyze_smc_pro_v2(df):
     signals = []
+    if len(df) < 15:
+        return pd.DataFrame(signals)
+        
     for i in range(12, len(df)):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
         current_vol = df['volume'].iloc[i]
@@ -271,26 +245,62 @@ def analyze_smc_pro_v2(df):
     return pd.DataFrame(signals)
 
 # --- मुख्य प्रोग्राम एक्झिक्युशन ---
-if access_token:
-    with st.spinner("Upstox वरून चार्ट डेटा लोड केला जात आहे..."):
-        df_ltf, error_msg = fetch_candles_from_upstox(instrument_info["history_key"], access_token)
+df_raw = None
+error_msg = None
+
+# १. जर BTC निवडले असेल तर थेट Binance कडून डेटा घेणे (टोकनची गरज नाही)
+if asset_info["type"] == "crypto":
+    with st.spinner("Binance वरून BTC लाइव्ह डेटा लोड होत आहे..."):
+        df_raw, error_msg = fetch_btc_from_binance()
+else:
+    # २. इतर ऍसेट्ससाठी Upstox टोकन तपासणे
+    if access_token:
+        with st.spinner(f"Upstox वरून {asset_choice} चा मूळ डेटा लोड केला जात आहे..."):
+            df_raw, error_msg = fetch_candles_from_upstox(asset_info["history_key"], access_token)
+    else:
+        st.warning(f"👈 डाव्या बाजूला आधी तुमचा 'Upstox Access Token' टाका, म्हणजे {asset_choice} चा डेटा लोड होईल.")
+
+# ३. डेटावर टाईम फ्रेम प्रोसेसिंग करणे (Resampling)
+if df_raw is not None and not df_raw.empty:
+    
+    # जर युझरने '1 min' किंवा थेट '1 Day/Week' निवडले नसेल, तर आपण मूळ १-मिनिटाच्या डेटाला रि-सँपल करणार
+    if tf_choice not in ["1 min", "1 Day", "1 Week"]:
+        with st.spinner(f"डेटाला {tf_choice} टाईम फ्रेम मध्ये बदलले जात आहे..."):
+            df_data = resample_data(df_raw, tf_map[tf_choice])
+    else:
+        # जर १ मिनिट किंवा डे/वीक असेल तर डेटा जसा आहे तसाच वापरून इंडिकेटर्स कॅल्क्युलेट करणार
+        df_data = df_raw.copy()
+        high_low = df_data['high'] - df_data['low']
+        high_close = np.abs(df_data['high'] - df_data['close'].shift())
+        low_close = np.abs(df_data['low'] - df_data['close'].shift())
+        df_data['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
+        df_data['vol_sma'] = df_data['volume'].rolling(window=20).mean()
+
+    # ४. चार्ट आणि सिग्नल्स दाखवणे
+    if df_data is not None and not df_data.empty:
+        current_price = df_data['close'].iloc[-1]
+        currency_symbol = "$" if asset_info["type"] == "crypto" else "₹"
         
-    if df_ltf is not None and not df_ltf.empty:
-        current_price = df_ltf['close'].iloc[-1]
-        st.metric(label=f"Current {display_name} Spot Price", value=f"₹{current_price:,.2f}")
-        
-        # कनेक्ट करताना कोणत्याही अडथळ्याशिवाय सुरक्षित OI डॅशबोर्ड लोड करणे
-        opt_data, err_msg = get_upstox_option_chain_data(instrument_info["option_key"], access_token)
-        render_upstox_oi_dashboard(opt_data, df_ltf, asset_choice)
+        # मुख्य मॅट्रिक्स बॉक्स
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label=f"Current {asset_choice} Price", value=f"{currency_symbol}{current_price:,.2f}")
+        with col2:
+            st.metric(label="Selected Time Frame", value=tf_choice)
+            
+        # कॅंडलस्टिक चार्ट दाखवणे
+        render_price_chart(df_data, asset_choice, tf_choice)
                 
         st.markdown("---")
-        signals_df = analyze_smc_pro_v2(df_ltf)
-        st.subheader("🎯 Live SMC PRO Institutional Signals (Ultra-High Accuracy)")
+        
+        # सिग्नल्स इंजिन चालवणे
+        signals_df = analyze_smc_pro_v2(df_data)
+        st.subheader(f"🎯 Live SMC PRO Signals for {asset_choice} ({tf_choice})")
         if not signals_df.empty:
             st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         else:
-            st.info("सध्या कोणताही नवीन सिग्नल मिळालेला नाही.")
+            st.info(f"सध्या {tf_choice} टाइमफ्रेमवर कोणताही नवीन सिग्नल मिळालेला नाही. तुम्ही दुसरी टाईमफ्रेम बदलून पाहू शकता.")
     else:
-        st.error(f"🚨 Upstox कडून चार्ट डेटा लोड होऊ शकला नाही.\n\n कारण: {error_msg}")
-else:
-    st.warning("👈 डाव्या बाजूला आधी तुमचा 'Upstox Access Token' टाका, म्हणजे डेटा लोड होईल.")
+        st.warning("या टाईमफ्रेमसाठी पुरेसा डेटा उपलब्ध नाही.")
+elif error_msg:
+    st.error(f"🚨 डेटा लोड होऊ शकला नाही.\n\nकारण: {error_msg}")
