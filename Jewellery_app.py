@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 from streamlit_autorefresh import st_autorefresh
+from datetime import datetime, timedelta
 
 # पानाची रचना सेट करा
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard with Upstox", layout="wide", page_icon="⚡")
@@ -26,39 +27,52 @@ st_autorefresh(interval=refresh_map[refresh_choice], key="datarefresh")
 st.sidebar.header("⚙️ Market Settings")
 asset_choice = st.sidebar.selectbox("ॲसेट निवडा:", ["NIFTY", "BANKNIFTY"])
 
-# Upstox साठी इन्स्ट्रुमेंट मॅपिंग
+# Upstox साठी अत्यंत अचूक इन्स्ट्रुमेंट मॅपिंग (API नियमांनुसार)
 upstox_instrument_map = {
-    "NIFTY": {"option_key": "NSE_INDEX|Nifty 50", "history_key": "NSE_INDEX|Nifty 50"},
-    "BANKNIFTY": {"option_key": "NSE_INDEX|Nifty Bank", "history_key": "NSE_INDEX|Nifty Bank"}
+    "NIFTY": {
+        "option_key": "NSE_INDEX|Nifty 50", 
+        "history_key": "NSE_INDEX|Nifty 50"
+    },
+    "BANKNIFTY": {
+        "option_key": "NSE_INDEX|Nifty Bank", 
+        "history_key": "NSE_INDEX|Nifty Bank"
+    }
 }
 instrument_info = upstox_instrument_map[asset_choice]
 display_name = f"{asset_choice} (NSE)"
 
 # --- 📈 Upstox कडून थेट चार्ट डेटा (Historical Candle) मिळवणे ---
 def fetch_candles_from_upstox(instrument_key, token):
-    # ५ मिनिटांच्या कॅंडल्ससाठी Upstox API (मागील ५ दिवसांचा डेटा)
-    url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/2026-07-17" # २०२६ नुसार चालू तारीख
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
     try:
-        # तारीख डायनॅमिक मिळवणे जेणेकरून मागील ५ दिवसांचा डेटा अचूक येईल
-        today_str = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%Y-%m-%d')
-        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/{today_str}"
+        # आजची आणि ५ दिवस आधीची तारीख मिळवणे (Format: YYYY-MM-DD)
+        today = datetime.now()
+        start_date = today - timedelta(days=7)
+        
+        to_date_str = today.strftime('%Y-%m-%d')
+        from_date_str = start_date.strftime('%Y-%m-%d')
+        
+        # Upstox v2 Historical Candle API URL
+        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/{to_date_str}/{from_date_str}"
+        
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}"
+        }
         
         response = requests.get(url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             res_data = response.json()
             if res_data.get("status") == "success" and res_data.get("data", {}).get("candles"):
                 candles = res_data["data"]["candles"]
+                
                 # Upstox डेटा फॉरमॅट: [timestamp, open, high, low, close, volume, open_interest]
                 df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
                 
                 # जुना डेटा आधी आणि नवीन डेटा शेवटी करण्यासाठी सॉर्टिंग
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
-                df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
+                df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
                 
                 # तांत्रिक इंडिकेटर (ATR आणि Vol SMA) जोडणे
                 high_low = df['high'] - df['low']
@@ -66,11 +80,16 @@ def fetch_candles_from_upstox(instrument_key, token):
                 low_close = np.abs(df['low'] - df['close'].shift())
                 df['atr'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
                 df['vol_sma'] = df['volume'].rolling(window=20).mean()
-                return df
-        return None
+                return df, None
+            else:
+                return None, "API कडून कोणताही कॅंडल डेटा मिळाला नाही."
+        else:
+            # एरर मेसेज दाखवणे (उदा. Invalid Token इ.)
+            err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
+            return None, f"HTTP Error {response.status_code}: {err_details}"
+            
     except Exception as e:
-        print(f"Upstox Candle Error: {e}")
-        return None
+        return None, f"Exception: {str(e)}"
 
 # --- 🎯 Upstox Live Option Chain Data Fetcher ---
 def get_upstox_option_chain_data(inst_key, token):
@@ -222,7 +241,7 @@ def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
 # --- मुख्य प्रोग्राम एक्झिक्युशन ---
 if access_token:
     with st.spinner("Upstox वरून चार्ट डेटा लोड केला जात आहे..."):
-        df_ltf = fetch_candles_from_upstox(instrument_info["history_key"], access_token)
+        df_ltf, error_msg = fetch_candles_from_upstox(instrument_info["history_key"], access_token)
         
     if df_ltf is not None and not df_ltf.empty:
         current_price = df_ltf['close'].iloc[-1]
@@ -233,7 +252,7 @@ if access_token:
             if opt_data:
                 render_upstox_oi_dashboard(opt_data, df_ltf, asset_choice)
             else:
-                st.error(f"❌ अपस्टॉक्स कनेक्शन एरर: {err_msg}")
+                st.error(f"❌ अपस्टॉक्स ऑप्शन चेन एरर: {err_msg}")
                 
         st.markdown("---")
         signals_df = analyze_smc_pro_v2(df_ltf)
@@ -243,6 +262,6 @@ if access_token:
         else:
             st.info("सध्या कोणताही नवीन सिग्नल मिळालेला नाही.")
     else:
-        st.error("🚨 Upstox कडून चार्ट डेटा लोड होऊ शकला नाही. कृपया तुमचा 'Access Token' अचूक आहे ना, याची खात्री करा.")
+        st.error(f"🚨 Upstox कडून चार्ट डेटा लोड होऊ शकला नाही.\n\n कारण: {error_msg}")
 else:
     st.warning("👈 डाव्या बाजूला आधी तुमचा 'Upstox Access Token' टाका, म्हणजे डेटा लोड होईल.")
