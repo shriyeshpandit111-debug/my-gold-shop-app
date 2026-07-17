@@ -51,7 +51,6 @@ def fetch_candles_from_upstox(instrument_key, token):
         to_date_str = today.strftime('%Y-%m-%d')
         from_date_str = start_date.strftime('%Y-%m-%d')
         
-        # एरर घालवण्यासाठी 5minute ऐवजी '1minute' इंटरव्हल वापरला आहे
         url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/1minute/{to_date_str}/{from_date_str}"
         
         headers = {
@@ -72,7 +71,9 @@ def fetch_candles_from_upstox(instrument_key, token):
                 # जुना डेटा आधी आणि नवीन डेटा शेवटी करण्यासाठी सॉर्टिंग
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
-                df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
+                
+                # सुधारित ओळ: tz_localize न वापरता थेट tz_convert चा वापर केला आहे जेणेकरून एरर येणार नाही
+                df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
                 
                 # तांत्रिक इंडिकेटर (ATR आणि Vol SMA) जोडणे
                 high_low = df['high'] - df['low']
@@ -84,7 +85,6 @@ def fetch_candles_from_upstox(instrument_key, token):
             else:
                 return None, "API कडून कोणताही कॅंडल डेटा मिळाला नाही."
         else:
-            # एरर मेसेज दाखवणे
             try:
                 err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
             except:
