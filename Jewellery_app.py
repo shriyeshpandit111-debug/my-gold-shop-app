@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import requests
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
+import urllib.parse
 
 # पानाची रचना सेट करा
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard with Upstox", layout="wide", page_icon="⚡")
@@ -51,7 +52,9 @@ def fetch_candles_from_upstox(instrument_key, token):
         to_date_str = today.strftime('%Y-%m-%d')
         from_date_str = start_date.strftime('%Y-%m-%d')
         
-        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/1minute/{to_date_str}/{from_date_str}"
+        # की मधील स्पेस एन्कोड करणे (Safe URL format)
+        safe_key = urllib.parse.quote(instrument_key)
+        url = f"https://api.upstox.com/v2/historical-candle/{safe_key}/1minute/{to_date_str}/{from_date_str}"
         
         headers = {
             "Accept": "application/json",
@@ -72,7 +75,6 @@ def fetch_candles_from_upstox(instrument_key, token):
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
                 
-                # सुधारित ओळ: tz_localize न वापरता थेट tz_convert चा वापर केला आहे जेणेकरून एरर येणार नाही
                 df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
                 
                 # तांत्रिक इंडिकेटर (ATR आणि Vol SMA) जोडणे
@@ -96,9 +98,10 @@ def fetch_candles_from_upstox(instrument_key, token):
 
 # --- 🎯 Upstox Live Option Chain Data Fetcher ---
 def get_upstox_option_chain_data(inst_key, token):
+    # Option chain साठी देखील key मधील स्पेस व्यवस्थित एन्कोड करून पाठवणे गरजेचे आहे
     url = "https://api.upstox.com/v2/option/chain"
     headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
-    params = {"instrument_key": inst_key}
+    params = {"instrument_key": inst_key, "expiry_date": ""} # रिकामी expiry पाठवल्यास चालू वीकली एक्सपायरी मिळते
     
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -134,52 +137,14 @@ def get_upstox_option_chain_data(inst_key, token):
                     "pcr_val": round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0
                 }, None
             return None, "Option chain data not found."
-        return None, f"HTTP Error {response.status_code}"
+        else:
+            try:
+                err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
+            except:
+                err_details = response.text
+            return None, f"HTTP Error {response.status_code}: {err_details}"
     except Exception as e:
         return None, str(e)
-
-# --- 🔥 SMC PRO Signals Engine ---
-def analyze_smc_pro_v2(df):
-    signals = []
-    for i in range(12, len(df)):
-        atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
-        current_vol = df['volume'].iloc[i]
-        avg_vol = df['vol_sma'].iloc[i]
-        high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
-        
-        prev_4_low = df['low'].iloc[i-4:i].min()
-        prev_4_high = df['high'].iloc[i-4:i].max()
-        
-        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
-        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
-
-        if is_bullish_sweep and high_volume:
-            entry = df['close'].iloc[i]
-            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
-            risk = entry - stop_loss
-            if risk > 0:
-                signals.append({
-                    'Type': '🟢 PERFECT BUY',
-                    'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
-                    'Entry': round(entry, 2),
-                    'Stop_Loss': round(stop_loss, 2),
-                    'Take_Profit': round(entry + (risk * 2.5), 2),
-                    'Trigger': 'Liquidity Sweep Verified'
-                })
-        elif is_bearish_sweep and high_volume:
-            entry = df['close'].iloc[i]
-            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
-            risk = stop_loss - entry
-            if risk > 0:
-                signals.append({
-                    'Type': '🔴 PERFECT SELL',
-                    'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
-                    'Entry': round(entry, 2),
-                    'Stop_Loss': round(stop_loss, 2),
-                    'Take_Profit': round(entry - (risk * 2.5), 2),
-                    'Trigger': 'Supply Sweep Verified'
-                })
-    return pd.DataFrame(signals)
 
 # --- 📊 Render Live Option Chain Layout ---
 def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
@@ -194,7 +159,7 @@ def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
     df_plot = df_prices.tail(15).reset_index(drop=True)
     time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
     
-    # ऑसिलेशन सिम्युलेशन (ट्रेंड व्ह्यूसाठी)
+    # ऑसिलेशन सिम्युलेशन
     call_oi_trend = np.linspace(last_call_oi - 0.5, last_call_oi, len(df_plot))
     put_oi_trend = np.linspace(last_put_oi - 0.4, last_put_oi, len(df_plot))
 
@@ -241,6 +206,49 @@ def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
         fig3.update_layout(height=230, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig3, use_container_width=True, key="upstox_pcr_donut")
 
+# --- 🔥 SMC PRO Signals Engine ---
+def analyze_smc_pro_v2(df):
+    signals = []
+    for i in range(12, len(df)):
+        atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
+        current_vol = df['volume'].iloc[i]
+        avg_vol = df['vol_sma'].iloc[i]
+        high_volume = current_vol > (1.05 * avg_vol) if not pd.isna(avg_vol) and avg_vol > 0 else True
+        
+        prev_4_low = df['low'].iloc[i-4:i].min()
+        prev_4_high = df['high'].iloc[i-4:i].max()
+        
+        is_bullish_sweep = (df['low'].iloc[i] < prev_4_low) and (df['close'].iloc[i] > df['open'].iloc[i]) and (df['close'].iloc[i] >= prev_4_low)
+        is_bearish_sweep = (df['high'].iloc[i] > prev_4_high) and (df['close'].iloc[i] < df['open'].iloc[i]) and (df['close'].iloc[i] <= prev_4_high)
+
+        if is_bullish_sweep and high_volume:
+            entry = df['close'].iloc[i]
+            stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
+            risk = entry - stop_loss
+            if risk > 0:
+                signals.append({
+                    'Type': '🟢 PERFECT BUY',
+                    'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
+                    'Entry': round(entry, 2),
+                    'Stop_Loss': round(stop_loss, 2),
+                    'Take_Profit': round(entry + (risk * 2.5), 2),
+                    'Trigger': 'Liquidity Sweep Verified'
+                })
+        elif is_bearish_sweep and high_volume:
+            entry = df['close'].iloc[i]
+            stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
+            risk = stop_loss - entry
+            if risk > 0:
+                signals.append({
+                    'Type': '🔴 PERFECT SELL',
+                    'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
+                    'Entry': round(entry, 2),
+                    'Stop_Loss': round(stop_loss, 2),
+                    'Take_Profit': round(entry - (risk * 2.5), 2),
+                    'Trigger': 'Supply Sweep Verified'
+                })
+    return pd.DataFrame(signals)
+
 # --- मुख्य प्रोग्राम एक्झिक्युशन ---
 if access_token:
     with st.spinner("Upstox वरून चार्ट डेटा लोड केला जात आहे..."):
@@ -255,6 +263,7 @@ if access_token:
             if opt_data:
                 render_upstox_oi_dashboard(opt_data, df_ltf, asset_choice)
             else:
+                # जर काही एरर असेल तर तो इथे दिसेल
                 st.error(f"❌ अपस्टॉक्स ऑप्शन चेन एरर: {err_msg}")
                 
         st.markdown("---")
