@@ -27,7 +27,7 @@ st_autorefresh(interval=refresh_map[refresh_choice], key="datarefresh")
 st.sidebar.header("⚙️ Market Settings")
 asset_choice = st.sidebar.selectbox("ॲसेट निवडा:", ["NIFTY", "BANKNIFTY"])
 
-# Upstox साठी अत्यंत अचूक इन्स्ट्रुमेंट मॅपिंग (API नियमांनुसार)
+# Upstox साठी अत्यंत अचूक इन्स्ट्रुमेंट मॅपिंग
 upstox_instrument_map = {
     "NIFTY": {
         "option_key": "NSE_INDEX|Nifty 50", 
@@ -46,13 +46,13 @@ def fetch_candles_from_upstox(instrument_key, token):
     try:
         # आजची आणि ५ दिवस आधीची तारीख मिळवणे (Format: YYYY-MM-DD)
         today = datetime.now()
-        start_date = today - timedelta(days=7)
+        start_date = today - timedelta(days=5)
         
         to_date_str = today.strftime('%Y-%m-%d')
         from_date_str = start_date.strftime('%Y-%m-%d')
         
-        # Upstox v2 Historical Candle API URL
-        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/5minute/{to_date_str}/{from_date_str}"
+        # एरर घालवण्यासाठी 5minute ऐवजी '1minute' इंटरव्हल वापरला आहे
+        url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/1minute/{to_date_str}/{from_date_str}"
         
         headers = {
             "Accept": "application/json",
@@ -84,8 +84,11 @@ def fetch_candles_from_upstox(instrument_key, token):
             else:
                 return None, "API कडून कोणताही कॅंडल डेटा मिळाला नाही."
         else:
-            # एरर मेसेज दाखवणे (उदा. Invalid Token इ.)
-            err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
+            # एरर मेसेज दाखवणे
+            try:
+                err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
+            except:
+                err_details = response.text
             return None, f"HTTP Error {response.status_code}: {err_details}"
             
     except Exception as e:
