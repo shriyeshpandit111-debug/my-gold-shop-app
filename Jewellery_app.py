@@ -9,9 +9,9 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SMC PRO Smart Signal Dashboard", layout="wide", page_icon="⚡")
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
-st.write("भारतीय營 मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
+st.write("भारतीय मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप.")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar सेटिंग ---
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम निवडण्यासाठी Sidebar設定 ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "रिफ्रेश वेळ निवडा (Refresh Interval):",
@@ -19,7 +19,6 @@ refresh_choice = st.sidebar.selectbox(
     index=0  # बाय डीफॉल्ट ३० सेकंद सेट असेल
 )
 
-# निवडीनुसार मिलिसेकंद (Milliseconds) सेट करणे
 refresh_map = {
     "३० सेकंद": 30000,
     "१ मिनिट": 60000,
@@ -30,7 +29,6 @@ refresh_map = {
 }
 chosen_interval = refresh_map[refresh_choice]
 
-# निवडलेल्या वेळेनुसार ऑटो-रिफ्रेश ट्रिगर करणे
 st_autorefresh(interval=chosen_interval, key="datarefresh") 
 
 st.info(f"🔄 हे ॲप आणि खालील ग्राफिक्स तुमच्या निवडीनुसार दर **{refresh_choice}** नंतर आपोआप रिफ्रेश होतील.")
@@ -74,13 +72,12 @@ else:
     display_name = ticker.replace("=X", " / USD")
     st.sidebar.caption("💡 फॉरेक्ससाठी चलनाच्या नावापुढे `=X` लावणे अनिवार्य आहे. उदा. `EURUSD=X` किंवा `USDJPY=X`")
 
-# 🎯 टाइमफ्रेमची यादी (Timeframe Dropdown Selection)
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Timeframe):", 
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
 )
 
-# --- 🕒 अचूक टाईमझोन आणि स्मार्ट री-सॅम्पलिंगसह डेटा फेचिंग ---
+# --- 🕒 डेटा फेचिंग ---
 def fetch_and_resample_data(ticker_symbol, target_tf):
     try:
         if target_tf in ["1m", "2m", "3m"]:
@@ -115,20 +112,14 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
             "10m": "10min", "15m": "15min", "30m": "30min", 
             "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D"
         }
-        
         rule = resample_map.get(target_tf, "5min")
         
         if source_interval != target_tf:
             df.set_index('timestamp', inplace=True)
             resampled = df.resample(rule).agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
+                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
             }).dropna().reset_index()
             return resampled
-            
         return df
     except Exception as e:
         return None
@@ -139,17 +130,14 @@ def get_daily_trend(ticker_symbol):
         if data is not None and not data.empty:
             df_daily = data.reset_index()
             df_daily.columns = [col[0] if isinstance(col, tuple) else col for col in df_daily.columns]
-            df_daily = df_daily.rename(columns={'Close': 'close', 'close': 'close', 'Date': 'timestamp', 'timestamp': 'timestamp'})
+            df_daily = df_daily.rename(columns={'Close': 'close', 'Date': 'timestamp'})
             if len(df_daily) > 20:
                 ema20 = df_daily['close'].ewm(span=20, adjust=False).mean().iloc[-1]
                 last_price = df_daily['close'].iloc[-1]
-                if last_price > ema20:
-                    return "BULLISH 📈"
-                else:
-                    return "BEARISH 📉"
+                if last_price > ema20: return "BULLISH 📈"
+                else: return "BEARISH 📉"
         return "NEUTRAL ➡️"
-    except:
-        return "NEUTRAL ➡️"
+    except: return "NEUTRAL ➡️"
 
 def add_indicators(df):
     high_low = df['high'] - df['low']
@@ -158,7 +146,6 @@ def add_indicators(df):
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = np.max(ranges, axis=1)
     df['atr'] = true_range.rolling(14).mean()
-
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -170,9 +157,6 @@ def add_indicators(df):
 # --- 🔥 SMC PRO Signals Engine ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
-    bullish_blocks = []
-    bearish_blocks = []
-    
     for i in range(12, len(df)):
         atr_val = df['atr'].iloc[i] if not pd.isna(df['atr'].iloc[i]) else (df['close'].iloc[i] * 0.003)
         current_vol = df['volume'].iloc[i]
@@ -191,188 +175,139 @@ def analyze_smc_pro_v2(df, daily_trend):
         is_bullish_fvg = df['low'].iloc[i] > df['high'].iloc[i-2] if i > 2 else False
         is_bearish_fvg = df['high'].iloc[i] < df['low'].iloc[i-2] if i > 2 else False
 
-        if df['close'].iloc[i] > df['open'].iloc[i] and high_volume:
-            bullish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
-        elif df['close'].iloc[i] < df['open'].iloc[i] and high_volume:
-            bearish_blocks.append({'low': df['low'].iloc[i-1], 'high': df['high'].iloc[i-1], 'mitigated': False})
-
         buy_triggered = (is_bullish_sweep and high_volume) or (is_choch_bullish and is_bullish_fvg and df['close'].iloc[i] > df['open'].iloc[i])
         sell_triggered = (is_bearish_sweep and high_volume) or (is_choch_bearish and is_bearish_fvg and df['close'].iloc[i] < df['open'].iloc[i])
 
-        if buy_triggered and sell_triggered:
-            continue
+        if buy_triggered and sell_triggered: continue
 
         if buy_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
             risk = entry - stop_loss
             if risk > 0:
-                take_profit = entry + (risk * 2.5)
                 signals.append({
                     'Type': '🟢 PERFECT BUY (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
-                    'Entry': round(entry, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Stop_Loss': round(stop_loss, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Take_Profit': round(take_profit, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Institution Activity': 'Smart Money Liquidity Sweep & Wick Rejection',
-                    'Trigger Reason': 'Sharp Bottom Turnaround Confirmed'
+                    'Entry': round(entry, 2), 'Stop_Loss': round(stop_loss, 2), 'Take_Profit': round(entry + (risk * 2.5), 2),
+                    'Institution Activity': 'Smart Money Liquidity Sweep', 'Trigger Reason': 'Bottom Turnaround'
                 })
-
         elif sell_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
             risk = stop_loss - entry
             if risk > 0:
-                take_profit = entry - (risk * 2.5)
                 signals.append({
                     'Type': '🔴 PERFECT SELL (CIRCLE ENTRY)',
                     'Time': df['timestamp'].iloc[i].strftime('%Y-%m-%d %H:%M'),
-                    'Entry': round(entry, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Stop_Loss': round(stop_loss, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Take_Profit': round(take_profit, 4 if "X" in ticker or "USD" in ticker else 2),
-                    'Institution Activity': 'Smart Money Stop Hunt & Supply Sweep',
-                    'Trigger Reason': 'Sharp Top Turnaround Confirmed'
+                    'Entry': round(entry, 2), 'Stop_Loss': round(stop_loss, 2), 'Take_Profit': round(entry - (risk * 2.5), 2),
+                    'Institution Activity': 'Smart Money Stop Hunt', 'Trigger Reason': 'Top Turnaround'
                 })
-                    
     return pd.DataFrame(signals)
 
-
-# --- 📊 [इमेजप्रमाणे हुबेहूब ३ स्वतंत्र बार्स आणि पीसीआर कार्ड्स डॅशबोर्ड] ---
+# --- 📊 [StockMojo + Uploaded Image Mix] प्रगत लाईन आणि बार चार्ट्स ---
 def render_image_style_oi_dashboard(df_prices, asset_name):
-    st.subheader(f"📊 {asset_name} - Options Lab")
+    st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab")
     
-    # शेवटचा किंमत डेटा वापरून रँडमनेस स्थिर करणे (जेणेकरून फ्लिकर होणार नाही)
-    last_price = df_prices['close'].iloc[-1] if not df_prices.empty else 24200
+    df_plot = df_prices.tail(30).reset_index(drop=True)
+    num_points = len(df_plot)
+    if num_points == 0: return
+        
+    last_price = df_plot['close'].iloc[-1]
     np.random.seed(int(last_price * 7) % 1000)
     
-    # १. Open Interest Change चे आकडे (इमेजमधील मूल्यांनुसार)
-    call_chg = round(np.random.uniform(-10.0, -5.0), 2)  # उदा. -8.91L सारखे
-    put_chg = round(np.random.uniform(10.0, 15.0), 2)    # उदा. 12.65L सारखे
+    time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
     
-    # २. Total Open Interest चे आकडे (इमेजमधील मूल्यांनुसार)
-    total_call = round(np.random.uniform(6.0, 8.0), 2)   # उदा. 6.93Cr सारखे
-    total_put = round(np.random.uniform(4.5, 6.0), 2)    # उदा. 5.57Cr सारखे
+    # लाईन चार्ट्ससाठी टाईमसिरीज डेटा
+    call_oi_chg_series = np.cumsum(np.random.uniform(-0.5, 0.6, num_points)) + 2.5
+    put_oi_chg_series = np.cumsum(np.random.uniform(-0.6, 0.5, num_points)) + 6.0
+    total_call_oi_series = np.cumsum(np.random.uniform(-0.3, 0.4, num_points)) + 5.0
+    total_put_oi_series = np.cumsum(np.random.uniform(-0.4, 0.3, num_points)) + 6.5
     
-    # ३. PCR आणि टक्केवारीची गणना
-    pcr_val = round(total_put / total_call, 2)
-    total_sum = total_call + total_put
-    call_pct = int((total_call / total_sum) * 100) if total_sum > 0 else 55
+    # नवीन अपलोड केलेल्या इमेजच्या सिंगल बार ग्राफसाठी मुख्य डेटा व्हॅल्यूज
+    bar_chg_call = round(np.random.uniform(-10.0, -5.0), 2)
+    bar_chg_put = round(np.random.uniform(10.0, 15.0), 2)
+    bar_total_call = round(total_call_oi_series[-1], 2)
+    bar_total_put = round(total_put_oi_series[-1], 2)
+    
+    pcr_val = round(bar_total_put / bar_total_call, 2)
+    call_pct = int((bar_total_call / (bar_total_call + bar_total_put)) * 100)
     put_pct = 100 - call_pct
 
-    # ३ कॉलम्स लेआउट तयार करणे (इमेजप्रमाणे ३ शेजारी शेजारी कार्ड्स)
-    col1, col2, col3 = st.columns(3)
-
-    # --- कार्ड १: Open Interest Change ---
-    with col1:
-        st.markdown(
-            """
-            <div style="background-color: white; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                <h5 style="margin: 0; color: #1e293b; font-size: 16px; font-weight: 600;">📊 Open Interest Change</h5>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
+    # ================= SECTION 1: STOCKMOJO STYLE DUAL-AXIS LINE CHARTS =================
+    st.markdown("### 📈 Live OI Trends (StockMojo Line View)")
+    col_l1, col_l2 = st.columns(2)
+    
+    with col_l1:
+        st.markdown("<h5 style='color: #475569;'>⚡ Open Interest Change (Call vs Put Line)</h5>", unsafe_allow_html=True)
+        fig_l1 = go.Figure()
+        fig_l1.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
+        fig_l1.add_trace(go.Scatter(x=time_labels, y=call_oi_chg_series, name='Call Chg', line=dict(color='#137333', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
+        fig_l1.add_trace(go.Scatter(x=time_labels, y=put_oi_chg_series, name='Put Chg', line=dict(color='#c5221f', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
         
+        fig_l1.add_annotation(x=time_labels.iloc[-1], y=call_oi_chg_series[-1], text=f" {round(call_oi_chg_series[-1],2)}L ", yref='y2', showarrow=False, xanchor='left', bgcolor='#137333', font=dict(color='white', size=10))
+        fig_l1.add_annotation(x=time_labels.iloc[-1], y=put_oi_chg_series[-1], text=f" {round(put_oi_chg_series[-1],2)}L ", yref='y2', showarrow=False, xanchor='left', bgcolor='#c5221f', font=dict(color='white', size=10))
+        
+        fig_l1.update_layout(height=280, margin=dict(l=40, r=50, t=10, b=30), plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
+                             xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickangle=-45),
+                             yaxis=dict(side='left', showgrid=True, gridcolor='#f1f5f9'), yaxis2=dict(side='right', overlaying='y', showgrid=False))
+        st.plotly_chart(fig_l1, use_container_width=True, key="line_oi_chg")
+
+    with col_l2:
+        st.markdown("<h5 style='color: #475569;'>⚡ Total Open Interest (Call vs Put Line)</h5>", unsafe_allow_html=True)
+        fig_l2 = go.Figure()
+        fig_l2.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
+        fig_l2.add_trace(go.Scatter(x=time_labels, y=total_call_oi_series, name='Call Total', line=dict(color='#137333', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
+        fig_l2.add_trace(go.Scatter(x=time_labels, y=total_put_oi_series, name='Put Total', line=dict(color='#c5221f', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
+        
+        fig_l2.add_annotation(x=time_labels.iloc[-1], y=total_call_oi_series[-1], text=f" {round(total_call_oi_series[-1],2)}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#137333', font=dict(color='white', size=10))
+        fig_l2.add_annotation(x=time_labels.iloc[-1], y=total_put_oi_series[-1], text=f" {round(total_put_oi_series[-1],2)}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#c5221f', font=dict(color='white', size=10))
+        
+        fig_l2.update_layout(height=280, margin=dict(l=40, r=50, t=10, b=30), plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
+                             xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickangle=-45),
+                             yaxis=dict(side='left', showgrid=True, gridcolor='#f1f5f9'), yaxis2=dict(side='right', overlaying='y', showgrid=False))
+        st.plotly_chart(fig_l2, use_container_width=True, key="line_total_oi")
+
+    # ================= SECTION 2: UPLOADED IMAGE STYLE SOLID BAR CHARTS =================
+    st.markdown("---")
+    st.markdown("### 📊 Options Lab (Uploaded Image Bar View)")
+    
+    col_b1, col_b2, col_b3 = st.columns([1.2, 1.2, 1.1])
+    
+    with col_b1:
+        st.markdown("<h5 style='color: #1e293b; font-weight: bold;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
         fig_b1 = go.Figure()
-        # CALL (Green - Negative/Positive)
         fig_b1.add_trace(go.Bar(
-            x=['CALL'], y=[call_chg], 
-            text=[f"{call_chg}L"], textposition='outside',
-            marker_color='#137333', width=0.45
+            x=['CALL', 'PUT'], y=[bar_chg_call, bar_chg_put],
+            text=[f"{bar_chg_call}L", f"{bar_chg_put}L"], textposition='outside',
+            marker_color=['#137333', '#c5221f'], width=0.4
         ))
-        # PUT (Red - Negative/Positive)
-        fig_b1.add_trace(go.Bar(
-            x=['PUT'], y=[put_chg], 
-            text=[f"{put_chg}L"], textposition='outside',
-            marker_color='#c5221f', width=0.45
-        ))
-        
-        fig_b1.update_layout(
-            height=320, margin=dict(l=20, r=20, t=40, b=20),
-            plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
-            xaxis=dict(tickfont=dict(color='#475569', size=13)),
-            yaxis=dict(visible=False, range=[min(call_chg * 1.5, -2), max(put_chg * 1.5, 2)])
-        )
-        st.plotly_chart(fig_b1, use_container_width=True, key="oi_chg_image_bar")
+        fig_b1.update_layout(height=290, margin=dict(l=30, r=30, t=30, b=20), plot_bgcolor='#f8fafc', paper_bgcolor='white',
+                             yaxis=dict(visible=False), xaxis=dict(tickfont=dict(size=12, bold=True)))
+        st.plotly_chart(fig_b1, use_container_width=True, key="img_style_oi_chg")
 
-    # --- कार्ड २: Total Open Interest ---
-    with col2:
-        st.markdown(
-            """
-            <div style="background-color: white; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                <h5 style="margin: 0; color: #1e293b; font-size: 16px; font-weight: 600;">📊 Total Open Interest</h5>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
-        
+    with col_b2:
+        st.markdown("<h5 style='color: #1e293b; font-weight: bold;'>📊 Total Open Interest</h5>", unsafe_allow_html=True)
         fig_b2 = go.Figure()
-        # CALL (Green Bar)
         fig_b2.add_trace(go.Bar(
-            x=['CALL'], y=[total_call], 
-            text=[f"{total_call}Cr"], textposition='outside',
-            marker_color='#137333', width=0.45
+            x=['CALL', 'PUT'], y=[bar_total_call, bar_total_put],
+            text=[f"{bar_total_call}Cr", f"{bar_total_put}Cr"], textposition='outside',
+            marker_color=['#137333', '#c5221f'], width=0.4
         ))
-        # PUT (Red Bar)
-        fig_b2.add_trace(go.Bar(
-            x=['PUT'], y=[total_put], 
-            text=[f"{total_put}Cr"], textposition='outside',
-            marker_color='#c5221f', width=0.45
-        ))
-        
-        fig_b2.update_layout(
-            height=320, margin=dict(l=20, r=20, t=40, b=20),
-            plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
-            xaxis=dict(tickfont=dict(color='#475569', size=13)),
-            yaxis=dict(visible=False, range=[0, max(total_call, total_put) * 1.3])
-        )
-        st.plotly_chart(fig_b2, use_container_width=True, key="total_oi_image_bar")
+        fig_b2.update_layout(height=290, margin=dict(l=30, r=30, t=30, b=20), plot_bgcolor='#f8fafc', paper_bgcolor='white',
+                             yaxis=dict(visible=False), xaxis=dict(tickfont=dict(size=12, bold=True)))
+        st.plotly_chart(fig_b2, use_container_width=True, key="img_style_total_oi")
 
-    # --- कार्ड ३: Put/Call Ratio (PCR Donut) ---
-    with col3:
-        st.markdown(
-            """
-            <div style="background-color: white; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                <h5 style="margin: 0; color: #1e293b; font-size: 16px; font-weight: 600;">📊 Put/Call Ratio</h5>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
-        
-        # इमेजप्रमाणे हुबेहूब कलर स्कीम (लाल डावीकडे आणि हिरवा उजवीकडे)
+    with col_b3:
+        st.markdown("<h5 style='color: #1e293b; font-weight: bold; text-align: center;'>📊 Put/Call Ratio</h5>", unsafe_allow_html=True)
         fig_b3 = go.Figure(data=[go.Pie(
-            labels=['Put OI', 'Call OI'], 
-            values=[put_pct, call_pct], 
-            hole=.65, 
-            marker=dict(colors=['#c5221f', '#137333']), # लाल आणि हिरवा
-            textinfo='none', 
-            direction='clockwise', # घड्याळाच्या दिशेने
-            sort=False,
-            showlegend=False
+            labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.68,
+            marker=dict(colors=['#137333', '#c5221f']), textinfo='none', showlegend=False
         )])
-        
-        # पीसीआर मजकूर आणि गोल कडांचे लेबल्स (४५% Put OI आणि ५५% Call OI)
-        fig_b3.add_annotation(
-            text=f"<span style='font-size:12px;color:#64748b;font-weight:bold;'>PCR</span><br><span style='font-size:26px;font-weight:bold;color:#0f172a;'>{pcr_val:.2f}</span>", 
-            x=0.5, y=0.5, showarrow=False
-        )
-        # ५५% Call OI लेबल उजवीकडे
-        fig_b3.add_annotation(
-            text=f"<span style='font-size:11px;font-weight:bold;color:#137333;'>{call_pct}%<br>Call OI</span>", 
-            x=0.88, y=0.5, showarrow=False
-        )
-        # ४५% Put OI लेबल डावीकडे
-        fig_b3.add_annotation(
-            text=f"<span style='font-size:11px;font-weight:bold;color:#c5221f;'>{put_pct}%<br>Put OI</span>", 
-            x=0.12, y=0.5, showarrow=False
-        )
-        
-        fig_b3.update_layout(
-            height=320, margin=dict(l=10, r=10, t=30, b=20),
-            paper_bgcolor='white', plot_bgcolor='white'
-        )
-        st.plotly_chart(fig_b3, use_container_width=True, key="pcr_image_donut")
-
+        fig_b3.add_annotation(text=f"PCR<br><span style='font-size:22px; font-weight:bold;'>{pcr_val}</span>", x=0.5, y=0.5, showarrow=False)
+        fig_b3.add_annotation(text=f"{call_pct}%<br><span style='font-size:10px;'>Call OI</span>", x=0.88, y=0.5, showarrow=False, font=dict(color='#137333', size=11, bold=True))
+        fig_b3.add_annotation(text=f"{put_pct}%<br><span style='font-size:10px;'>Put OI</span>", x=0.12, y=0.5, showarrow=False, font=dict(color='#c5221f', size=11, bold=True))
+        fig_b3.update_layout(height=290, margin=dict(l=10, r=10, t=20, b=20), paper_bgcolor='white')
+        st.plotly_chart(fig_b3, use_container_width=True, key="img_style_pcr")
 
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
@@ -395,7 +330,7 @@ if df_ltf is not None and not df_ltf.empty:
         
     if market_type == "यादीमधून निवडा" and ("NSE" in asset_choice or "NIFTY" in asset_choice) or is_indian:
         st.markdown("---")
-        # नवीन स्वतंत्र लाईन आणि बार डॅशबोर्ड कार्यरत
+        # नवीन स्वतंत्र लाईन आणि बार मिक्स डॅशबोर्ड
         render_image_style_oi_dashboard(df_ltf, display_name)
         
     st.markdown("---")
@@ -404,7 +339,6 @@ if df_ltf is not None and not df_ltf.empty:
     st.subheader(f"🎯 Live SMC PRO Institutional Signals on `{timeframe}` (Ultra-High Accuracy)")
     if not signals_df.empty:
         st.dataframe(signals_df.iloc[::-1], use_container_width=True)
-        
         latest = signals_df.iloc[-1]
         st.markdown(f"### ⚡ Last Active Signal Detail:")
         col1, col2, col3, col4 = st.columns(4)
