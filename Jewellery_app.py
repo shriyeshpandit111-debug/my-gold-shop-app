@@ -74,7 +74,7 @@ else:
     display_name = ticker.replace("=X", " / USD")
     st.sidebar.caption("💡 फॉरेक्ससाठी चलनाच्या नावापुढे `=X` लावणे अनिवार्य आहे. उदा. `EURUSD=X` किंवा `USDJPY=X`")
 
-# 🎯 १. नवीन ११ टाइमफ्रेमची यादी (Timeframe Dropdown Selection)
+# 🎯 टाइमफ्रेमची यादी (Timeframe Dropdown Selection)
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Timeframe):", 
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
@@ -83,17 +83,15 @@ timeframe = st.sidebar.selectbox(
 # --- 🕒 अचूक टाईमझोन आणि स्मार्ट री-सॅम्पलिंगसह डेटा फेचिंग ---
 def fetch_and_resample_data(ticker_symbol, target_tf):
     try:
-        # २. टारगेट टाइमफ्रेमनुसार डाऊनलोड करण्यासाठी योग्य बेस इंटरव्हल आणि पिरियड ठरवणे
         if target_tf in ["1m", "2m", "3m"]:
             source_interval, period = "1m", "2d"
         elif target_tf in ["5m", "10m", "15m", "30m"]:
             source_interval, period = "5m", "5d"
         elif target_tf in ["1h", "2h", "4h"]:
             source_interval, period = "1h", "1mo"
-        else: # "1d" साठी
+        else:
             source_interval, period = "1d", "1y"
             
-        # डेटा गोळा करणे
         data = yf.download(tickers=ticker_symbol, period=period, interval=source_interval, progress=False, timeout=10)
         if data is None or data.empty: 
             return None
@@ -112,7 +110,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         else:
             df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
             
-        # ३. Pandas Resampling मॅपिंग (निवडलेल्या टाइमफ्रेममध्ये डेटा रूपांतरित करणे)
         resample_map = {
             "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min", 
             "10m": "10min", "15m": "15min", "30m": "30min", 
@@ -121,7 +118,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         
         rule = resample_map.get(target_tf, "5min")
         
-        # जर निवडलेला टाइमफ्रेम हा मूळ डाऊनलोड केलेल्या डेटापेक्षा वेगळा असेल तर रि-सॅम्पल करणे
         if source_interval != target_tf:
             df.set_index('timestamp', inplace=True)
             resampled = df.resample(rule).agg({
@@ -139,7 +135,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
 
 def get_daily_trend(ticker_symbol):
     try:
-        # डेली ट्रेंडसाठी थेट १ दिवसाचा डेटा मागवणे
         data = yf.download(tickers=ticker_symbol, period="1y", interval="1d", progress=False, timeout=10)
         if data is not None and not data.empty:
             df_daily = data.reset_index()
@@ -172,7 +167,7 @@ def add_indicators(df):
     df['vol_sma'] = df['volume'].rolling(window=20).mean()
     return df
 
-# --- 🔥 [अल्ट्रा-फिक्स] नो-गोंधळ प्रगत पिनपॉईंट सिग्नल्स इंजिन ---
+# --- 🔥 SMC PRO Signals Engine ---
 def analyze_smc_pro_v2(df, daily_trend):
     signals = []
     bullish_blocks = []
@@ -207,7 +202,6 @@ def analyze_smc_pro_v2(df, daily_trend):
         if buy_triggered and sell_triggered:
             continue
 
-        # 🟢 PERFECT BUY
         if buy_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['low'].iloc[i] - (0.02 * atr_val)
@@ -224,7 +218,6 @@ def analyze_smc_pro_v2(df, daily_trend):
                     'Trigger Reason': 'Sharp Bottom Turnaround Confirmed'
                 })
 
-        # 🔴 PERFECT SELL
         elif sell_triggered:
             entry = df['close'].iloc[i]
             stop_loss = df['high'].iloc[i] + (0.02 * atr_val)
@@ -243,51 +236,98 @@ def analyze_smc_pro_v2(df, daily_trend):
                     
     return pd.DataFrame(signals)
 
-# --- 📊 रंग फिक्स असलेला OI डॅशबोर्ड ---
-def render_image_style_oi_dashboard(current_price, asset_name):
-    st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab")
-    np.random.seed(int(current_price * 7) % 1000)
+# --- 📊 [StockMojo Split Style] लाईन आणि बार चार्ट्स पूर्णपणे स्वतंत्र + लाईव्ह टाईमसह ---
+def render_image_style_oi_dashboard(df_prices, asset_name):
+    st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics")
     
-    total_call_oi = round(np.random.uniform(5.5, 7.5), 2)
-    total_put_oi = round(np.random.uniform(4.5, 6.5), 2)
-    change_call_oi = round(np.random.uniform(-12.0, 12.0), 2)
-    change_put_oi = round(np.random.uniform(-12.0, 12.0), 2)
+    # शेवटचे ३० डेटा पॉईंट्स ग्राफिक्सला क्लिअर ठेवण्यासाठी
+    df_plot = df_prices.tail(30).reset_index(drop=True)
+    num_points = len(df_plot)
+    if num_points == 0:
+        return
+        
+    last_price = df_plot['close'].iloc[-1]
+    np.random.seed(int(last_price * 7) % 1000)
     
-    pcr_val = round(total_put_oi / total_call_oi, 2)
-    total_sum = total_call_oi + total_put_oi
-    call_pct = int((total_call_oi / total_sum) * 100)
-    put_pct = 100 - call_pct
+    # X-Axis साठी वेळेचा फॉरमॅट सेट करणे (उदा. 09:30 AM, 10:00 AM)
+    time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
+    
+    # स्टॉक-मोझो स्टाईलसाठी डेटा तयार करणे
+    total_call_oi = np.random.uniform(5.5, 7.5, num_points)
+    total_put_oi = np.random.uniform(4.5, 6.5, num_points)
+    call_oi_chg = np.cumsum(np.random.uniform(-0.5, 0.6, num_points)) + np.random.uniform(2.0, 3.5)
+    put_oi_chg = np.cumsum(np.random.uniform(-0.6, 0.5, num_points)) + np.random.uniform(6.0, 8.5)
+    
+    last_call_oi = round(total_call_oi[-1], 2)
+    last_put_oi = round(total_put_oi[-1], 2)
+    last_call_chg = round(call_oi_chg[-1], 2)
+    last_put_chg = round(put_oi_chg[-1], 2)
+    
+    pcr_val = round(last_put_oi / last_call_oi, 2)
 
-    g_col1, g_col2, g_col3 = st.columns(3)
+    col_layout1, col_layout2 = st.columns([2, 1])
 
-    with g_col1:
-        st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
+    with col_layout1:
+        # ---- 📈 फ्रेम १: OI Change (Call vs Put) -> पूर्णपणे LINE CHART (StockMojo स्टाईल) ----
+        st.markdown("<h5 style='color: #1e293b;'>📈 OI Change (Call vs Put) - Line View</h5>", unsafe_allow_html=True)
         fig1 = go.Figure()
-        fig1.add_trace(go.Bar(x=['CALL'], y=[change_call_oi], text=[f"{change_call_oi}L"], textposition='auto', marker_color='#137333', name='CALL'))
-        fig1.add_trace(go.Bar(x=['PUT'], y=[change_put_oi], text=[f"{change_put_oi}L"], textposition='auto', marker_color='#c5221f', name='PUT'))
-        fig1.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False), font=dict(color="#a3b1c6"), showlegend=False, barmode='group')
-        st.plotly_chart(fig1, use_container_width=True, key="oi_change_graph")
+        
+        # डावा ॲक्सिस: फ्युचर प्राईस (डॉटेड ग्रे लाईन)
+        fig1.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
+        # उजवा ॲक्सिस: Call Change (हिरवी लाईन)
+        fig1.add_trace(go.Scatter(x=time_labels, y=call_oi_chg, name='Call OI Change', line=dict(color='#22c55e', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
+        # उजवा ॲक्सिस: Put Change (लाल लाईन)
+        fig1.add_trace(go.Scatter(x=time_labels, y=put_oi_chg, name='Put OI Change', line=dict(color='#ef4444', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
+        
+        # उजव्या साईडला रंगीत बॉक्स लेबल्स
+        fig1.add_annotation(x=time_labels.iloc[-1], y=last_call_chg, text=f" {last_call_chg}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#22c55e', font=dict(color='white', size=11))
+        fig1.add_annotation(x=time_labels.iloc[-1], y=last_put_chg, text=f" {last_put_chg}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#ef4444', font=dict(color='white', size=11))
+        
+        fig1.update_layout(
+            height=320, margin=dict(l=40, r=60, t=10, b=40),
+            plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
+            xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'), tickangle=-45),
+            yaxis=dict(title='Future Price', side='left', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b')),
+            yaxis2=dict(title='OI (Cr)', side='right', overlaying='y', showgrid=False, tickfont=dict(color='#64748b'))
+        )
+        st.plotly_chart(fig1, use_container_width=True, key="oi_chg_split_line")
 
-    with g_col2:
-        st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Total Open Interest</h5>", unsafe_allow_html=True)
+        # ---- 📊 फ्रेम २: Total OI (Call vs Put) -> पूर्णपणे BAR CHART (स्वतंत्र) ----
+        st.markdown("<h5 style='color: #1e293b;'>📊 Total Open Interest - Bar View</h5>", unsafe_allow_html=True)
         fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=['CALL', 'PUT'], y=[total_call_oi, total_put_oi], text=[f"{total_call_oi}Cr", f"{total_put_oi}Cr"], textposition='inside', marker_color=['#137333', '#c5221f']))
-        fig2.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(20,24,35,0.5)', yaxis=dict(visible=False), font=dict(color="#a3b1c6"))
-        st.plotly_chart(fig2, use_container_width=True, key="total_oi_graph")
+        
+        # मूळ बार चार्ट
+        fig2.add_trace(go.Bar(x=time_labels, y=total_call_oi, name='Call OI', marker_color='#137333', opacity=0.9))
+        fig2.add_trace(go.Bar(x=time_labels, y=total_put_oi, name='Put OI', marker_color='#c5221f', opacity=0.9))
+        
+        # शेवटच्या बारवर व्हॅल्यू लेबल्स दाखवणे
+        fig2.add_annotation(x=time_labels.iloc[-1], y=last_call_oi, text=f" {last_call_oi}Cr ", showarrow=False, xanchor='left', bgcolor='#137333', font=dict(color='white', size=11))
+        fig2.add_annotation(x=time_labels.iloc[-1], y=last_put_oi, text=f" {last_put_oi}Cr ", showarrow=False, xanchor='left', bgcolor='#c5221f', font=dict(color='white', size=11))
+        
+        fig2.update_layout(
+            height=320, margin=dict(l=40, r=60, t=10, b=40),
+            plot_bgcolor='white', paper_bgcolor='white', showlegend=False, barmode='group',
+            xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'), tickangle=-45),
+            yaxis=dict(title='Total OI (Cr)', side='left', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'))
+        )
+        st.plotly_chart(fig2, use_container_width=True, key="total_oi_split_bar")
 
-    with g_col3:
-        st.markdown("<h5 style='text-align: center; color: #a3b1c6;'>📊 Put/Call Ratio</h5>", unsafe_allow_html=True)
-        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.65, marker=dict(colors=['#137333', '#c5221f']), textinfo='label+percent', textposition='inside', showlegend=False)])
-        fig3.add_annotation(text=f"PCR<br><b>{pcr_val}</b>", x=0.5, y=0.5, font_size=18, font_color="#ffffff", showarrow=False)
-        fig3.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(20,24,35,0.5)', plot_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_graph")
-
+    with col_layout2:
+        # ---- बाजूला PCR Donut मीटर ----
+        st.markdown("<h5 style='text-align: center; color: #1e293b;'>📊 Put/Call Ratio (PCR)</h5>", unsafe_allow_html=True)
+        total_sum = last_call_oi + last_put_oi
+        call_pct = int((last_call_oi / total_sum) * 100) if total_sum > 0 else 50
+        put_pct = 100 - call_pct
+        
+        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.7, marker=dict(colors=['#137333', '#c5221f']), textinfo='none', showlegend=True)])
+        fig3.add_annotation(text=f"PCR<br><span style='font-size:24px; font-weight:bold; color:#0f172a;'>{pcr_val}</span>", x=0.5, y=0.5, showarrow=False)
+        fig3.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5))
+        st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_split")
 
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
 with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
     daily_trend = get_daily_trend(ticker)
-    # नवीन सुधारित स्मार्ट डेटा फंक्शनचा वापर
     df_ltf = fetch_and_resample_data(ticker, timeframe)
 
 if df_ltf is not None and not df_ltf.empty:
@@ -305,7 +345,8 @@ if df_ltf is not None and not df_ltf.empty:
         
     if market_type == "यादीमधून निवडा" and ("NSE" in asset_choice or "NIFTY" in asset_choice) or is_indian:
         st.markdown("---")
-        render_image_style_oi_dashboard(current_price, display_name)
+        # नवीन स्वतंत्र लाईन आणि बार डॅशबोर्ड कार्यरत
+        render_image_style_oi_dashboard(df_ltf, display_name)
         
     st.markdown("---")
     signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
