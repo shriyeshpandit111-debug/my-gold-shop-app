@@ -261,7 +261,7 @@ def render_image_style_oi_dashboard(df_prices, asset_name):
     last_call_oi = round(total_call_oi_series[-1], 2)
     last_put_oi = round(total_put_oi_series[-1], 2)
     
-    # OI Change साठी सध्याचे व्हॅल्यूज (पॉझिटिव्ह किंवा निगेटिव्ह राहू शकतात)
+    # OI Change साठी सध्याचे व्हॅल्यूज
     last_call_chg = round(call_oi_chg_series[-1] - call_oi_chg_series[-2], 2)
     last_put_chg = round(put_oi_chg_series[-1] - put_oi_chg_series[-2], 2)
     
@@ -312,7 +312,6 @@ def render_image_style_oi_dashboard(df_prices, asset_name):
     with col_bar1:
         st.markdown("<h5 style='color: #1e293b; text-align: center;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
         
-        # हिरवा (Call) आणि लाल (Put) कलर्स निश्चित करणे
         color_call = '#137333' if last_call_chg >= 0 else '#c5221f'
         color_put = '#c5221f' if last_put_chg >= 0 else '#137333'
         
@@ -329,7 +328,7 @@ def render_image_style_oi_dashboard(df_prices, asset_name):
         fig_bar1.update_layout(
             height=280, margin=dict(l=30, r=30, t=20, b=30),
             plot_bgcolor='#f8fafc', paper_bgcolor='white', showlegend=False,
-            xaxis=dict(tickfont=dict(color='#0f172a', size=12, bold=True)),
+            xaxis=dict(tickfont=dict(color='#0f172a', size=12)),
             yaxis=dict(showgrid=True, gridcolor='#e2e8f0', zeroline=True, zerolinecolor='#94a3b8')
         )
         st.plotly_chart(fig_bar1, use_container_width=True, key="live_oi_change_bar")
@@ -350,7 +349,7 @@ def render_image_style_oi_dashboard(df_prices, asset_name):
         fig_bar2.update_layout(
             height=280, margin=dict(l=30, r=30, t=20, b=30),
             plot_bgcolor='#f8fafc', paper_bgcolor='white', showlegend=False,
-            xaxis=dict(tickfont=dict(color='#0f172a', size=12, bold=True)),
+            xaxis=dict(tickfont=dict(color='#0f172a', size=12)),
             yaxis=dict(showgrid=True, gridcolor='#e2e8f0')
         )
         st.plotly_chart(fig_bar2, use_container_width=True, key="live_total_oi_bar")
@@ -398,7 +397,6 @@ if df_ltf is not None and not df_ltf.empty:
         
     if market_type == "यादीमधून निवडा" and ("NSE" in asset_choice or "NIFTY" in asset_choice) or is_indian:
         st.markdown("---")
-        # नवीन स्वतंत्र लाईन आणि बार डॅशबोर्ड कार्यरत
         render_image_style_oi_dashboard(df_ltf, display_name)
         
     st.markdown("---")
