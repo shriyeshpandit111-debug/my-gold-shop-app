@@ -42,17 +42,24 @@ upstox_instrument_map = {
 instrument_info = upstox_instrument_map[asset_choice]
 display_name = f"{asset_choice} (NSE)"
 
+# --- 📅 ऑटोमॅटिक चालू वीकली एक्सपायरी तारीख शोधणारे फंक्शन ---
+def get_upcoming_expiry_date():
+    today = datetime.now().date()
+    # गुरुवार (Thursday) हा आठवड्याचा ४ था दिवस असतो (Monday = 0, Sunday = 6)
+    # आज जर गुरुवार असेल आणि वेळ मार्केट सुरू असतानाची असेल तर आजची तारीख, नाहीतर पुढील गुरुवार शोधणे
+    days_ahead = (3 - today.weekday()) % 7
+    upcoming_thursday = today + timedelta(days=days_ahead)
+    return upcoming_thursday.strftime('%Y-%m-%d')
+
 # --- 📈 Upstox कडून थेट चार्ट डेटा (Historical Candle) मिळवणे ---
 def fetch_candles_from_upstox(instrument_key, token):
     try:
-        # आजची आणि ५ दिवस आधीची तारीख मिळवणे (Format: YYYY-MM-DD)
         today = datetime.now()
         start_date = today - timedelta(days=5)
         
         to_date_str = today.strftime('%Y-%m-%d')
         from_date_str = start_date.strftime('%Y-%m-%d')
         
-        # की मधील स्पेस एन्कोड करणे (Safe URL format)
         safe_key = urllib.parse.quote(instrument_key)
         url = f"https://api.upstox.com/v2/historical-candle/{safe_key}/1minute/{to_date_str}/{from_date_str}"
         
@@ -68,16 +75,12 @@ def fetch_candles_from_upstox(instrument_key, token):
             if res_data.get("status") == "success" and res_data.get("data", {}).get("candles"):
                 candles = res_data["data"]["candles"]
                 
-                # Upstox डेटा फॉरमॅट: [timestamp, open, high, low, close, volume, open_interest]
                 df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
-                
-                # जुना डेटा आधी आणि नवीन डेटा शेवटी करण्यासाठी सॉर्टिंग
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
                 
                 df['timestamp'] = df['timestamp'].dt.tz_convert('Asia/Kolkata')
                 
-                # तांत्रिक इंडिकेटर (ATR आणि Vol SMA) जोडणे
                 high_low = df['high'] - df['low']
                 high_close = np.abs(df['high'] - df['close'].shift())
                 low_close = np.abs(df['low'] - df['close'].shift())
@@ -98,10 +101,12 @@ def fetch_candles_from_upstox(instrument_key, token):
 
 # --- 🎯 Upstox Live Option Chain Data Fetcher ---
 def get_upstox_option_chain_data(inst_key, token):
-    # Option chain साठी देखील key मधील स्पेस व्यवस्थित एन्कोड करून पाठवणे गरजेचे आहे
     url = "https://api.upstox.com/v2/option/chain"
     headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
-    params = {"instrument_key": inst_key, "expiry_date": ""} # रिकामी expiry पाठवल्यास चालू वीकली एक्सपायरी मिळते
+    
+    # ऑटोमॅटिक पुढील गुरुवारची एक्सपायरी तारीख काढणे
+    expiry_date = get_upcoming_expiry_date()
+    params = {"instrument_key": inst_key, "expiry_date": expiry_date}
     
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -129,6 +134,10 @@ def get_upstox_option_chain_data(inst_key, token):
                         total_put_oi += market_data.get("oi", 0)
                         total_put_oi_chg += market_data.get("oi_change", 0)
                 
+                # जर ऑप्शन चेन रिकामी आली तर (मार्केट बंद झाल्यावर किंवा सुट्टीच्या दिवशी)
+                if total_call_oi == 0 and total_put_oi == 0:
+                    return None, f"दिलेल्या एक्सपायरीसाठी ({expiry_date}) डेटा मिळाला नाही. कृपया मार्केट सुरू असताना किंवा योग्य एक्सपायरी दरम्यान प्रयत्न करा."
+                
                 return {
                     "last_call_oi": round(total_call_oi / 10000000, 2), # Crores
                     "last_put_oi": round(total_put_oi / 10000000, 2),   # Crores
@@ -136,7 +145,7 @@ def get_upstox_option_chain_data(inst_key, token):
                     "last_put_chg": round(total_put_oi_chg / 100000, 2),   # Lakhs
                     "pcr_val": round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0
                 }, None
-            return None, "Option chain data not found."
+            return None, f"Upstox ने दिलेल्या एक्सपायरीसाठी ({expiry_date}) डेटा पाठवला नाही."
         else:
             try:
                 err_details = response.json().get("errors", [{}])[0].get("message", "Unknown API Error")
@@ -159,7 +168,6 @@ def render_upstox_oi_dashboard(opt_data, df_prices, asset_name):
     df_plot = df_prices.tail(15).reset_index(drop=True)
     time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
     
-    # ऑसिलेशन सिम्युलेशन
     call_oi_trend = np.linspace(last_call_oi - 0.5, last_call_oi, len(df_plot))
     put_oi_trend = np.linspace(last_put_oi - 0.4, last_put_oi, len(df_plot))
 
@@ -263,7 +271,6 @@ if access_token:
             if opt_data:
                 render_upstox_oi_dashboard(opt_data, df_ltf, asset_choice)
             else:
-                # जर काही एरर असेल तर तो इथे दिसेल
                 st.error(f"❌ अपस्टॉक्स ऑप्शन चेन एरर: {err_msg}")
                 
         st.markdown("---")
