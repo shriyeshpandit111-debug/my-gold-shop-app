@@ -236,11 +236,11 @@ def analyze_smc_pro_v2(df, daily_trend):
                     
     return pd.DataFrame(signals)
 
-# --- 📊 [StockMojo Split Style] लाईन आणि बार चार्ट्स पूर्णपणे स्वतंत्र + लाईव्ह टाईमसह ---
+
+# --- 📊 [StockMojo Split Style + Image Style Live Bar View] ---
 def render_image_style_oi_dashboard(df_prices, asset_name):
     st.subheader(f"📊 {asset_name} - Institutional Open Interest (OI) Analytics")
     
-    # शेवटचे ३० डेटा पॉईंट्स ग्राफिक्सला क्लिअर ठेवण्यासाठी
     df_plot = df_prices.tail(30).reset_index(drop=True)
     num_points = len(df_plot)
     if num_points == 0:
@@ -249,80 +249,133 @@ def render_image_style_oi_dashboard(df_prices, asset_name):
     last_price = df_plot['close'].iloc[-1]
     np.random.seed(int(last_price * 7) % 1000)
     
-    # X-Axis साठी वेळेचा फॉरमॅट सेट करणे (उदा. 09:30 AM, 10:00 AM)
     time_labels = df_plot['timestamp'].dt.strftime('%I:%M %p')
     
-    # स्टॉक-मोझो स्टाईलसाठी डेटा तयार करणे
-    total_call_oi = np.random.uniform(5.5, 7.5, num_points)
-    total_put_oi = np.random.uniform(4.5, 6.5, num_points)
-    call_oi_chg = np.cumsum(np.random.uniform(-0.5, 0.6, num_points)) + np.random.uniform(2.0, 3.5)
-    put_oi_chg = np.cumsum(np.random.uniform(-0.6, 0.5, num_points)) + np.random.uniform(6.0, 8.5)
+    # मॉक डेटा निर्मिती
+    total_call_oi_series = np.random.uniform(5.5, 7.5, num_points)
+    total_put_oi_series = np.random.uniform(4.5, 6.5, num_points)
+    call_oi_chg_series = np.cumsum(np.random.uniform(-0.5, 0.6, num_points)) + np.random.uniform(2.0, 3.5)
+    put_oi_chg_series = np.cumsum(np.random.uniform(-0.6, 0.5, num_points)) + np.random.uniform(6.0, 8.5)
     
-    last_call_oi = round(total_call_oi[-1], 2)
-    last_put_oi = round(total_put_oi[-1], 2)
-    last_call_chg = round(call_oi_chg[-1], 2)
-    last_put_chg = round(put_oi_chg[-1], 2)
+    # शेवटचे (Current) व्हॅल्यूज
+    last_call_oi = round(total_call_oi_series[-1], 2)
+    last_put_oi = round(total_put_oi_series[-1], 2)
+    
+    # OI Change साठी सध्याचे व्हॅल्यूज (पॉझिटिव्ह किंवा निगेटिव्ह राहू शकतात)
+    last_call_chg = round(call_oi_chg_series[-1] - call_oi_chg_series[-2], 2)
+    last_put_chg = round(put_oi_chg_series[-1] - put_oi_chg_series[-2], 2)
     
     pcr_val = round(last_put_oi / last_call_oi, 2)
 
-    col_layout1, col_layout2 = st.columns([2, 1])
-
-    with col_layout1:
-        # ---- 📈 फ्रेम १: OI Change (Call vs Put) -> पूर्णपणे LINE CHART (StockMojo स्टाईल) ----
-        st.markdown("<h5 style='color: #1e293b;'>📈 OI Change (Call vs Put) - Line View</h5>", unsafe_allow_html=True)
-        fig1 = go.Figure()
+    # ================= ROW 1: LINE CHARTS (TIME-SERIES VIEW) =================
+    st.markdown("### 📈 Historical Trend (Time Series Views)")
+    col_line1, col_line2 = st.columns(2)
+    
+    with col_line1:
+        st.markdown("<h5 style='color: #1e293b;'>📈 Trend: Open Interest Change (Call vs Put)</h5>", unsafe_allow_html=True)
+        fig_line1 = go.Figure()
+        fig_line1.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
+        fig_line1.add_trace(go.Scatter(x=time_labels, y=call_oi_chg_series, name='Call OI Change', line=dict(color='#22c55e', width=2), yaxis='y2'))
+        fig_line1.add_trace(go.Scatter(x=time_labels, y=put_oi_chg_series, name='Put OI Change', line=dict(color='#ef4444', width=2), yaxis='y2'))
         
-        # डावा ॲक्सिस: फ्युचर प्राईस (डॉटेड ग्रे लाईन)
-        fig1.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
-        # उजवा ॲक्सिस: Call Change (हिरवी लाईन)
-        fig1.add_trace(go.Scatter(x=time_labels, y=call_oi_chg, name='Call OI Change', line=dict(color='#22c55e', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
-        # उजवा ॲक्सिस: Put Change (लाल लाईन)
-        fig1.add_trace(go.Scatter(x=time_labels, y=put_oi_chg, name='Put OI Change', line=dict(color='#ef4444', width=2), yaxis='y2', mode='lines+markers', marker=dict(size=[6 if idx==num_points-1 else 0 for idx in range(num_points)])))
-        
-        # उजव्या साईडला रंगीत बॉक्स लेबल्स
-        fig1.add_annotation(x=time_labels.iloc[-1], y=last_call_chg, text=f" {last_call_chg}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#22c55e', font=dict(color='white', size=11))
-        fig1.add_annotation(x=time_labels.iloc[-1], y=last_put_chg, text=f" {last_put_chg}Cr ", yref='y2', showarrow=False, xanchor='left', bgcolor='#ef4444', font=dict(color='white', size=11))
-        
-        fig1.update_layout(
-            height=320, margin=dict(l=40, r=60, t=10, b=40),
+        fig_line1.update_layout(
+            height=280, margin=dict(l=40, r=40, t=10, b=40),
             plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
             xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'), tickangle=-45),
             yaxis=dict(title='Future Price', side='left', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b')),
-            yaxis2=dict(title='OI (Cr)', side='right', overlaying='y', showgrid=False, tickfont=dict(color='#64748b'))
+            yaxis2=dict(title='OI Change', side='right', overlaying='y', showgrid=False, tickfont=dict(color='#64748b'))
         )
-        st.plotly_chart(fig1, use_container_width=True, key="oi_chg_split_line")
+        st.plotly_chart(fig_line1, use_container_width=True, key="oi_chg_line_trend")
 
-        # ---- 📊 फ्रेम २: Total OI (Call vs Put) -> पूर्णपणे BAR CHART (स्वतंत्र) ----
-        st.markdown("<h5 style='color: #1e293b;'>📊 Total Open Interest - Bar View</h5>", unsafe_allow_html=True)
-        fig2 = go.Figure()
+    with col_line2:
+        st.markdown("<h5 style='color: #1e293b;'>📈 Trend: Total Open Interest (Call vs Put)</h5>", unsafe_allow_html=True)
+        fig_line2 = go.Figure()
+        fig_line2.add_trace(go.Scatter(x=time_labels, y=df_plot['close'], name='Future Price', line=dict(color='#707a8a', width=1.5, dash='dot'), yaxis='y1'))
+        fig_line2.add_trace(go.Scatter(x=time_labels, y=total_call_oi_series, name='Total Call OI', line=dict(color='#137333', width=2), yaxis='y2'))
+        fig_line2.add_trace(go.Scatter(x=time_labels, y=total_put_oi_series, name='Total Put OI', line=dict(color='#c5221f', width=2), yaxis='y2'))
         
-        # मूळ बार चार्ट
-        fig2.add_trace(go.Bar(x=time_labels, y=total_call_oi, name='Call OI', marker_color='#137333', opacity=0.9))
-        fig2.add_trace(go.Bar(x=time_labels, y=total_put_oi, name='Put OI', marker_color='#c5221f', opacity=0.9))
-        
-        # शेवटच्या बारवर व्हॅल्यू लेबल्स दाखवणे
-        fig2.add_annotation(x=time_labels.iloc[-1], y=last_call_oi, text=f" {last_call_oi}Cr ", showarrow=False, xanchor='left', bgcolor='#137333', font=dict(color='white', size=11))
-        fig2.add_annotation(x=time_labels.iloc[-1], y=last_put_oi, text=f" {last_put_oi}Cr ", showarrow=False, xanchor='left', bgcolor='#c5221f', font=dict(color='white', size=11))
-        
-        fig2.update_layout(
-            height=320, margin=dict(l=40, r=60, t=10, b=40),
-            plot_bgcolor='white', paper_bgcolor='white', showlegend=False, barmode='group',
+        fig_line2.update_layout(
+            height=280, margin=dict(l=40, r=40, t=10, b=40),
+            plot_bgcolor='white', paper_bgcolor='white', showlegend=False,
             xaxis=dict(showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'), tickangle=-45),
-            yaxis=dict(title='Total OI (Cr)', side='left', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b'))
+            yaxis=dict(title='Future Price', side='left', showgrid=True, gridcolor='#f1f5f9', tickfont=dict(color='#64748b')),
+            yaxis2=dict(title='Total OI (Cr)', side='right', overlaying='y', showgrid=False, tickfont=dict(color='#64748b'))
         )
-        st.plotly_chart(fig2, use_container_width=True, key="total_oi_split_bar")
+        st.plotly_chart(fig_line2, use_container_width=True, key="total_oi_line_trend")
 
-    with col_layout2:
-        # ---- बाजूला PCR Donut मीटर ----
+    # ================= ROW 2: LIVE INSTANT LABS (IMAGE STYLE) =================
+    st.markdown("---")
+    st.markdown("### 🧪 Options Lab (Live Status)")
+    
+    col_bar1, col_bar2, col_donut = st.columns(3)
+    
+    with col_bar1:
+        st.markdown("<h5 style='color: #1e293b; text-align: center;'>📊 Open Interest Change</h5>", unsafe_allow_html=True)
+        
+        # हिरवा (Call) आणि लाल (Put) कलर्स निश्चित करणे
+        color_call = '#137333' if last_call_chg >= 0 else '#c5221f'
+        color_put = '#c5221f' if last_put_chg >= 0 else '#137333'
+        
+        fig_bar1 = go.Figure()
+        fig_bar1.add_trace(go.Bar(
+            x=['CALL', 'PUT'],
+            y=[last_call_chg, last_put_chg],
+            marker_color=[color_call, color_put],
+            text=[f"{last_call_chg}L", f"{last_put_chg}L"],
+            textposition='auto',
+            width=0.4
+        ))
+        
+        fig_bar1.update_layout(
+            height=280, margin=dict(l=30, r=30, t=20, b=30),
+            plot_bgcolor='#f8fafc', paper_bgcolor='white', showlegend=False,
+            xaxis=dict(tickfont=dict(color='#0f172a', size=12, bold=True)),
+            yaxis=dict(showgrid=True, gridcolor='#e2e8f0', zeroline=True, zerolinecolor='#94a3b8')
+        )
+        st.plotly_chart(fig_bar1, use_container_width=True, key="live_oi_change_bar")
+        
+    with col_bar2:
+        st.markdown("<h5 style='color: #1e293b; text-align: center;'>📊 Total Open Interest</h5>", unsafe_allow_html=True)
+        
+        fig_bar2 = go.Figure()
+        fig_bar2.add_trace(go.Bar(
+            x=['CALL', 'PUT'],
+            y=[last_call_oi, last_put_oi],
+            marker_color=['#137333', '#c5221f'],
+            text=[f"{last_call_oi}Cr", f"{last_put_oi}Cr"],
+            textposition='auto',
+            width=0.4
+        ))
+        
+        fig_bar2.update_layout(
+            height=280, margin=dict(l=30, r=30, t=20, b=30),
+            plot_bgcolor='#f8fafc', paper_bgcolor='white', showlegend=False,
+            xaxis=dict(tickfont=dict(color='#0f172a', size=12, bold=True)),
+            yaxis=dict(showgrid=True, gridcolor='#e2e8f0')
+        )
+        st.plotly_chart(fig_bar2, use_container_width=True, key="live_total_oi_bar")
+        
+    with col_donut:
         st.markdown("<h5 style='text-align: center; color: #1e293b;'>📊 Put/Call Ratio (PCR)</h5>", unsafe_allow_html=True)
         total_sum = last_call_oi + last_put_oi
         call_pct = int((last_call_oi / total_sum) * 100) if total_sum > 0 else 50
         put_pct = 100 - call_pct
         
-        fig3 = go.Figure(data=[go.Pie(labels=['Call OI', 'Put OI'], values=[call_pct, put_pct], hole=.7, marker=dict(colors=['#137333', '#c5221f']), textinfo='none', showlegend=True)])
+        fig3 = go.Figure(data=[go.Pie(
+            labels=['Call OI', 'Put OI'], 
+            values=[call_pct, put_pct], 
+            hole=.7, 
+            marker=dict(colors=['#137333', '#c5221f']), 
+            textinfo='none', 
+            showlegend=False
+        )])
         fig3.add_annotation(text=f"PCR<br><span style='font-size:24px; font-weight:bold; color:#0f172a;'>{pcr_val}</span>", x=0.5, y=0.5, showarrow=False)
-        fig3.update_layout(height=300, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5))
+        fig3.update_layout(
+            height=260, margin=dict(l=10, r=10, t=10, b=10), 
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+        )
         st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_split")
+
 
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
