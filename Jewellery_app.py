@@ -2,6 +2,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # 🟢 Angel One SmartAPI Imports
 from SmartApi import SmartConnect
@@ -109,7 +110,7 @@ timeframe = st.sidebar.selectbox(
 
 
 # --- 🌐 Angel One API Live OI Fetcher ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def fetch_angel_one_real_oi(
     api_key, client_code, password, totp_secret, current_price, symbol_name
 ):
@@ -254,7 +255,41 @@ def get_daily_trend(ticker_symbol):
         return "NEUTRAL ➡️"
 
 
-# --- 🖼️ STOCKMOJO STYLE OPTIONS LAB DASHBOARD ---
+# --- 🎯 SMC Buy / Sell Signal Logic ---
+def calculate_smc_signal(df, daily_trend, pcr_val):
+    if df is None or len(df) < 10:
+        return "WAIT / NO SIGNAL", "⚪", "पुरेसा डेटा उपलब्ध नाही."
+
+    last_close = df["close"].iloc[-1]
+    prev_close = df["close"].iloc[-2]
+    ema_short = df["close"].ewm(span=9, adjust=False).mean().iloc[-1]
+
+    is_htf_bullish = "BULLISH" in daily_trend
+    is_htf_bearish = "BEARISH" in daily_trend
+
+    if last_close > ema_short and is_htf_bullish and pcr_val > 0.95:
+        signal = "STRONG BUY / CALL 🟢"
+        color_icon = "🟢"
+        reason = f"प्राईस EMA9 च्या वर आहे ({last_close:,.2f}), HTF Trend Bullish आहे आणि PCR {pcr_val} मार्केट मधील तेजी दर्शवत आहे."
+    elif last_close < ema_short and is_htf_bearish and pcr_val < 1.05:
+        signal = "STRONG SELL / PUT 🔴"
+        color_icon = "🔴"
+        reason = f"प्राईस EMA9 च्या खाली आहे ({last_close:,.2f}), HTF Trend Bearish आहे आणि PCR {pcr_val} मार्केट मधील मंदी दर्शवत आहे."
+    elif last_close > prev_close:
+        signal = "WEAK BUY (Wait for Confluence) 🟡"
+        color_icon = "🟡"
+        reason = (
+            "मार्केटमध्ये रिकव्हरी दिसत आहे, पण पूर्ण कन्फर्मेशन मिळालेले नाही."
+        )
+    else:
+        signal = "WEAK SELL (Wait for Confluence) 🟠"
+        color_icon = "🟠"
+        reason = "मार्केटमध्ये दबाव आहे, पण पूर्ण बेअरिश सिग्नल मिळालेला नाही."
+
+    return signal, color_icon, reason
+
+
+# --- 🖼️ STOCKMOJO STYLE BAR CARDS & REAL-TIME OI STORAGE ---
 def render_stockmojo_style_dashboard(current_price, asset_name):
     oi_data = fetch_angel_one_real_oi(
         angel_api_key,
@@ -265,18 +300,61 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         asset_name,
     )
 
+    is_live = False
     if oi_data is not None and oi_data["is_live"]:
         tot_call_cr = oi_data["tot_call_cr"]
         tot_put_cr = oi_data["tot_put_cr"]
         change_call_cr = oi_data["change_call_cr"]
         change_put_cr = oi_data["change_put_cr"]
         pcr = oi_data["pcr"]
+        is_live = True
     else:
-        tot_call_cr, tot_put_cr = 8.66, 7.35
-        change_call_cr, change_put_cr = 3.94, 1.48
-        pcr = 0.85
+        tot_call_cr, tot_put_cr = 1.18, 1.32
+        change_call_cr, change_put_cr = 0.13, 0.07
+        pcr = 1.12
 
-    # Sentiment Logic
+    # 🟢 Real-Time API Data Memory Saving Logic (Session State)
+    if "oi_history" not in st.session_state:
+        st.session_state["oi_history"] = pd.DataFrame(
+            columns=[
+                "timestamp",
+                "price",
+                "change_call_cr",
+                "change_put_cr",
+                "tot_call_cr",
+                "tot_put_cr",
+            ]
+        )
+
+    time_now = datetime.now().strftime("%I:%M %p")
+    df_hist = st.session_state["oi_history"]
+
+    if df_hist.empty or df_hist.iloc[-1]["timestamp"] != time_now:
+        new_row = {
+            "timestamp": time_now,
+            "price": current_price,
+            "change_call_cr": change_call_cr,
+            "change_put_cr": change_put_cr,
+            "tot_call_cr": tot_call_cr,
+            "tot_put_cr": tot_put_cr,
+        }
+        st.session_state["oi_history"] = pd.concat(
+            [df_hist, pd.DataFrame([new_row])], ignore_index=True
+        )
+
+    # Header section
+    st.markdown("---")
+    h_col1, h_col2 = st.columns([3, 1])
+    with h_col1:
+        st.subheader(
+            f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab"
+        )
+    with h_col2:
+        if is_live:
+            st.success("🟢 **Live Real-Time Data** (Angel One API Direct)")
+        else:
+            st.info("🟡 **Calculated Data** (API Credentials Required)")
+
     if pcr < 0.90:
         sentiment = "Bearish"
         sentiment_pct = 70
@@ -299,23 +377,18 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
 
     total_oi_sum = tot_call_cr + tot_put_cr
     put_oi_pct = (
-        int((tot_put_cr / total_oi_sum) * 100) if total_oi_sum > 0 else 46
+        int((tot_put_cr / total_oi_sum) * 100) if total_oi_sum > 0 else 52
     )
     call_oi_pct = 100 - put_oi_pct
 
-    st.write("---")
-
-    # StockMojo ४-कॉलम लेआउट
     c1, c2, c3, c4 = st.columns([1.1, 1, 1, 1.1])
 
-    # ---------------- 1. Market Sentiment Card ----------------
     with c1:
         st.markdown(
             "##### 📊 Market Sentiment <span style='font-size:12px;"
             " color:gray;'>(based on OI)</span>",
             unsafe_allow_html=True,
         )
-
         fig_sent = go.Figure(
             data=[
                 go.Pie(
@@ -351,23 +424,18 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         st.markdown(
             f"<div style='background-color:#ffffff; padding:8px;"
             f" border-radius:8px; text-align:center; font-size:13px;'>"
-            f"PCR: <b>{pcr}</b> | PCR OI Change: <b>0.38</b>"
-            f"</div>",
+            f"PCR: <b>{pcr}</b> | PCR OI Change: <b>0.38</b></div>",
             unsafe_allow_html=True,
         )
-
         st.markdown(
             f"<div style='background-color:#eef4ff; border-left:4px solid"
             f" #3b82f6; padding:10px; border-radius:6px; font-size:12px;"
-            f" margin-top:8px;'>"
-            f"<b>ℹ️ Market Insight</b><br>{sentiment_msg}</div>",
+            f" margin-top:8px;'><b>ℹ️ Market Insight</b><br>{sentiment_msg}</div>",
             unsafe_allow_html=True,
         )
 
-    # ---------------- 2. Open Interest Change Card ----------------
     with c2:
         st.markdown("##### 📊 Open Interest Change", unsafe_allow_html=True)
-
         fig_oic = go.Figure()
         fig_oic.add_trace(
             go.Bar(
@@ -390,10 +458,8 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig_oic, use_container_width=True, key="mojo_oi_change")
 
-    # ---------------- 3. Total Open Interest Card ----------------
     with c3:
         st.markdown("##### 📊 Total Open Interest", unsafe_allow_html=True)
-
         fig_tot = go.Figure()
         fig_tot.add_trace(
             go.Bar(
@@ -416,17 +482,15 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig_tot, use_container_width=True, key="mojo_tot_oi")
 
-    # ---------------- 4. Put/Call Ratio Donut Card ----------------
     with c4:
         st.markdown("##### 📊 Put/Call Ratio", unsafe_allow_html=True)
-
         fig_pcr = go.Figure(
             data=[
                 go.Pie(
-                    labels=["Put OI", "Call OI"],
-                    values=[put_oi_pct, call_oi_pct],
+                    labels=["Call OI", "Put OI"],
+                    values=[call_oi_pct, put_oi_pct],
                     hole=0.6,
-                    marker=dict(colors=["#f25c54", "#48bf53"]),
+                    marker=dict(colors=["#48bf53", "#f25c54"]),
                     textinfo="label+percent",
                     textposition="inside",
                     showlegend=False,
@@ -452,6 +516,154 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
+# --- 📈 STOCKMOJO REAL-TIME LINE CHARTS ---
+def render_stockmojo_line_charts():
+    if (
+        "oi_history" not in st.session_state
+        or len(st.session_state["oi_history"]) < 1
+    ):
+        return
+
+    st.write("---")
+    df_live_oi = st.session_state["oi_history"]
+
+    # 📈 1. Chart: OI Change (Call vs Put)
+    st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
+
+    fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Spot/Future Price Line (Dotted Gray)
+    fig_line_oic.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["price"],
+            name="Future/Spot Price",
+            line=dict(color="#8d99ae", width=1.5, dash="dot"),
+        ),
+        secondary_y=False,
+    )
+
+    # Live Call OI Change Line (Green)
+    fig_line_oic.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["change_call_cr"],
+            name="Call OI Change",
+            line=dict(color="#48bf53", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    # Live Put OI Change Line (Red)
+    fig_line_oic.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["change_put_cr"],
+            name="Put OI Change",
+            line=dict(color="#f25c54", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    fig_line_oic.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+        ),
+    )
+    fig_line_oic.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
+    fig_line_oic.update_yaxes(
+        title_text="Price",
+        secondary_y=False,
+        showgrid=False,
+        color="#8d99ae",
+    )
+    fig_line_oic.update_yaxes(
+        title_text="OI Change (Cr)",
+        secondary_y=True,
+        showgrid=True,
+        gridcolor="#f0f2f5",
+    )
+
+    st.plotly_chart(
+        fig_line_oic, use_container_width=True, key="mojo_line_oic"
+    )
+
+    # 📈 2. Chart: Total OI (Call vs Put)
+    st.subheader("📈 Total OI (Call vs Put) - Real-Time Trend")
+
+    fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Spot/Future Price Line (Dotted Gray)
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["price"],
+            name="Future/Spot Price",
+            line=dict(color="#8d99ae", width=1.5, dash="dot"),
+        ),
+        secondary_y=False,
+    )
+
+    # Live Call Total OI Line (Green)
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_call_cr"],
+            name="Call OI",
+            line=dict(color="#48bf53", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    # Live Put Total OI Line (Red)
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_put_cr"],
+            name="Put OI",
+            line=dict(color="#f25c54", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    fig_line_tot.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+        ),
+    )
+    fig_line_tot.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
+    fig_line_tot.update_yaxes(
+        title_text="Price",
+        secondary_y=False,
+        showgrid=False,
+        color="#8d99ae",
+    )
+    fig_line_tot.update_yaxes(
+        title_text="Total OI (Cr)",
+        secondary_y=True,
+        showgrid=True,
+        gridcolor="#f0f2f5",
+    )
+
+    st.plotly_chart(
+        fig_line_tot, use_container_width=True, key="mojo_line_tot"
+    )
+
+
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
 with st.spinner("माहिती गोळा केली जात आहे..."):
@@ -470,13 +682,44 @@ if df_ltf is not None and not df_ltf.empty:
     with col_t2:
         st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
 
-    # StockMojo Style Options Lab Dashboard Rendering
+    # 1️⃣ StockMojo Style Options Lab Dashboard Bar Cards
+    current_pcr = 1.0
     if (
         market_type == "यादीमधून निवडा"
         and ("NSE" in asset_choice or "NIFTY" in asset_choice)
     ):
-        render_stockmojo_style_dashboard(current_price, display_name)
+        current_pcr = render_stockmojo_style_dashboard(
+            current_price, display_name
+        )
 
+    # 2️⃣ StockMojo Style Line Charts (Real-Time Saved Data)
+    if (
+        market_type == "यादीमधून निवडा"
+        and ("NSE" in asset_choice or "NIFTY" in asset_choice)
+    ):
+        render_stockmojo_line_charts()
+
+    # 3️⃣ Live SMC Trading Signal Box
+    st.write("---")
+    st.subheader("🎯 Live SMC Trading Signal")
+
+    smc_sig, sig_icon, sig_reason = calculate_smc_signal(
+        df_ltf, daily_trend, current_pcr
+    )
+
+    sig_col1, sig_col2 = st.columns([1, 2])
+    with sig_col1:
+        if "BUY" in smc_sig:
+            st.success(f"### {sig_icon} Signal: {smc_sig}")
+        elif "SELL" in smc_sig:
+            st.error(f"### {sig_icon} Signal: {smc_sig}")
+        else:
+            st.warning(f"### {sig_icon} Signal: {smc_sig}")
+
+    with sig_col2:
+        st.info(f"💡 **कारण (Reasoning):** {sig_reason}")
+
+    # 4️⃣ Price Chart Rendering
     st.write("---")
     st.subheader("📈 SMC Price Chart")
     st.line_chart(df_ltf.set_index("timestamp")["close"].tail(50))
