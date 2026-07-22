@@ -8,3 +8,4 @@ nsepython
 requests
 smartapi-python
 logzero
+websocket-client
