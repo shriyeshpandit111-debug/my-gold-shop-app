@@ -424,6 +424,55 @@ def analyze_smc_pro_v2(df, daily_trend):
     return pd.DataFrame()
 
 
+# --- 🌅 3:20 PM GAP PREDICTOR MODULE ---
+def render_gap_predictor_module(df, current_pcr, daily_trend):
+    st.markdown("---")
+    st.subheader("🔮 3:20 PM Next-Day Gap Predictor (Intraday Analysis)")
+
+    # दुपारच्या सत्रानुरूप किंवा शेवटच्या कॅन्डलवरून विश्लेषण
+    last_candle = df.iloc[-1]
+    last_vol = last_candle["volume"]
+    avg_vol = last_candle["vol_sma"] if "vol_sma" in last_candle and not pd.isna(last_candle["vol_sma"]) else last_vol
+
+    # इन्स्टिट्यूशनल वॉल्यूम आणि प्राईस मुव्हमेंटचे विश्लेषण
+    price_change_pct = (last_candle["close"] - last_candle["open"]) / last_candle["open"] * 100
+    inst_buying_pressure = last_vol > avg_vol and price_change_pct > 0
+    inst_selling_pressure = last_vol > avg_vol and price_change_pct < 0
+
+    # स्कोर ठरवणे (PCR + Volume + Daily Trend)
+    score = 0
+    if current_pcr > 1.15:
+        score += 2
+    elif current_pcr < 0.85:
+        score -= 2
+
+    if "BULLISH" in daily_trend:
+        score += 1
+    elif "BEARISH" in daily_trend:
+        score -= 1
+
+    if inst_buying_pressure:
+        score += 2
+    elif inst_selling_pressure:
+        score -= 2
+
+    # प्रेडिक्शन निकाल
+    col_g1, col_g2, col_g3 = st.columns(3)
+    
+    with col_g1:
+        st.metric(label="📊 Live PCR Status", value=f"{current_pcr}")
+    with col_g2:
+        st.metric(label="⚡ Institutional Volume Check", value="Strong Buying" if inst_buying_pressure else ("Strong Selling" if inst_selling_pressure else "Neutral / Normal"))
+    
+    with col_g3:
+        if score >= 2:
+            st.success("🚀 **Gap-Up Prediction:** HIGH (Bullish Sentiment)")
+        elif score <= -2:
+            st.error("⚠️ **Gap-Down Prediction:** HIGH (Bearish Sentiment)")
+        else:
+            st.warning("⚖️ **Gap Prediction:** FLAT / SIDEWAYS OPENING")
+
+
 # --- 🖼️ DASHBOARD & REAL-TIME OI STORAGE ---
 def render_stockmojo_style_dashboard(current_price, asset_name):
     oi_data = fetch_angel_one_real_oi(
@@ -765,6 +814,8 @@ if df_ltf is not None and not df_ltf.empty:
             current_price, display_name
         )
         render_stockmojo_line_charts()
+        # 🌅 3:20 PM Gap Predictor Module Call
+        render_gap_predictor_module(df_ltf, current_pcr, daily_trend)
 
     st.markdown("---")
     signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
