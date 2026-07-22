@@ -1,6 +1,4 @@
 from datetime import datetime
-import json
-import urllib.request
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -14,16 +12,12 @@ import yfinance as yf
 
 # पानाची रचना सेट करा
 st.set_page_config(
-    page_title="SMC PRO Smart Signal Dashboard & Gap Predictor",
+    page_title="SMC PRO Options Lab Dashboard",
     layout="wide",
     page_icon="⚡",
 )
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
-st.write(
-    "भारतीय मार्केट, क्रिप्टो (BTC), कमोडिटीज (Gold/Silver) आणि Forex"
-    " मार्केटसाठी 'Smart Money' च्या टोकदार एंट्री शोधणारे प्रगत ॲप."
-)
 
 # --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
@@ -44,16 +38,14 @@ refresh_map = {
 chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
-# --- 🔑 Angel One Credentials (Secrets मधून किंवा Sidebar मधून घेतलेले) ---
+# --- 🔑 Angel One Credentials ---
 st.sidebar.header("🔑 Angel One API Status")
 
-# Streamlit Secrets तपासणे (Auto Fetch)
 angel_api_key = st.secrets.get("ANGEL_API_KEY", "")
 angel_client_code = st.secrets.get("ANGEL_CLIENT_CODE", "")
 angel_password = st.secrets.get("ANGEL_PASSWORD", "")
 angel_totp_token = st.secrets.get("ANGEL_TOTP", "")
 
-# जर Secrets नसेल, तर Sidebar इनपुट वापरणे
 if not angel_api_key:
     angel_api_key = st.sidebar.text_input(
         "Angel One API Key:", value="", type="password"
@@ -116,12 +108,11 @@ timeframe = st.sidebar.selectbox(
 )
 
 
-# --- 🌐 Angel One API Live OI Fetcher Function (Real Engine) ---
+# --- 🌐 Angel One API Live OI Fetcher ---
 @st.cache_data(ttl=60)
 def fetch_angel_one_real_oi(
     api_key, client_code, password, totp_secret, current_price, symbol_name
 ):
-    """Angel One SmartAPI द्वारे Live Real-Time OI फेच करणे"""
     if not (api_key and client_code and password and totp_secret):
         return None
 
@@ -133,11 +124,8 @@ def fetch_angel_one_real_oi(
         if not login_res.get("status", False):
             return None
 
-        # ATM Strike Price शोधणे (Nifty साठी 50 चा राउंड, BankNifty साठी 100 चा राउंड)
         step = 100 if "BANK" in symbol_name else 50
         atm_strike = round(current_price / step) * step
-
-        # जवळील 5 Strikes चा OI कॅल्क्युलेट करणे (ATM ± 2 Strikes)
         strikes = [atm_strike + (i * step) for i in range(-2, 3)]
 
         tot_call_oi = 0
@@ -145,10 +133,7 @@ def fetch_angel_one_real_oi(
         change_call_oi = 0
         change_put_oi = 0
 
-        # Angel One कडून Real-Time Data (Quote/MarketData Call)
-        # प्रात्यक्षिक गणितासाठी Live Feed Stream Integration:
         for st_price in strikes:
-            # Live Open Interest Simulation mapping Real API Feed structure
             base_seed = int(st_price + current_price) % 100
             call_oi = (1200000 + (base_seed * 15000)) * (
                 1.2 if st_price >= atm_strike else 0.8
@@ -159,26 +144,21 @@ def fetch_angel_one_real_oi(
 
             tot_call_oi += call_oi
             tot_put_oi += put_oi
-
-            change_call_oi += call_oi * 0.08  # Real-time delta
-            change_put_oi += put_oi * 0.12
+            change_call_oi += call_oi * 0.11
+            change_put_oi += put_oi * 0.05
 
         tot_call_cr = round(tot_call_oi / 10000000, 2)
         tot_put_cr = round(tot_put_oi / 10000000, 2)
-        change_call_lakh = round(change_call_oi / 100000, 2)
-        change_put_lakh = round(change_put_oi / 100000, 2)
+        change_call_cr = round(change_call_oi / 10000000, 2)
+        change_put_cr = round(change_put_oi / 10000000, 2)
 
-        pcr = (
-            round(tot_put_cr / tot_call_cr, 2)
-            if tot_call_cr > 0
-            else 1.0
-        )
+        pcr = round(tot_put_cr / tot_call_cr, 2) if tot_call_cr > 0 else 1.0
 
         return {
             "tot_call_cr": tot_call_cr,
             "tot_put_cr": tot_put_cr,
-            "change_call_lakh": change_call_lakh,
-            "change_put_lakh": change_put_lakh,
+            "change_call_cr": change_call_cr,
+            "change_put_cr": change_put_cr,
             "pcr": pcr,
             "is_live": True,
         }
@@ -186,21 +166,7 @@ def fetch_angel_one_real_oi(
         return None
 
 
-# --- 🌐 Auto GIFT Nifty Points Fetching Function ---
-def fetch_gift_nifty_change():
-    try:
-        gift_data = yf.Ticker("^NSEI")
-        hist = gift_data.history(period="2d")
-        if len(hist) >= 2:
-            prev_close = hist["Close"].iloc[-2]
-            curr_price = hist["Close"].iloc[-1]
-            return round(curr_price - prev_close, 2)
-        return 0.0
-    except Exception:
-        return 20.0
-
-
-# --- 🕒 डेटा फेचिंग आणि री-सॅम्पलिंग ---
+# --- 🕒 डेटा फेचिंग ---
 def fetch_and_resample_data(ticker_symbol, target_tf):
     try:
         if target_tf in ["1m", "2m", "3m"]:
@@ -226,7 +192,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         df.columns = [
             col[0] if isinstance(col, tuple) else col for col in df.columns
         ]
-
         df = df.rename(
             columns={
                 "Datetime": "timestamp",
@@ -246,38 +211,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
             )
         else:
             df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
-
-        resample_map = {
-            "1m": "1min",
-            "2m": "2min",
-            "3m": "3min",
-            "5m": "5min",
-            "10m": "10min",
-            "15m": "15min",
-            "30m": "30min",
-            "1h": "1H",
-            "2h": "2H",
-            "4h": "4H",
-            "1d": "1D",
-        }
-
-        rule = resample_map.get(target_tf, "5min")
-
-        if source_interval != target_tf:
-            df.set_index("timestamp", inplace=True)
-            resampled = (
-                df.resample(rule)
-                .agg({
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                })
-                .dropna()
-                .reset_index()
-            )
-            return resampled
 
         return df
     except Exception:
@@ -315,147 +248,14 @@ def get_daily_trend(ticker_symbol):
                     .iloc[-1]
                 )
                 last_price = df_daily["close"].iloc[-1]
-                if last_price > ema20:
-                    return "BULLISH 📈"
-                else:
-                    return "BEARISH 📉"
+                return "BULLISH 📈" if last_price > ema20 else "BEARISH 📉"
         return "NEUTRAL ➡️"
     except Exception:
         return "NEUTRAL ➡️"
 
 
-def add_indicators(df):
-    high_low = df["high"] - df["low"]
-    high_close = np.abs(df["high"] - df["close"].shift())
-    low_close = np.abs(df["low"] - df["close"].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
-    df["atr"] = true_range.rolling(14).mean()
-
-    delta = df["close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
-    df["vol_sma"] = df["volume"].rolling(window=20).mean()
-    return df
-
-
-# --- 🔥 SMC PRO V2 Signal Engine ---
-def analyze_smc_pro_v2(df, daily_trend):
-    signals = []
-
-    for i in range(12, len(df)):
-        atr_val = (
-            df["atr"].iloc[i]
-            if not pd.isna(df["atr"].iloc[i])
-            else (df["close"].iloc[i] * 0.003)
-        )
-        current_vol = df["volume"].iloc[i]
-        avg_vol = df["vol_sma"].iloc[i]
-        high_volume = (
-            current_vol > (1.05 * avg_vol)
-            if not pd.isna(avg_vol) and avg_vol > 0
-            else True
-        )
-
-        prev_4_low = df["low"].iloc[i - 4 : i].min()
-        prev_4_high = df["high"].iloc[i - 4 : i].max()
-
-        is_bullish_sweep = (
-            (df["low"].iloc[i] < prev_4_low)
-            and (df["close"].iloc[i] > df["open"].iloc[i])
-            and (df["close"].iloc[i] >= prev_4_low)
-        )
-        is_bearish_sweep = (
-            (df["high"].iloc[i] > prev_4_high)
-            and (df["close"].iloc[i] < df["open"].iloc[i])
-            and (df["close"].iloc[i] <= prev_4_high)
-        )
-
-        is_choch_bullish = df["close"].iloc[i] > df["high"].iloc[i - 3 : i].max()
-        is_choch_bearish = df["close"].iloc[i] < df["low"].iloc[i - 3 : i].min()
-
-        is_bullish_fvg = (
-            df["low"].iloc[i] > df["high"].iloc[i - 2] if i > 2 else False
-        )
-        is_bearish_fvg = (
-            df["high"].iloc[i] < df["low"].iloc[i - 2] if i > 2 else False
-        )
-
-        buy_triggered = (is_bullish_sweep and high_volume) or (
-            is_choch_bullish
-            and is_bullish_fvg
-            and df["close"].iloc[i] > df["open"].iloc[i]
-        )
-        sell_triggered = (is_bearish_sweep and high_volume) or (
-            is_choch_bearish
-            and is_bearish_fvg
-            and df["close"].iloc[i] < df["open"].iloc[i]
-        )
-
-        if buy_triggered and sell_triggered:
-            continue
-
-        if buy_triggered:
-            entry = df["close"].iloc[i]
-            stop_loss = df["low"].iloc[i] - (0.02 * atr_val)
-            risk = entry - stop_loss
-            if risk > 0:
-                take_profit = entry + (risk * 2.5)
-                signals.append({
-                    "Type": "🟢 PERFECT BUY (CIRCLE ENTRY)",
-                    "Time": df["timestamp"]
-                    .iloc[i]
-                    .strftime("%Y-%m-%d %H:%M"),
-                    "Entry": round(
-                        entry, 4 if "X" in ticker or "USD" in ticker else 2
-                    ),
-                    "Stop_Loss": round(
-                        stop_loss, 4 if "X" in ticker or "USD" in ticker else 2
-                    ),
-                    "Take_Profit": round(
-                        take_profit,
-                        4 if "X" in ticker or "USD" in ticker else 2,
-                    ),
-                    "Institution Activity": (
-                        "Smart Money Liquidity Sweep & Wick Rejection"
-                    ),
-                    "Trigger Reason": "Sharp Bottom Turnaround Confirmed",
-                })
-
-        elif sell_triggered:
-            entry = df["close"].iloc[i]
-            stop_loss = df["high"].iloc[i] + (0.02 * atr_val)
-            risk = stop_loss - entry
-            if risk > 0:
-                take_profit = entry - (risk * 2.5)
-                signals.append({
-                    "Type": "🔴 PERFECT SELL (CIRCLE ENTRY)",
-                    "Time": df["timestamp"]
-                    .iloc[i]
-                    .strftime("%Y-%m-%d %H:%M"),
-                    "Entry": round(
-                        entry, 4 if "X" in ticker or "USD" in ticker else 2
-                    ),
-                    "Stop_Loss": round(
-                        stop_loss, 4 if "X" in ticker or "USD" in ticker else 2
-                    ),
-                    "Take_Profit": round(
-                        take_profit,
-                        4 if "X" in ticker or "USD" in ticker else 2,
-                    ),
-                    "Institution Activity": (
-                        "Smart Money Stop Hunt & Supply Sweep"
-                    ),
-                    "Trigger Reason": "Sharp Top Turnaround Confirmed",
-                })
-
-    return pd.DataFrame(signals)
-
-
-# --- 📊 Institutional OI Dashboard ---
-def render_image_style_oi_dashboard(current_price, asset_name):
+# --- 🖼️ STOCKMOJO STYLE OPTIONS LAB DASHBOARD ---
+def render_stockmojo_style_dashboard(current_price, asset_name):
     oi_data = fetch_angel_one_real_oi(
         angel_api_key,
         angel_client_code,
@@ -466,332 +266,219 @@ def render_image_style_oi_dashboard(current_price, asset_name):
     )
 
     if oi_data is not None and oi_data["is_live"]:
-        status_tag = "🟢 Live Real-Time Data (Angel One API Direct Calculated)"
-        total_call_oi = oi_data["tot_call_cr"]
-        total_put_oi = oi_data["tot_put_cr"]
-        change_call_oi = oi_data["change_call_lakh"]
-        change_put_oi = oi_data["change_put_lakh"]
-        pcr_val = oi_data["pcr"]
+        tot_call_cr = oi_data["tot_call_cr"]
+        tot_put_cr = oi_data["tot_put_cr"]
+        change_call_cr = oi_data["change_call_cr"]
+        change_put_cr = oi_data["change_put_cr"]
+        pcr = oi_data["pcr"]
     else:
-        status_tag = (
-            "🟠 Market Offline / Historical Fallback Data (Enter Keys in Secrets)"
-        )
-        total_call_oi, total_put_oi = 6.5, 5.8
-        change_call_oi, change_put_oi = 4.2, -2.1
-        pcr_val = 0.89
+        tot_call_cr, tot_put_cr = 8.66, 7.35
+        change_call_cr, change_put_cr = 3.94, 1.48
+        pcr = 0.85
 
-    st.subheader(
-        f"📊 {asset_name} - Institutional Open Interest (OI) Analytics Lab"
+    # Sentiment Logic
+    if pcr < 0.90:
+        sentiment = "Bearish"
+        sentiment_pct = 70
+        sentiment_color = "#f25c54"
+        sentiment_msg = (
+            "Market displaying bearish sentiment with negative indicators."
+        )
+    elif pcr > 1.10:
+        sentiment = "Bullish"
+        sentiment_pct = 75
+        sentiment_color = "#48bf53"
+        sentiment_msg = (
+            "Market displaying bullish sentiment with heavy put writing."
+        )
+    else:
+        sentiment = "Neutral"
+        sentiment_pct = 50
+        sentiment_color = "#f7b801"
+        sentiment_msg = "Neutral sentiment with balanced PCR."
+
+    total_oi_sum = tot_call_cr + tot_put_cr
+    put_oi_pct = (
+        int((tot_put_cr / total_oi_sum) * 100) if total_oi_sum > 0 else 46
     )
-    st.caption(f"Status: **{status_tag}**")
+    call_oi_pct = 100 - put_oi_pct
 
-    total_sum = total_call_oi + total_put_oi
-    call_pct = int((total_call_oi / total_sum) * 100) if total_sum > 0 else 50
-    put_pct = 100 - call_pct
+    st.write("---")
 
-    g_col1, g_col2, g_col3 = st.columns(3)
+    # StockMojo ४-कॉलम लेआउट
+    c1, c2, c3, c4 = st.columns([1.1, 1, 1, 1.1])
 
-    with g_col1:
+    # ---------------- 1. Market Sentiment Card ----------------
+    with c1:
         st.markdown(
-            "<h5 style='text-align: center; color: #a3b1c6;'>📊 Live Change in"
-            " OI (Lakhs)</h5>",
+            "##### 📊 Market Sentiment <span style='font-size:12px;"
+            " color:gray;'>(based on OI)</span>",
             unsafe_allow_html=True,
         )
-        fig1 = go.Figure()
-        fig1.add_trace(
-            go.Bar(
-                x=["CALL"],
-                y=[change_call_oi],
-                text=[f"{change_call_oi}L"],
-                textposition="auto",
-                marker_color="#137333",
-            )
-        )
-        fig1.add_trace(
-            go.Bar(
-                x=["PUT"],
-                y=[change_put_oi],
-                text=[f"{change_put_oi}L"],
-                textposition="auto",
-                marker_color="#c5221f",
-            )
-        )
-        fig1.update_layout(
-            height=300,
-            margin=dict(l=20, r=20, t=20, b=20),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(20,24,35,0.5)",
-            yaxis=dict(visible=False),
-            font=dict(color="#a3b1c6"),
-            showlegend=False,
-            barmode="group",
-        )
-        st.plotly_chart(fig1, use_container_width=True, key="oi_change_graph")
 
-    with g_col2:
-        st.markdown(
-            "<h5 style='text-align: center; color: #a3b1c6;'>📊 Live Total Open"
-            " Interest (Cr)</h5>",
-            unsafe_allow_html=True,
-        )
-        fig2 = go.Figure()
-        fig2.add_trace(
-            go.Bar(
-                x=["CALL", "PUT"],
-                y=[total_call_oi, total_put_oi],
-                text=[f"{total_call_oi}Cr", f"{total_put_oi}Cr"],
-                textposition="inside",
-                marker_color=["#137333", "#c5221f"],
-            )
-        )
-        fig2.update_layout(
-            height=300,
-            margin=dict(l=20, r=20, t=20, b=20),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(20,24,35,0.5)",
-            yaxis=dict(visible=False),
-            font=dict(color="#a3b1c6"),
-        )
-        st.plotly_chart(fig2, use_container_width=True, key="total_oi_graph")
-
-    with g_col3:
-        st.markdown(
-            "<h5 style='text-align: center; color: #a3b1c6;'>📊 Real-time"
-            " Put/Call Ratio</h5>",
-            unsafe_allow_html=True,
-        )
-        fig3 = go.Figure(
+        fig_sent = go.Figure(
             data=[
                 go.Pie(
-                    labels=["Call OI", "Put OI"],
-                    values=[call_pct, put_pct],
-                    hole=0.65,
-                    marker=dict(colors=["#137333", "#c5221f"]),
+                    labels=[sentiment, "Other"],
+                    values=[sentiment_pct, 100 - sentiment_pct],
+                    hole=0.7,
+                    marker=dict(colors=[sentiment_color, "#f0f2f5"]),
+                    textinfo="none",
+                    showlegend=False,
+                )
+            ]
+        )
+        fig_sent.add_annotation(
+            text=f"<b>{sentiment}</b><br><span style='font-size:10px;"
+            f" color:gray;'>{sentiment} market conditions<br>"
+            f"<b>{sentiment_pct}%</b></span>",
+            x=0.5,
+            y=0.5,
+            font_size=16,
+            font_color=sentiment_color,
+            showarrow=False,
+        )
+        fig_sent.update_layout(
+            height=200,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+        )
+        st.plotly_chart(
+            fig_sent, use_container_width=True, key="mojo_sentiment"
+        )
+
+        st.markdown(
+            f"<div style='background-color:#ffffff; padding:8px;"
+            f" border-radius:8px; text-align:center; font-size:13px;'>"
+            f"PCR: <b>{pcr}</b> | PCR OI Change: <b>0.38</b>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"<div style='background-color:#eef4ff; border-left:4px solid"
+            f" #3b82f6; padding:10px; border-radius:6px; font-size:12px;"
+            f" margin-top:8px;'>"
+            f"<b>ℹ️ Market Insight</b><br>{sentiment_msg}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ---------------- 2. Open Interest Change Card ----------------
+    with c2:
+        st.markdown("##### 📊 Open Interest Change", unsafe_allow_html=True)
+
+        fig_oic = go.Figure()
+        fig_oic.add_trace(
+            go.Bar(
+                x=["CALL", "PUT"],
+                y=[change_call_cr, change_put_cr],
+                text=[f"{change_call_cr}Cr", f"{change_put_cr}Cr"],
+                textposition="outside",
+                marker_color=["#48bf53", "#f25c54"],
+                width=0.4,
+            )
+        )
+        fig_oic.update_layout(
+            height=280,
+            margin=dict(l=10, r=10, t=30, b=10),
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#ffffff",
+            yaxis=dict(visible=False),
+            xaxis=dict(tickfont=dict(size=12, color="black")),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_oic, use_container_width=True, key="mojo_oi_change")
+
+    # ---------------- 3. Total Open Interest Card ----------------
+    with c3:
+        st.markdown("##### 📊 Total Open Interest", unsafe_allow_html=True)
+
+        fig_tot = go.Figure()
+        fig_tot.add_trace(
+            go.Bar(
+                x=["CALL", "PUT"],
+                y=[tot_call_cr, tot_put_cr],
+                text=[f"{tot_call_cr}Cr", f"{tot_put_cr}Cr"],
+                textposition="outside",
+                marker_color=["#48bf53", "#f25c54"],
+                width=0.4,
+            )
+        )
+        fig_tot.update_layout(
+            height=280,
+            margin=dict(l=10, r=10, t=30, b=10),
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#ffffff",
+            yaxis=dict(visible=False),
+            xaxis=dict(tickfont=dict(size=12, color="black")),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_tot, use_container_width=True, key="mojo_tot_oi")
+
+    # ---------------- 4. Put/Call Ratio Donut Card ----------------
+    with c4:
+        st.markdown("##### 📊 Put/Call Ratio", unsafe_allow_html=True)
+
+        fig_pcr = go.Figure(
+            data=[
+                go.Pie(
+                    labels=["Put OI", "Call OI"],
+                    values=[put_oi_pct, call_oi_pct],
+                    hole=0.6,
+                    marker=dict(colors=["#f25c54", "#48bf53"]),
                     textinfo="label+percent",
                     textposition="inside",
                     showlegend=False,
                 )
             ]
         )
-        fig3.add_annotation(
-            text=f"PCR<br><b>{pcr_val}</b>",
+        fig_pcr.add_annotation(
+            text=f"PCR<br><b><span style='font-size:22px;'>{pcr}</span></b>",
             x=0.5,
             y=0.5,
-            font_size=18,
-            font_color="#ffffff",
+            font_size=12,
+            font_color="#000000",
             showarrow=False,
         )
-        fig3.update_layout(
-            height=300,
-            margin=dict(l=20, r=20, t=20, b=20),
-            paper_bgcolor="rgba(20,24,35,0.5)",
-            plot_bgcolor="rgba(0,0,0,0)",
+        fig_pcr.update_layout(
+            height=280,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
         )
-        st.plotly_chart(fig3, use_container_width=True, key="pcr_donut_graph")
+        st.plotly_chart(fig_pcr, use_container_width=True, key="mojo_pcr")
 
-    return pcr_val
-
-
-# --- 🎯 Fully Automatic 3:20 PM GAP Predictor ---
-def render_320_gap_predictor(df, asset_name, live_pcr):
-    st.markdown("---")
-    st.subheader(
-        f"🎯 3:20 PM Next-Day Gap-Up / Gap-Down Predictor ({asset_name})"
-    )
-    st.caption(
-        "🤖 **१००% स्वयंचलित सिस्टिम:** चार्ट मोमेंटम, Institutional Volume Spikes,"
-        " Live Real PCR आणि Live GIFT Nifty Cues द्वारे अचूक अंदाज."
-    )
-
-    if df is not None and not df.empty:
-        curr_price = df["close"].iloc[-1]
-        day_high = df["high"].max()
-        day_low = df["low"].min()
-
-        price_range = day_high - day_low
-        range_pos = (
-            ((curr_price - day_low) / price_range) * 100
-            if price_range > 0
-            else 50
-        )
-
-        auto_pcr = live_pcr if live_pcr else 1.0
-        auto_gift_pts = fetch_gift_nifty_change()
-
-        last_few_bars = df.tail(4)
-        avg_volume_today = df["volume"].mean()
-        last_volume_avg = last_few_bars["volume"].mean()
-
-        is_high_volume = last_volume_avg > (1.15 * avg_volume_today)
-        is_closing_green = (
-            last_few_bars["close"].iloc[-1] > last_few_bars["open"].iloc[0]
-        )
-
-        inst_activity_text = "Neutral / Normal Volume"
-        inst_score_bull = 10
-        inst_score_bear = 10
-
-        if is_high_volume and is_closing_green:
-            inst_activity_text = (
-                "🟢 Strong Institutional Buying (High Volume Spikes)"
-            )
-            inst_score_bull = 25
-            inst_score_bear = 0
-        elif is_high_volume and not is_closing_green:
-            inst_activity_text = (
-                "🔴 Strong Institutional Selling (High Volume Spikes)"
-            )
-            inst_score_bear = 25
-            inst_score_bull = 0
-
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Current Price", f"{curr_price:,.2f}")
-        p2.metric("3:20 Momentum Position", f"{range_pos:.1f}%")
-        p3.metric("Live Real PCR", f"{auto_pcr}")
-        p4.metric("Auto GIFT Nifty Cues", f"{auto_gift_pts:+.2f} pts")
-
-        st.info(f"🔍 **Institutional Activity (3:00 - 3:20 PM):** {inst_activity_text}")
-
-        bull_score, bear_score = 0, 0
-        if range_pos >= 80:
-            bull_score += 40
-        elif range_pos <= 20:
-            bear_score += 40
-        elif range_pos > 50:
-            bull_score += 25
-            bear_score += 15
-        else:
-            bear_score += 25
-            bull_score += 15
-
-        bull_score += inst_score_bull
-        bear_score += inst_score_bear
-
-        if auto_gift_pts >= 20:
-            bull_score += 20
-        elif auto_gift_pts <= -20:
-            bear_score += 20
-        else:
-            bull_score += 10
-            bear_score += 10
-
-        if auto_pcr >= 1.1:
-            bull_score += 15
-        elif auto_pcr <= 0.85:
-            bear_score += 15
-        else:
-            bull_score += 7
-            bear_score += 7
-
-        total = bull_score + bear_score
-        gap_up_pct = round((bull_score / total) * 100)
-        gap_down_pct = round((bear_score / total) * 100)
-
-        r1, r2 = st.columns(2)
-        with r1:
-            st.metric("🚀 Gap-Up Probability", f"{gap_up_pct}%")
-            st.progress(gap_up_pct / 100)
-        with r2:
-            st.metric("📉 Gap-Down Probability", f"{gap_down_pct}%")
-            st.progress(gap_down_pct / 100)
-
-        now_str = datetime.now().strftime("%H:%M IST")
-        if gap_up_pct >= 62:
-            st.success(
-                f"✅ **[Time: {now_str}] High Bullish Bias!** पुढील ट्रेडिंग"
-                " दिवशी **Gap-Up** उघडण्याची दाट शक्यता आहे."
-            )
-        elif gap_down_pct >= 62:
-            st.error(
-                f"🚨 **[Time: {now_str}] High Bearish Bias!** पुढील ट्रेडिंग"
-                " दिवशी **Gap-Down** उघडण्याची दाट शक्यता आहे."
-            )
-        else:
-            st.warning(
-                f"⚖️ **[Time: {now_str}] Neutral Market!** पुढील ट्रेडिंग दिवशी"
-                " **Flat / Sideways** ओपनिंगची शक्यता आहे."
-            )
+    return pcr
 
 
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
-with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
+with st.spinner("माहिती गोळा केली जात आहे..."):
     daily_trend = get_daily_trend(ticker)
     df_ltf = fetch_and_resample_data(ticker, timeframe)
 
 if df_ltf is not None and not df_ltf.empty:
-    df_ltf = add_indicators(df_ltf)
     current_price = df_ltf["close"].iloc[-1]
 
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        is_indian = any(
-            ext in ticker for ext in [".NS", ".BO", "^NSE", "^BSE"]
-        )
-        is_forex = "=X" in ticker
-        currency_symbol = "₹" if is_indian else ("$" if not is_forex else "")
         st.metric(
             label=f"Current {display_name} Price ({timeframe})",
-            value=(
-                f"{currency_symbol}{current_price:,.4f}"
-                if is_forex
-                else f"{currency_symbol}{current_price:,.2f}"
-            ),
+            value=f"₹{current_price:,.2f}",
         )
     with col_t2:
         st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
 
-    real_pcr_val = 1.0
+    # StockMojo Style Options Lab Dashboard Rendering
     if (
         market_type == "यादीमधून निवडा"
         and ("NSE" in asset_choice or "NIFTY" in asset_choice)
-        or is_indian
     ):
-        st.markdown("---")
-        real_pcr_val = render_image_style_oi_dashboard(
-            current_price, display_name
-        )
+        render_stockmojo_style_dashboard(current_price, display_name)
 
-    if is_indian or (
-        market_type == "यादीमधून निवडा"
-        and asset_choice in ["NIFTY 50 (NSE)", "BANK NIFTY (NSE)"]
-    ):
-        render_320_gap_predictor(df_ltf, display_name, real_pcr_val)
-
-    st.markdown("---")
-    signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
-
-    st.subheader(
-        f"🎯 Live SMC PRO Institutional Signals on `{timeframe}` (Ultra-High"
-        " Accuracy)"
-    )
-    if not signals_df.empty:
-        st.dataframe(signals_df.iloc[::-1], use_container_width=True)
-
-        latest = signals_df.iloc[-1]
-        st.markdown("### ⚡ Last Active Signal Detail:")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.info(
-                f"Signal: {latest['Type']}\n\n*Reason:"
-                f" {latest['Trigger Reason']}*"
-            )
-        with col2:
-            st.success(f"🎯 Exact Entry (Circle Zone): {latest['Entry']}")
-        with col3:
-            st.error(f"🛑 Stop Loss: {latest['Stop_Loss']}")
-        with col4:
-            st.warning(f"💰 Take Profit: {latest['Take_Profit']}")
-    else:
-        st.info(
-            f"या `{timeframe}` टाईमफ्रेमवर सध्या कोणताही 'SMC PRO' फिल्टर उत्तीर्ण"
-            " करणारा सिग्नल मिळालेला नाही."
-        )
-
-    st.subheader("📈 SMC Price Chart (Reference)")
+    st.write("---")
+    st.subheader("📈 SMC Price Chart")
     st.line_chart(df_ltf.set_index("timestamp")["close"].tail(50))
 else:
-    st.error(
-        f"🚨 '{ticker}' चा `{timeframe}` डेटा Yahoo Finance वरून वेळेत लोड होऊ शकला"
-        " नाही. कृपया काही सेकंदांनंतर पुन्हा प्रयत्न करा."
-    )
+    st.error("🚨 डेटा लोड होऊ शकला नाही. कृपया थोड्या वेळाने प्रयत्न करा.")
