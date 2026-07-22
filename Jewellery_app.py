@@ -669,6 +669,7 @@ if df_ltf is not None and not df_ltf.empty:
     with col_t2:
         st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
 
+    # १. भारतीय शेअर्स / इंडेक्स असल्यास Open Interest (OI) डॅशबोर्ड दाखवा
     if (
         market_type == "यादीमधून निवडा"
         and ("NSE" in asset_choice or "NIFTY" in asset_choice)
@@ -677,8 +678,12 @@ if df_ltf is not None and not df_ltf.empty:
         st.markdown("---")
         render_image_style_oi_dashboard(current_price, display_name)
 
-    # ३:२० PM Gap Predictor (100% Fully Automatic)
-    render_320_gap_predictor(df_ltf, display_name)
+    # २. 🎯 ३:२० PM Gap Predictor - फक्त आणि फक्त भारतीय मार्केटसाठी (NIFTY / BANK NIFTY / NSE Stocks)
+    if is_indian or (
+        market_type == "यादीमधून निवडा"
+        and asset_choice in ["NIFTY 50 (NSE)", "BANK NIFTY (NSE)"]
+    ):
+        render_320_gap_predictor(df_ltf, display_name)
 
     st.markdown("---")
     signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
