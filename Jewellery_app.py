@@ -18,6 +18,43 @@ st.set_page_config(
     page_icon="⚡",
 )
 
+# --- 🎨 Custom CSS for Ultra-Modern Smart Look ---
+st.markdown(
+    """
+    <style>
+        /* Main background and font styling */
+        .main {
+            background-color: #0e1117;
+            color: #ffffff;
+        }
+        /* Card styling for metrics and sections */
+        .stMetric, div[data-testid="stMetric"] {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        /* Tab styling */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            background-color: #21262d;
+            border-radius: 8px 8px 0px 0px;
+            color: white;
+            padding: 10px 20px;
+            font-weight: 600;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #238636 !important;
+            color: white !important;
+        }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
 
 # --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग ---
@@ -42,7 +79,6 @@ st_autorefresh(interval=chosen_interval, key="datarefresh")
 # --- 🔑 Angel One Credentials (Permanent Save with Session State) ---
 st.sidebar.header("🔑 Angel One API Status")
 
-# Session State मध्ये आधीची माहिती जतन करण्यासाठी
 if "saved_api_key" not in st.session_state:
     st.session_state["saved_api_key"] = st.secrets.get("ANGEL_API_KEY", "")
 if "saved_client_code" not in st.session_state:
@@ -54,7 +90,6 @@ if "saved_password" not in st.session_state:
 if "saved_totp" not in st.session_state:
     st.session_state["saved_totp"] = st.secrets.get("ANGEL_TOTP", "")
 
-# इनपुट फिल्ड्स ज्यामध्ये जुनी माहिती कायम राहील
 angel_api_key = st.sidebar.text_input(
     "Angel One API Key:",
     value=st.session_state["saved_api_key"],
@@ -74,7 +109,6 @@ angel_totp_token = st.sidebar.text_input(
     type="password",
 )
 
-# युजरने बदललेली माहिती सेव्ह करण्यासाठी बटन
 if st.sidebar.button("💾 Save Credentials"):
     st.session_state["saved_api_key"] = angel_api_key
     st.session_state["saved_client_code"] = angel_client_code
@@ -426,20 +460,24 @@ def analyze_smc_pro_v2(df, daily_trend):
 
 # --- 🌅 3:20 PM GAP PREDICTOR MODULE ---
 def render_gap_predictor_module(df, current_pcr, daily_trend):
-    st.markdown("---")
     st.subheader("🔮 3:20 PM Next-Day Gap Predictor (Intraday Analysis)")
 
-    # दुपारच्या सत्रानुरूप किंवा शेवटच्या कॅन्डलवरून विश्लेषण
     last_candle = df.iloc[-1]
     last_vol = last_candle["volume"]
-    avg_vol = last_candle["vol_sma"] if "vol_sma" in last_candle and not pd.isna(last_candle["vol_sma"]) else last_vol
+    avg_vol = (
+        last_candle["vol_sma"]
+        if "vol_sma" in last_candle and not pd.isna(last_candle["vol_sma"])
+        else last_vol
+    )
 
-    # इन्स्टिट्यूशनल वॉल्यूम आणि प्राईस मुव्हमेंटचे विश्लेषण
-    price_change_pct = (last_candle["close"] - last_candle["open"]) / last_candle["open"] * 100
+    price_change_pct = (
+        (last_candle["close"] - last_candle["open"])
+        / last_candle["open"]
+        * 100
+    )
     inst_buying_pressure = last_vol > avg_vol and price_change_pct > 0
     inst_selling_pressure = last_vol > avg_vol and price_change_pct < 0
 
-    # स्कोर ठरवणे (PCR + Volume + Daily Trend)
     score = 0
     if current_pcr > 1.15:
         score += 2
@@ -456,14 +494,24 @@ def render_gap_predictor_module(df, current_pcr, daily_trend):
     elif inst_selling_pressure:
         score -= 2
 
-    # प्रेडिक्शन निकाल
     col_g1, col_g2, col_g3 = st.columns(3)
-    
+
     with col_g1:
         st.metric(label="📊 Live PCR Status", value=f"{current_pcr}")
     with col_g2:
-        st.metric(label="⚡ Institutional Volume Check", value="Strong Buying" if inst_buying_pressure else ("Strong Selling" if inst_selling_pressure else "Neutral / Normal"))
-    
+        st.metric(
+            label="⚡ Institutional Volume Check",
+            value=(
+                "Strong Buying"
+                if inst_buying_pressure
+                else (
+                    "Strong Selling"
+                    if inst_selling_pressure
+                    else "Neutral / Normal"
+                )
+            ),
+        )
+
     with col_g3:
         if score >= 2:
             st.success("🚀 **Gap-Up Prediction:** HIGH (Bullish Sentiment)")
@@ -525,7 +573,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             [df_hist, pd.DataFrame([new_row])], ignore_index=True
         )
 
-    st.markdown("---")
     h_col1, h_col2 = st.columns([3, 1])
     with h_col1:
         st.subheader(
@@ -682,7 +729,6 @@ def render_stockmojo_line_charts():
     ):
         return
 
-    st.write("---")
     df_live_oi = st.session_state["oi_history"]
 
     st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
@@ -804,52 +850,83 @@ if df_ltf is not None and not df_ltf.empty:
             ),
         )
     with col_t2:
-        st.subheader(f"Daily Trend Confluence (HTF): `{daily_trend}`")
+        st.metric(label="Daily Trend Confluence (HTF)", value=f"{daily_trend}")
 
     current_pcr = 1.0
-    if market_type == "यादीमधून निवडा" and (
-        "NSE" in asset_choice or "NIFTY" in asset_choice
-    ):
-        current_pcr = render_stockmojo_style_dashboard(
-            current_price, display_name
-        )
-        render_stockmojo_line_charts()
-        # 🌅 3:20 PM Gap Predictor Module Call
-        render_gap_predictor_module(df_ltf, current_pcr, daily_trend)
 
     st.markdown("---")
-    signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
 
-    st.subheader(
-        f"🎯 Live SMC PRO Institutional Signals on `{timeframe}`"
-        " (Ultra-High Accuracy)"
+    # 🗂️ SMART TABS IMPLEMENTATION
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "⚡ Live Dashboard & OI",
+            "📈 Real-Time Charts",
+            "🔮 3:20 Gap Predictor",
+            "🎯 Institutional Signals",
+        ]
     )
-    if not signals_df.empty:
-        st.dataframe(signals_df.iloc[::-1], use_container_width=True)
 
-        latest = signals_df.iloc[-1]
-        st.markdown(f"### ⚡ Last Active Signal Detail:")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.info(
-                f"Signal: {latest['Type']}\n\n*Reason:"
-                f" {latest['Trigger Reason']}*"
+    with tab1:
+        if market_type == "यादीमधून निवडा" and (
+            "NSE" in asset_choice or "NIFTY" in asset_choice
+        ):
+            current_pcr = render_stockmojo_style_dashboard(
+                current_price, display_name
             )
-        with col2:
-            st.success(f"🎯 Exact Entry (Circle Zone): {latest['Entry']}")
-        with col3:
-            st.error(f"🛑 Stop Loss: {latest['Stop_Loss']}")
-        with col4:
-            st.warning(f"💰 Take Profit: {latest['Take_Profit']}")
-    else:
-        st.info(
-            f"या `{timeframe}` टाईमफ्रेमवर सध्या कोणताही 'SMC PRO' सिग्नल मिळालेला"
-            " नाही."
-        )
+        else:
+            st.info(
+                "ℹ️ OI Analytics & PCR are exclusively available for Indian"
+                " Market Indices (Nifty / Bank Nifty)."
+            )
 
-    st.markdown("---")
-    st.subheader("📈 SMC Price Chart (Reference)")
-    st.line_chart(df_ltf.set_index("timestamp")["close"].tail(50))
+    with tab2:
+        if market_type == "यादीमधून निवडा" and (
+            "NSE" in asset_choice or "NIFTY" in asset_choice
+        ):
+            render_stockmojo_line_charts()
+        else:
+            st.info("ℹ️ Real-time OI charts available for Indian Indices.")
+
+    with tab3:
+        if market_type == "यादीमधून निवडा" and (
+            "NSE" in asset_choice or "NIFTY" in asset_choice
+        ):
+            render_gap_predictor_module(df_ltf, current_pcr, daily_trend)
+        else:
+            st.info("ℹ️ Gap Predictor is designed for Indian Market Indices.")
+
+    with tab4:
+        signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
+        st.subheader(
+            f"🎯 Live SMC PRO Institutional Signals on `{timeframe}`"
+            " (Ultra-High Accuracy)"
+        )
+        if not signals_df.empty:
+            st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+
+            latest = signals_df.iloc[-1]
+            st.markdown(f"### ⚡ Last Active Signal Detail:")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.info(
+                    f"Signal: {latest['Type']}\n\n*Reason:"
+                    f" {latest['Trigger Reason']}*"
+                )
+            with col2:
+                st.success(f"🎯 Exact Entry (Circle Zone): {latest['Entry']}")
+            with col3:
+                st.error(f"🛑 Stop Loss: {latest['Stop_Loss']}")
+            with col4:
+                st.warning(f"💰 Take Profit: {latest['Take_Profit']}")
+        else:
+            st.info(
+                f"या `{timeframe}` टाईमफ्रेमवर सध्या कोणताही 'SMC PRO' सिग्नल मिळालेला"
+                " नाही."
+            )
+
+        st.subheader("📈 SMC Price Chart (Reference)")
+        st.line_chart(df_ltf.set_index("timestamp")["close"].tail(50))
+
 else:
     st.error(
         f"🚨 '{ticker}' चा `{timeframe}` डेटा लोड होऊ शकला नाही. कृपया पुन्हा"
