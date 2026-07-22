@@ -1,11 +1,11 @@
 streamlit
+streamlit-autorefresh
 yfinance
 pandas
 numpy
-streamlit-autorefresh
 plotly
-nsepython
-requests
 smartapi-python
+pyotp
 logzero
 websocket-client
+requests
