@@ -18,31 +18,53 @@ st.set_page_config(
     page_icon="⚡",
 )
 
-# --- 🎨 Custom CSS for Ultra-Modern Smart Look ---
+# --- 🎨 Custom CSS for Clean & Readable UI (Fixed Dark Background Text Issues) ---
 st.markdown(
     """
     <style>
-        /* Main background and font styling */
+        /* Main background & text color fix */
         .main {
             background-color: #0e1117;
-            color: #ffffff;
+            color: #ffffff !important;
         }
-        /* Card styling for metrics and sections */
+        
+        /* Metric Cards styling - Light background with dark text for ultimate readability */
         .stMetric, div[data-testid="stMetric"] {
-            background-color: #161b22;
-            border: 1px solid #30363d;
+            background-color: #ffffff !important;
+            border: 1px solid #d0d7de !important;
             padding: 15px;
             border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
+        
+        /* Metric labels and values color fix */
+        div[data-testid="stMetricLabel"] {
+            color: #57606a !important;
+            font-weight: 600;
+        }
+        div[data-testid="stMetricValue"] {
+            color: #1f2328 !important;
+            font-weight: 700;
+        }
+
+        /* General Headings and Text */
+        h1, h2, h3, h4, h5, h6, p, span {
+            color: #1f2328;
+        }
+        
+        /* Make main title stand out clearly */
+        .stApp header + div h1 {
+            color: #ffffff !important;
+        }
+
         /* Tab styling */
         .stTabs [data-baseweb="tab-list"] {
             gap: 10px;
         }
         .stTabs [data-baseweb="tab"] {
-            background-color: #21262d;
+            background-color: #f0f2f5;
             border-radius: 8px 8px 0px 0px;
-            color: white;
+            color: #333333;
             padding: 10px 20px;
             font-weight: 600;
         }
@@ -76,7 +98,7 @@ refresh_map = {
 chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
-# --- 🔑 Angel One Credentials (Permanent Save with Session State) ---
+# --- 🔑 Angel One Credentials ---
 st.sidebar.header("🔑 Angel One API Status")
 
 if "saved_api_key" not in st.session_state:
@@ -261,7 +283,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf):
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         if df["timestamp"].dt.tz is None:
             df["timestamp"] = (
-                df["timestamp"].dt.localize("UTC").dt.tz_convert("Asia/Kolkata")
+                df["timestamp"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
             )
         else:
             df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
