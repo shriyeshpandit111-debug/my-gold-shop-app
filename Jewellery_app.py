@@ -39,29 +39,48 @@ refresh_map = {
 chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
-# --- 🔑 Angel One Credentials ---
+# --- 🔑 Angel One Credentials (Permanent Save with Session State) ---
 st.sidebar.header("🔑 Angel One API Status")
 
-angel_api_key = st.secrets.get("ANGEL_API_KEY", "")
-angel_client_code = st.secrets.get("ANGEL_CLIENT_CODE", "")
-angel_password = st.secrets.get("ANGEL_PASSWORD", "")
-angel_totp_token = st.secrets.get("ANGEL_TOTP", "")
+# Session State मध्ये आधीची माहिती जतन करण्यासाठी
+if "saved_api_key" not in st.session_state:
+    st.session_state["saved_api_key"] = st.secrets.get("ANGEL_API_KEY", "")
+if "saved_client_code" not in st.session_state:
+    st.session_state["saved_client_code"] = st.secrets.get(
+        "ANGEL_CLIENT_CODE", ""
+    )
+if "saved_password" not in st.session_state:
+    st.session_state["saved_password"] = st.secrets.get("ANGEL_PASSWORD", "")
+if "saved_totp" not in st.session_state:
+    st.session_state["saved_totp"] = st.secrets.get("ANGEL_TOTP", "")
 
-if not angel_api_key:
-    angel_api_key = st.sidebar.text_input(
-        "Angel One API Key:", value="", type="password"
-    )
-    angel_client_code = st.sidebar.text_input(
-        "Client Code (User ID):", value=""
-    )
-    angel_password = st.sidebar.text_input(
-        "PIN / Password:", value="", type="password"
-    )
-    angel_totp_token = st.sidebar.text_input(
-        "TOTP Secret Key:", value="", type="password"
-    )
-else:
-    st.sidebar.success("🔒 API Keys Loaded Automatically from Secrets!")
+# इनपुट फिल्ड्स ज्यामध्ये जुनी माहिती कायम राहील
+angel_api_key = st.sidebar.text_input(
+    "Angel One API Key:",
+    value=st.session_state["saved_api_key"],
+    type="password",
+)
+angel_client_code = st.sidebar.text_input(
+    "Client Code (User ID):", value=st.session_state["saved_client_code"]
+)
+angel_password = st.sidebar.text_input(
+    "PIN / Password:",
+    value=st.session_state["saved_password"],
+    type="password",
+)
+angel_totp_token = st.sidebar.text_input(
+    "TOTP Secret Key:",
+    value=st.session_state["saved_totp"],
+    type="password",
+)
+
+# युजरने बदललेली माहिती सेव्ह करण्यासाठी बटन
+if st.sidebar.button("💾 Save Credentials"):
+    st.session_state["saved_api_key"] = angel_api_key
+    st.session_state["saved_client_code"] = angel_client_code
+    st.session_state["saved_password"] = angel_password
+    st.session_state["saved_totp"] = angel_totp_token
+    st.sidebar.success("माहिती यशस्वीरित्या सेव्ह झाली!")
 
 # --- ⚙️ २. मार्केट निवडीचे इनपुट ---
 st.sidebar.header("⚙️ Market & Settings")
@@ -272,7 +291,7 @@ def add_indicators(df):
     return df
 
 
-# --- 🔥 सर्व मार्केटसाठी अचूक सिग्नल इंजिन ---
+# --- 🔥 सिग्नल इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     if df is None or len(df) < 15:
         return pd.DataFrame()
@@ -405,13 +424,13 @@ def analyze_smc_pro_v2(df, daily_trend):
     return pd.DataFrame()
 
 
-# --- 🖼️ STOCKMOJO STYLE BAR CARDS & REAL-TIME OI STORAGE ---
+# --- 🖼️ DASHBOARD & REAL-TIME OI STORAGE ---
 def render_stockmojo_style_dashboard(current_price, asset_name):
     oi_data = fetch_angel_one_real_oi(
-        angel_api_key,
-        angel_client_code,
-        angel_password,
-        angel_totp_token,
+        st.session_state["saved_api_key"],
+        st.session_state["saved_client_code"],
+        st.session_state["saved_password"],
+        st.session_state["saved_totp"],
         current_price,
         asset_name,
     )
@@ -467,27 +486,17 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         if is_live:
             st.success("🟢 **Live Real-Time Data** (Angel One API Direct)")
         else:
-            st.info("🟡 **Calculated Data** (API Credentials Required)")
+            st.info(
+                "🟡 **Calculated Data** (Please check API Credentials & click"
+                " Save)"
+            )
 
     if pcr < 0.90:
-        sentiment = "Bearish"
-        sentiment_pct = 70
-        sentiment_color = "#f25c54"
-        sentiment_msg = (
-            "Market displaying bearish sentiment with negative indicators."
-        )
+        sentiment, sentiment_pct, sentiment_color = "Bearish", 70, "#f25c54"
     elif pcr > 1.10:
-        sentiment = "Bullish"
-        sentiment_pct = 75
-        sentiment_color = "#48bf53"
-        sentiment_msg = (
-            "Market displaying bullish sentiment with heavy put writing."
-        )
+        sentiment, sentiment_pct, sentiment_color = "Bullish", 75, "#48bf53"
     else:
-        sentiment = "Neutral"
-        sentiment_pct = 50
-        sentiment_color = "#f7b801"
-        sentiment_msg = "Neutral sentiment with balanced PCR."
+        sentiment, sentiment_pct, sentiment_color = "Neutral", 50, "#f7b801"
 
     total_oi_sum = tot_call_cr + tot_put_cr
     put_oi_pct = (
@@ -517,8 +526,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         )
         fig_sent.add_annotation(
             text=f"<b>{sentiment}</b><br><span style='font-size:10px;"
-            f" color:gray;'>{sentiment} market conditions<br>"
-            f"<b>{sentiment_pct}%</b></span>",
+            f" color:gray;'><b>{sentiment_pct}%</b></span>",
             x=0.5,
             y=0.5,
             font_size=16,
@@ -617,7 +625,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
-# --- 📈 STOCKMOJO REAL-TIME LINE CHARTS (BOTH OI CHANGE & TOTAL OI) ---
+# --- 📈 LINE CHARTS ---
 def render_stockmojo_line_charts():
     if (
         "oi_history" not in st.session_state
@@ -628,10 +636,8 @@ def render_stockmojo_line_charts():
     st.write("---")
     df_live_oi = st.session_state["oi_history"]
 
-    # 📈 1. Chart: OI Change (Call vs Put) - Real-Time Trend
     st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
     fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
-
     fig_line_oic.add_trace(
         go.Scatter(
             x=df_live_oi["timestamp"],
@@ -661,7 +667,6 @@ def render_stockmojo_line_charts():
         ),
         secondary_y=True,
     )
-
     fig_line_oic.update_layout(
         height=350,
         margin=dict(l=20, r=20, t=20, b=20),
@@ -672,27 +677,12 @@ def render_stockmojo_line_charts():
             orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
         ),
     )
-    fig_line_oic.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
-    fig_line_oic.update_yaxes(
-        title_text="Price",
-        secondary_y=False,
-        showgrid=False,
-        color="#8d99ae",
-    )
-    fig_line_oic.update_yaxes(
-        title_text="OI Change (Cr)",
-        secondary_y=True,
-        showgrid=True,
-        gridcolor="#f0f2f5",
-    )
     st.plotly_chart(
         fig_line_oic, use_container_width=True, key="mojo_line_oic"
     )
 
-    # 📈 2. Chart: Total OI (Call vs Put) - Real-Time Trend (नवीन जोडलेला चार्ट)
     st.subheader("📈 Total OI (Call vs Put) - Real-Time Trend")
     fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
-
     fig_line_tot.add_trace(
         go.Scatter(
             x=df_live_oi["timestamp"],
@@ -722,7 +712,6 @@ def render_stockmojo_line_charts():
         ),
         secondary_y=True,
     )
-
     fig_line_tot.update_layout(
         height=350,
         margin=dict(l=20, r=20, t=20, b=20),
@@ -732,19 +721,6 @@ def render_stockmojo_line_charts():
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
         ),
-    )
-    fig_line_tot.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
-    fig_line_tot.update_yaxes(
-        title_text="Price",
-        secondary_y=False,
-        showgrid=False,
-        color="#8d99ae",
-    )
-    fig_line_tot.update_yaxes(
-        title_text="Total OI (Cr)",
-        secondary_y=True,
-        showgrid=True,
-        gridcolor="#f0f2f5",
     )
     st.plotly_chart(
         fig_line_tot, use_container_width=True, key="mojo_line_tot"
