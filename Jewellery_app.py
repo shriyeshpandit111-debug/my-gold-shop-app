@@ -272,15 +272,12 @@ def add_indicators(df):
     return df
 
 
-# --- 🔥 सर्व मार्केटसाठी अचूक 'Type' कॉलमसहित सिग्नल इंजिन (Image मधील पॅटर्ननुसार) ---
+# --- 🔥 सर्व मार्केटसाठी अचूक सिग्नल इंजिन ---
 def analyze_smc_pro_v2(df, daily_trend):
     if df is None or len(df) < 15:
         return pd.DataFrame()
 
     signals = []
-    bullish_blocks = []
-    bearish_blocks = []
-
     for i in range(12, len(df)):
         atr_val = (
             df["atr"].iloc[i]
@@ -333,7 +330,6 @@ def analyze_smc_pro_v2(df, daily_trend):
         if buy_triggered and sell_triggered:
             continue
 
-        # 🟢 PERFECT BUY
         if buy_triggered:
             entry = df["close"].iloc[i]
             stop_loss = df["low"].iloc[i] - (0.02 * atr_val)
@@ -364,7 +360,6 @@ def analyze_smc_pro_v2(df, daily_trend):
                     }
                 )
 
-        # 🔴 PERFECT SELL
         elif sell_triggered:
             entry = df["close"].iloc[i]
             stop_loss = df["high"].iloc[i] + (0.02 * atr_val)
@@ -622,6 +617,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
+# --- 📈 STOCKMOJO REAL-TIME LINE CHARTS (BOTH OI CHANGE & TOTAL OI) ---
 def render_stockmojo_line_charts():
     if (
         "oi_history" not in st.session_state
@@ -632,8 +628,10 @@ def render_stockmojo_line_charts():
     st.write("---")
     df_live_oi = st.session_state["oi_history"]
 
+    # 📈 1. Chart: OI Change (Call vs Put) - Real-Time Trend
     st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
     fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
+
     fig_line_oic.add_trace(
         go.Scatter(
             x=df_live_oi["timestamp"],
@@ -663,15 +661,93 @@ def render_stockmojo_line_charts():
         ),
         secondary_y=True,
     )
+
     fig_line_oic.update_layout(
         height=350,
         margin=dict(l=20, r=20, t=20, b=20),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
         hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+        ),
+    )
+    fig_line_oic.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
+    fig_line_oic.update_yaxes(
+        title_text="Price",
+        secondary_y=False,
+        showgrid=False,
+        color="#8d99ae",
+    )
+    fig_line_oic.update_yaxes(
+        title_text="OI Change (Cr)",
+        secondary_y=True,
+        showgrid=True,
+        gridcolor="#f0f2f5",
     )
     st.plotly_chart(
         fig_line_oic, use_container_width=True, key="mojo_line_oic"
+    )
+
+    # 📈 2. Chart: Total OI (Call vs Put) - Real-Time Trend (नवीन जोडलेला चार्ट)
+    st.subheader("📈 Total OI (Call vs Put) - Real-Time Trend")
+    fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["price"],
+            name="Future/Spot Price",
+            line=dict(color="#8d99ae", width=1.5, dash="dot"),
+        ),
+        secondary_y=False,
+    )
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_call_cr"],
+            name="Call Total OI",
+            line=dict(color="#48bf53", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_put_cr"],
+            name="Put Total OI",
+            line=dict(color="#f25c54", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    fig_line_tot.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+        ),
+    )
+    fig_line_tot.update_xaxes(showgrid=True, gridcolor="#f0f2f5")
+    fig_line_tot.update_yaxes(
+        title_text="Price",
+        secondary_y=False,
+        showgrid=False,
+        color="#8d99ae",
+    )
+    fig_line_tot.update_yaxes(
+        title_text="Total OI (Cr)",
+        secondary_y=True,
+        showgrid=True,
+        gridcolor="#f0f2f5",
+    )
+    st.plotly_chart(
+        fig_line_tot, use_container_width=True, key="mojo_line_tot"
     )
 
 
