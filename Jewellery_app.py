@@ -35,7 +35,7 @@ st.markdown(
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग ---
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग (स्वतंत्र) ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "रिफ्रेश वेळ निवडा (Refresh Interval):",
@@ -54,30 +54,21 @@ refresh_map = {
 chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
-# --- 🔑 Angel One Credentials & Persistent Session ---
+# --- 🔑 Angel One Credentials & Session State ---
 st.sidebar.header("🔑 Angel One API Status")
 
-query_params = st.query_params
-
 if "saved_api_key" not in st.session_state:
-  st.session_state["saved_api_key"] = query_params.get(
-      "api_key", st.secrets.get("ANGEL_API_KEY", "")
-  )
+    st.session_state["saved_api_key"] = st.secrets.get("ANGEL_API_KEY", "")
 if "saved_client_code" not in st.session_state:
-  st.session_state["saved_client_code"] = query_params.get(
-      "client_code", st.secrets.get("ANGEL_CLIENT_CODE", "")
-  )
+    st.session_state["saved_client_code"] = st.secrets.get(
+        "ANGEL_CLIENT_CODE", ""
+    )
 if "saved_password" not in st.session_state:
-  st.session_state["saved_password"] = query_params.get(
-      "password", st.secrets.get("ANGEL_PASSWORD", "")
-  )
+    st.session_state["saved_password"] = st.secrets.get("ANGEL_PASSWORD", "")
 if "saved_totp" not in st.session_state:
-  st.session_state["saved_totp"] = query_params.get(
-      "totp", st.secrets.get("ANGEL_TOTP", "")
-  )
-
+    st.session_state["saved_totp"] = st.secrets.get("ANGEL_TOTP", "")
 if "smart_api_session" not in st.session_state:
-  st.session_state["smart_api_session"] = None
+    st.session_state["smart_api_session"] = None
 
 angel_api_key = st.sidebar.text_input(
     "Angel One API Key:",
@@ -105,6 +96,7 @@ def login_angel_one(api_key, client_code, password, totp_secret):
     return None
   try:
     smart_api = SmartConnect(api_key=api_key.strip())
+    # TOTP मधील स्पेस काढून टाकणे
     clean_totp = totp_secret.replace(" ", "").strip()
     totp = pyotp.TOTP(clean_totp).now()
     login_res = smart_api.generateSession(
@@ -131,12 +123,6 @@ if st.sidebar.button("💾 Save Credentials & Login"):
   st.session_state["saved_password"] = angel_password
   st.session_state["saved_totp"] = angel_totp_token
 
-  # URL मध्ये डेटा सेव्ह करा जेणेकरून रिफ्रेश झाल्यावर निघून जाणार नाही
-  st.query_params["api_key"] = angel_api_key
-  st.query_params["client_code"] = angel_client_code
-  st.query_params["password"] = angel_password
-  st.query_params["totp"] = angel_totp_token
-
   with st.spinner("Connecting to Angel One..."):
     session_obj = login_angel_one(
         angel_api_key, angel_client_code, angel_password, angel_totp_token
@@ -146,21 +132,6 @@ if st.sidebar.button("💾 Save Credentials & Login"):
       st.sidebar.success("यशस्वीरित्या लॉगइन झाले!")
     else:
       st.session_state["smart_api_session"] = None
-
-# ऑटो-लॉगिन जर आधीच सेव्ह असतील
-if (
-    st.session_state["smart_api_session"] is None
-    and st.session_state["saved_api_key"]
-    and st.session_state["saved_totp"]
-):
-  session_obj = login_angel_one(
-      st.session_state["saved_api_key"],
-      st.session_state["saved_client_code"],
-      st.session_state["saved_password"],
-      st.session_state["saved_totp"],
-  )
-  if session_obj:
-    st.session_state["smart_api_session"] = session_obj
 
 # 🟢 एन्जेल वन लाइव्ह कनेक्शन स्टेटस
 if st.session_state.get("smart_api_session") is not None:
@@ -218,7 +189,6 @@ else:
   ticker = forex_ticker.strip()
   display_name = ticker.replace("=X", " / USD")
 
-# मुख्य ग्लोबल टाईमफ्रेम (Sidebar)
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Timeframe):",
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
@@ -843,55 +813,46 @@ def render_stockmojo_line_charts():
   st.plotly_chart(fig_line_tot, use_container_width=True, key="mojo_line_tot")
 
 
-# --- मुख्य ५ टॅब्सची रचना (प्रत्येकात टाईमफ्रेम सिलेक्शनसह) ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "⚡ Live Dashboard & OI",
-    "📈 Real-Time Charts",
-    "🔮 3:00-3:20 Gap Predictor",
-    "🎯 Institutional Signals",
-    "🚀 Advanced SMC Lab (New)",
-])
+# --- मुख्य डेटा लोड ब्लॉक ---
+df_ltf = None
+with st.spinner("माहिती गोळा केली जात आहे... कृपया क्षणभर थांबा..."):
+  daily_trend = get_daily_trend(ticker)
+  df_ltf = fetch_and_resample_data(ticker, timeframe)
 
-sub_tab_names = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h"]
+if df_ltf is not None and not df_ltf.empty:
+  df_ltf = add_indicators(df_ltf)
+  current_price = df_ltf["close"].iloc[-1]
 
-# --- Tab 1: Live Dashboard & OI ---
-with tab1:
-  st.subheader("⚡ Live Dashboard & Open Interest (Multi-Timeframe)")
-  t1_tf = st.selectbox(
-      "टाईमफ्रेम निवडा (Tab 1):", sub_tab_names, index=3, key="t1_tf_select"
-  )
-
-  with st.spinner(f"Loading data for {t1_tf}..."):
-    daily_trend = get_daily_trend(ticker)
-    df_t1 = fetch_and_resample_data(ticker, t1_tf)
-
-  if df_t1 is not None and not df_t1.empty:
-    df_t1 = add_indicators(df_t1)
-    current_price = df_t1["close"].iloc[-1]
+  col_t1, col_t2 = st.columns(2)
+  with col_t1:
     st.metric(
-        label=f"Current {display_name} Price ({t1_tf})",
+        label=f"Current {display_name} Price ({timeframe})",
         value=f"{current_price:,.2f}",
     )
+  with col_t2:
+    st.metric(label="Daily Trend Confluence (HTF)", value=f"{daily_trend}")
+
+  current_pcr = 1.0
+  st.markdown("---")
+
+  # 🚀 सर्व ५ टॅब्स एकत्र
+  tab1, tab2, tab3, tab4, tab5 = st.tabs([
+      "⚡ Live Dashboard & OI",
+      "📈 Real-Time Charts",
+      "🔮 3:00-3:20 Gap Predictor",
+      "🎯 Institutional Signals",
+      "🚀 Advanced SMC Lab (New)",
+  ])
+
+  with tab1:
     if market_type == "यादीमधून निवडा" and (
         "NSE" in asset_choice or "NIFTY" in asset_choice
     ):
-      render_stockmojo_style_dashboard(current_price, display_name)
+      current_pcr = render_stockmojo_style_dashboard(current_price, display_name)
     else:
       st.info("ℹ️ OI Analytics available for Indian Market Indices.")
 
-# --- Tab 2: Real-Time Charts ---
-with tab2:
-  st.subheader("📈 Real-Time Charts (Multi-Timeframe)")
-  t2_tf = st.selectbox(
-      "टाईमफ्रेम निवडा (Tab 2):", sub_tab_names, index=3, key="t2_tf_select"
-  )
-
-  with st.spinner(f"Loading charts for {t2_tf}..."):
-    df_t2 = fetch_and_resample_data(ticker, t2_tf)
-
-  if df_t2 is not None and not df_t2.empty:
-    df_t2 = add_indicators(df_t2)
-    current_price = df_t2["close"].iloc[-1]
+  with tab2:
     if market_type == "यादीमधून निवडा" and (
         "NSE" in asset_choice or "NIFTY" in asset_choice
     ):
@@ -899,111 +860,101 @@ with tab2:
     else:
       st.info("ℹ️ Real-time OI charts available for Indian Indices.")
 
-# --- Tab 3: Gap Predictor ---
-with tab3:
-  st.subheader("🔮 3:00-3:20 Gap Predictor (Multi-Timeframe)")
-  t3_tf = st.selectbox(
-      "टाईमफ्रेम निवडा (Tab 3):", sub_tab_names, index=3, key="t3_tf_select"
-  )
+  with tab3:
+    render_320_gap_predictor(df_ltf, current_price, display_name)
 
-  with st.spinner(f"Loading Gap Predictor for {t3_tf}..."):
-    df_t3 = fetch_and_resample_data(ticker, t3_tf)
-
-  if df_t3 is not None and not df_t3.empty:
-    df_t3 = add_indicators(df_t3)
-    current_price = df_t3["close"].iloc[-1]
-    render_320_gap_predictor(df_t3, current_price, display_name)
-
-# --- Tab 4: Institutional Signals ---
-with tab4:
-  st.subheader("🎯 Institutional Signals (Multi-Timeframe)")
-  t4_tf = st.selectbox(
-      "टाईमफ्रेम निवडा (Tab 4):", sub_tab_names, index=3, key="t4_tf_select"
-  )
-
-  with st.spinner(f"Analyzing signals for {t4_tf}..."):
-    df_t4 = fetch_and_resample_data(ticker, t4_tf)
-    daily_trend = get_daily_trend(ticker)
-
-  if df_t4 is not None and not df_t4.empty:
-    df_t4 = add_indicators(df_t4)
-    signals_df = analyze_smc_pro_v2(df_t4, daily_trend)
+  with tab4:
+    signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
     st.subheader(
-        f"🎯 Live SMC PRO Institutional Signals on {t4_tf} (Ultra-High"
+        f"🎯 Live SMC PRO Institutional Signals on {timeframe} (Ultra-High"
         " Accuracy)"
     )
     if not signals_df.empty:
       st.dataframe(signals_df.iloc[::-1], use_container_width=True)
     else:
-      st.info("सध्या या टाईमफ्रेमवर कोणताही सिग्नल मिळालेला नाही.")
+      st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
 
-# --- Tab 5: Advanced SMC Lab ---
-with tab5:
-  st.subheader(
-      "🚀 Advanced Institutional & Multi-Timeframe Lab (Tab 5 Analysis)"
-  )
+  # 🚀 Tab 5: Advanced SMC Lab with Inner Timeframe Tabs
+  with tab5:
+    st.subheader(
+        "🚀 Advanced Institutional & Multi-Timeframe Lab (Tab 5 Analysis)"
+    )
 
-  sub_tabs = st.tabs([f"⏱️ {t}" for t in sub_tab_names])
+    sub_tab_names = [
+        "1m",
+        "2m",
+        "3m",
+        "5m",
+        "10m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+    ]
+    sub_tabs = st.tabs([f"⏱️ {t}" for t in sub_tab_names])
 
-  for idx, sub_tf in enumerate(sub_tab_names):
-    with sub_tabs[idx]:
-      st.markdown(f"#### 📊 Active Analysis for Timeframe: `{sub_tf}`")
+    for idx, sub_tf in enumerate(sub_tab_names):
+      with sub_tabs[idx]:
+        st.markdown(f"#### 📊 Active Analysis for Timeframe: `{sub_tf}`")
 
-      df_sub = fetch_and_resample_data(ticker, sub_tf)
-      if df_sub is not None and not df_sub.empty:
-        df_sub = add_indicators(df_sub)
-        sub_price = df_sub["close"].iloc[-1]
-      else:
-        sub_price = 24000.00  # Fallback
+        df_sub = fetch_and_resample_data(ticker, sub_tf)
+        if df_sub is not None and not df_sub.empty:
+          df_sub = add_indicators(df_sub)
+          sub_price = df_sub["close"].iloc[-1]
+        else:
+          sub_price = current_price
 
-      IST = timezone(timedelta(hours=5, minutes=30))
-      current_time_str = datetime.now(IST).strftime("%H:%M:%S")
+        IST = timezone(timedelta(hours=5, minutes=30))
+        current_time_str = datetime.now(IST).strftime("%H:%M:%S")
 
-      st.markdown("### 💧 Intraday Buyer & Seller Liquidity & Sweep Detector")
-      buy_liq_price = round(sub_price * 0.992, 2)
-      sell_liq_price = round(sub_price * 1.008, 2)
-
-      liq_col1, liq_col2 = st.columns(2)
-      with liq_col1:
-        st.markdown("#### 🟢 Buyer Liquidity (Retail Longs SL)")
-        st.info(
-            f"- **Active Timeframe:** `{sub_tf}`\n- **Time Recorded:**"
-            f" `{current_time_str} IST`\n- **Price Zone:** `{buy_liq_price}`"
-            " (Below Support)\n- **Status:** ⚡ **SWEEP COMPLETED**"
+        st.markdown(
+            "### 💧 Intraday Buyer & Seller Liquidity & Sweep Detector"
         )
+        buy_liq_price = round(sub_price * 0.992, 2)
+        sell_liq_price = round(sub_price * 1.008, 2)
 
-      with liq_col2:
-        st.markdown("#### 🔴 Seller Liquidity (Retail Shorts SL)")
-        st.warning(
-            f"- **Active Timeframe:** `{sub_tf}`\n- **Time Recorded:**"
-            f" `{current_time_str} IST`\n- **Price Zone:** `{sell_liq_price}`"
-            " (Above Resistance)\n- **Status:** ⏳ **PENDING / INTACT**"
-        )
+        liq_col1, liq_col2 = st.columns(2)
+        with liq_col1:
+          st.markdown("#### 🟢 Buyer Liquidity (Retail Longs SL)")
+          st.info(
+              f"- **Active Timeframe:** `{sub_tf}`\n- **Time Recorded:**"
+              f" `{current_time_str} IST`\n- **Price Zone:** `{buy_liq_price}`"
+              " (Below Support)\n- **Status:** ⚡ **SWEEP COMPLETED**"
+          )
 
-      st.markdown("---")
+        with liq_col2:
+          st.markdown("#### 🔴 Seller Liquidity (Retail Shorts SL)")
+          st.warning(
+              f"- **Active Timeframe:** `{sub_tf}`\n- **Time Recorded:**"
+              f" `{current_time_str} IST`\n- **Price Zone:** `{sell_liq_price}`"
+              " (Above Resistance)\n- **Status:** ⏳ **PENDING / INTACT**"
+          )
 
-      st.markdown("### 📊 Multi-Timeframe Confluence Matrix")
-      mtf_data = {
-          "Timeframe": [sub_tf],
-          "Timing (वेळ)": [current_time_str],
-          "Trend Status": ["BULLISH 📈"],
-          "Smart Money Action": ["Liquidity Sweep & Accumulation"],
-          "Confluence Score": ["92%"],
-      }
-      st.dataframe(pd.DataFrame(mtf_data), use_container_width=True)
+        st.markdown("---")
 
-      st.markdown("---")
+        st.markdown("### 📊 Multi-Timeframe Confluence Matrix")
+        mtf_data = {
+            "Timeframe": [sub_tf],
+            "Timing (वेळ)": [current_time_str],
+            "Trend Status": ["BULLISH 📈"],
+            "Smart Money Action": ["Liquidity Sweep & Accumulation"],
+            "Confluence Score": ["92%"],
+        }
+        st.dataframe(pd.DataFrame(mtf_data), use_container_width=True)
 
-      col_ad1, col_ad2 = st.columns(2)
-      with col_ad1:
-        st.markdown(f"### 📦 Active Order Blocks (OB) — [{sub_tf}]")
-        st.info(
-            f"🟢 **Bullish OB:** Market TF: {sub_tf} | Zone:"
-            f" {round(sub_price * 0.995, 2)}\n\n🔴 **Bearish OB:** Market TF:"
-            f" {sub_tf} | Zone: {round(sub_price * 1.005, 2)}"
-        )
-      with col_ad2:
-        st.markdown(f"### 🧲 Fair Value Gaps (FVG) — [{sub_tf}]")
-        st.success(
-            f"⚡ **FVG Imbalance:** Market TF: {sub_tf} | Gap fill pending."
-        )
+        st.markdown("---")
+
+        col_ad1, col_ad2 = st.columns(2)
+        with col_ad1:
+          st.markdown(f"### 📦 Active Order Blocks (OB) — [{sub_tf}]")
+          st.info(
+              f"🟢 **Bullish OB:** Market TF: {sub_tf} | Zone:"
+              f" {round(sub_price * 0.995, 2)}\n\n🔴 **Bearish OB:** Market TF:"
+              f" {sub_tf} | Zone: {round(sub_price * 1.005, 2)}"
+          )
+        with col_ad2:
+          st.markdown(f"### 🧲 Fair Value Gaps (FVG) — [{sub_tf}]")
+          st.success(
+              f"⚡ **FVG Imbalance:** Market TF: {sub_tf} | Gap fill pending."
+          )
