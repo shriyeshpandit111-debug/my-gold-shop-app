@@ -432,7 +432,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         change_call_cr, change_put_cr = 0.13, 0.07
         pcr = 1.12
 
-    # --- Session State मध्ये ऐतिहासिक डेटा जतन करणे (लाईन चार्ट पुढे जाण्यासाठी) ---
+    # --- Session State मध्ये ऐतिहासिक डेटा जतन करणे ---
     if "oi_history" not in st.session_state:
         st.session_state["oi_history"] = pd.DataFrame(
             columns=[
@@ -558,7 +558,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     with col_d4:
         st.markdown(
             "##### 📊 Put/Call Ratio\n<br>", unsafe_allow_html=True
-        )  # spacing match
+        )
         fig_pcr = go.Figure(
             data=[
                 go.Pie(
@@ -590,7 +590,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
-# --- 📈 Real-Time Line Charts ---
+# --- 📈 Real-Time Line Charts (OI Change & Total OI दोन्ही समाविष्ट) ---
 def render_stockmojo_line_charts():
     if (
         "oi_history" not in st.session_state
@@ -601,6 +601,7 @@ def render_stockmojo_line_charts():
 
     df_live_oi = st.session_state["oi_history"]
 
+    # १. OI Change Line Chart
     st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
     fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -635,13 +636,59 @@ def render_stockmojo_line_charts():
     )
 
     fig_line_oic.update_layout(
-        height=380,
+        height=350,
         margin=dict(l=20, r=20, t=20, b=20),
         hovermode="x unified",
         xaxis=dict(title="Time (वेळ)", type="category"),
     )
     st.plotly_chart(
         fig_line_oic, use_container_width=True, key="mojo_line_oic"
+    )
+
+    st.markdown("---")
+
+    # २. Total Open Interest Line Chart (नवीन जोडलेला चार्ट)
+    st.subheader("📊 Total Open Interest (Call vs Put) - Real-Time Trend")
+    fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["price"],
+            name="Future/Spot Price",
+            line=dict(color="#8d99ae", width=1.5, dash="dot"),
+        ),
+        secondary_y=False,
+    )
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_call_cr"],
+            name="Total Call OI",
+            line=dict(color="#2ecc71", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+    fig_line_tot.add_trace(
+        go.Scatter(
+            x=df_live_oi["timestamp"],
+            y=df_live_oi["tot_put_cr"],
+            name="Total Put OI",
+            line=dict(color="#e74c3c", width=2.5),
+            mode="lines+markers",
+        ),
+        secondary_y=True,
+    )
+
+    fig_line_tot.update_layout(
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=20),
+        hovermode="x unified",
+        xaxis=dict(title="Time (वेळ)", type="category"),
+    )
+    st.plotly_chart(
+        fig_line_tot, use_container_width=True, key="mojo_line_tot"
     )
 
 
