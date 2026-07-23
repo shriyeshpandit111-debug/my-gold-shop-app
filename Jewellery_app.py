@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -119,6 +119,18 @@ if st.sidebar.button("💾 Save Credentials & Login"):
             st.sidebar.success("यशस्वीरित्या लॉगइन झाले!")
         else:
             st.sidebar.error("लॉगइन फेल झाले. क्रेडेंशियल्स तपासा.")
+
+# 🟢 **एन्जेल वन लाइव्ह कनेक्शन स्टेटस दर्शवणारा भाग (Connection Status Indicator)**
+if st.session_state.get("smart_api_session") is not None:
+    st.sidebar.markdown(
+        "<div style='background-color: #d4edda; color: #155724; padding: 8px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 10px;'>🟢 Angel One: Connected (Live)</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.sidebar.markdown(
+        "<div style='background-color: #f8d7da; color: #721c24; padding: 8px; border-radius: 5px; text-align: center; font-weight: bold; margin-bottom: 10px;'>🔴 Angel One: Disconnected</div>",
+        unsafe_allow_html=True,
+    )
 
 # --- ⚙️ २. मार्केट इनपुट ---
 st.sidebar.header("⚙️ Market & Settings")
@@ -464,7 +476,10 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             ]
         )
 
-    current_time_str = datetime.now().strftime("%H:%M:%S")
+    # 🕒 भारतीय वेळेनुसार (IST) वेळ मिळवणे
+    IST = timezone(timedelta(hours=5, minutes=30))
+    current_time_str = datetime.now(IST).strftime("%H:%M:%S")
+
     new_entry = {
         "timestamp": current_time_str,
         "price": current_price,
@@ -675,7 +690,8 @@ def render_320_gap_predictor(df, current_price, display_name):
         st.progress(int(gap_down_prob))
 
     st.markdown("")
-    current_time_str = datetime.now().strftime("%H:%M")
+    IST = timezone(timedelta(hours=5, minutes=30))
+    current_time_str = datetime.now(IST).strftime("%H:%M")
     if gap_up_prob > 55:
         st.info(
             f"⚖️ [Time: {current_time_str} IST] 3:00-3:20 Smart Money Bullish! पुढील ट्रेडिंग दिवशी Gap-Up ओपनिंगची दाट शक्यता आहे."
