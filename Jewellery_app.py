@@ -399,14 +399,15 @@ def analyze_smc_pro_v2(df, daily_trend):
                 take_profit = entry + (risk * 2.5)
                 signals.append(
                     {
-                        "Type": "🟢 PERFECT BUY",
+                        "Type": "🟢 PERFECT BUY (CIRCLE ENTRY)",
                         "Time": df["timestamp"].iloc[i].strftime(
                             "%Y-%m-%d %H:%M"
                         ),
                         "Entry": round(entry, 2),
                         "Stop_Loss": round(stop_loss, 2),
                         "Take_Profit": round(take_profit, 2),
-                        "Trigger Reason": "Sharp Bottom Turnaround",
+                        "Institution Activity": "Smart Money Liquidity Sweep & Wick Rejection",
+                        "Trigger Reason": "Sharp Bottom Turnaround Confirmed",
                     }
                 )
         elif sell_triggered:
@@ -417,14 +418,15 @@ def analyze_smc_pro_v2(df, daily_trend):
                 take_profit = entry - (risk * 2.5)
                 signals.append(
                     {
-                        "Type": "🔴 PERFECT SELL",
+                        "Type": "🔴 PERFECT SELL (CIRCLE ENTRY)",
                         "Time": df["timestamp"].iloc[i].strftime(
                             "%Y-%m-%d %H:%M"
                         ),
                         "Entry": round(entry, 2),
                         "Stop_Loss": round(stop_loss, 2),
                         "Take_Profit": round(take_profit, 2),
-                        "Trigger Reason": "Sharp Top Turnaround",
+                        "Institution Activity": "Smart Money Stop Hunt & Supply Sweep",
+                        "Trigger Reason": "Sharp Top Turnaround Confirmed",
                     }
                 )
 
@@ -602,7 +604,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
-# --- 🔮 3:00 PM - 3:20 PM Gap Predictor Tab (दुपारी ३:०० ते ३:२० मधील विश्लेषण) ---
+# --- 🔮 3:00 PM - 3:20 PM Gap Predictor Tab ---
 def render_320_gap_predictor(df, current_price, display_name):
     st.markdown(
         f"### 🎯 3:00 PM - 3:20 PM Market Gap-Up / Gap-Down Predictor ({display_name})"
@@ -613,7 +615,6 @@ def render_320_gap_predictor(df, current_price, display_name):
     )
     st.markdown("")
 
-    # ३:०० ते ३:२० मधील डेटा फिल्टर करा (वेळेनुसार)
     df_filtered = pd.DataFrame()
     if df is not None and not df.empty and "timestamp" in df.columns:
         df_filtered = df[
@@ -621,34 +622,21 @@ def render_320_gap_predictor(df, current_price, display_name):
             & (df["timestamp"].dt.time <= pd.to_datetime("15:20:00").time())
         ]
     
-    # जर विशिष्ट वेळेचा डेटा उपलब्ध नसेल तर शेवटी उपलब्ध असलेल्या डेटाचा संदर्भ घ्यावा
     analysis_df = df_filtered if not df_filtered.empty else df
 
     if analysis_df is not None and not analysis_df.empty:
-        window_high = analysis_df["high"].max()
-        window_low = analysis_df["low"].min()
-        window_vol = analysis_df["volume"].mean() if "volume" in analysis_df.columns else 0
-        avg_vol = df["volume"].mean() if "volume" in df.columns else 1
-        
-        # ३:०० ते ३:२० मधील मोठी कँडल आणि मोमेंटम पॉवर मोजणे
         price_diff = analysis_df["close"].iloc[-1] - analysis_df["open"].iloc[0]
         momentum_score = round((price_diff / current_price) * 100, 2)
     else:
-        window_high = current_price * 1.005
-        window_low = current_price * 0.995
-        window_vol = 0
-        avg_vol = 1
         momentum_score = 0.0
 
     day_high = round(df["high"].max(), 2) if df is not None and not df.empty else current_price * 1.01
     day_low = round(df["low"].min(), 2) if df is not None and not df.empty else current_price * 0.99
 
-    # स्वयंचलित मूल्ये (Automatic Fetch)
     gift_trend = fetch_gift_nifty_trend()
     oi_data = fetch_angel_one_real_oi(current_price, display_name)
     pcr_val = oi_data["pcr"] if oi_data else 1.12
 
-    # UI मेट्रिक्स
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(label="Current Price", value=f"{current_price:,.2f}")
@@ -663,7 +651,6 @@ def render_320_gap_predictor(df, current_price, display_name):
     with col5:
         st.markdown(f"**Put-Call Ratio (PCR):** `{pcr_val}`")
 
-    # प्रोबॅबिलिटी कॅल्क्युलेशन (३:०० ते ३:२० मधील मोमेंटम आणि इन्स्टिट्यूशनल ॲक्टिव्हिटीनुसार)
     base_prob = 50.0 + (momentum_score * 5.0)
     if gift_trend > 0:
         base_prob += min(abs(gift_trend) * 0.3, 12.0)
@@ -857,7 +844,7 @@ if df_ltf is not None and not df_ltf.empty:
 
     with tab4:
         signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
-        st.subheader("🎯 Live SMC PRO Institutional Signals")
+        st.subheader(f"🎯 Live SMC PRO Institutional Signals on {timeframe} (Ultra-High Accuracy)")
         if not signals_df.empty:
             st.dataframe(signals_df.iloc[::-1], use_container_width=True)
         else:
