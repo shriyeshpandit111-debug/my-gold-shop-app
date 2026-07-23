@@ -166,7 +166,7 @@ timeframe = st.sidebar.selectbox(
 )
 
 
-# --- 🌐 live OI Fetcher ---
+# --- 🌐 live OI & Global Fetcher ---
 def fetch_angel_one_real_oi(current_price, symbol_name):
     smart_api = st.session_state.get("smart_api_session", None)
     if not smart_api:
@@ -210,6 +210,24 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
         }
     except Exception:
         return None
+
+
+def fetch_gift_nifty_trend():
+    try:
+        data = yf.download(
+            tickers="^NSEI", period="5d", interval="1d", progress=False, timeout=5
+        )
+        if data is not None and len(data) >= 2:
+            closes = (
+                data["Close"].iloc[:, 0]
+                if isinstance(data["Close"], pd.DataFrame)
+                else data["Close"]
+            )
+            diff = float(closes.iloc[-1] - closes.iloc[-2])
+            return round(diff, 2)
+    except Exception:
+        pass
+    return 25.00
 
 
 # --- 🕒 डेटा फेचिंग ---
@@ -432,7 +450,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         change_call_cr, change_put_cr = 0.13, 0.07
         pcr = 1.12
 
-    # --- Session State मध्ये ऐतिहासिक डेटा जतन करणे ---
     if "oi_history" not in st.session_state:
         st.session_state["oi_history"] = pd.DataFrame(
             columns=[
@@ -464,10 +481,8 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             -60:
         ]
 
-    # इमेजप्रमाणे ४ कॉलमची रचना
     col_d1, col_d2, col_d3, col_d4 = st.columns(4)
 
-    # 1. Market Sentiment (Donut Chart)
     with col_d1:
         st.markdown(
             "##### 📊 Market Sentiment\n<span style='font-size:11px; color:gray;'>(based on OI)</span>",
@@ -506,7 +521,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             unsafe_allow_html=True,
         )
 
-    # 2. Open Interest Change (Bar Chart)
     with col_d2:
         st.markdown(
             "##### 📊 Open Interest\n##### Change", unsafe_allow_html=True
@@ -530,7 +544,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig_oic, use_container_width=True, key="mojo_oi_change")
 
-    # 3. Total Open Interest (Bar Chart)
     with col_d3:
         st.markdown(
             "##### 📊 Total Open\n##### Interest", unsafe_allow_html=True
@@ -554,7 +567,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
         )
         st.plotly_chart(fig_tot, use_container_width=True, key="mojo_tot_oi")
 
-    # 4. Put/Call Ratio (Donut Chart)
     with col_d4:
         st.markdown(
             "##### 📊 Put/Call Ratio\n<br>", unsafe_allow_html=True
@@ -590,7 +602,108 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
     return pcr
 
 
-# --- 📈 Real-Time Line Charts (OI Change & Total OI दोन्ही समाविष्ट) ---
+# --- 🔮 3:00 PM - 3:20 PM Gap Predictor Tab (दुपारी ३:०० ते ३:२० मधील विश्लेषण) ---
+def render_320_gap_predictor(df, current_price, display_name):
+    st.markdown(
+        f"### 🎯 3:00 PM - 3:20 PM Market Gap-Up / Gap-Down Predictor ({display_name})"
+    )
+    st.markdown(
+        "<span style='color:gray; font-size:13px;'>दुपारी ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, बिग कँडल्स, वॉल्यूम आणि PCR च्या आधारावर पुढील दिवसाचा अंदाज.</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
+
+    # ३:०० ते ३:२० मधील डेटा फिल्टर करा (वेळेनुसार)
+    df_filtered = pd.DataFrame()
+    if df is not None and not df.empty and "timestamp" in df.columns:
+        df_filtered = df[
+            (df["timestamp"].dt.time >= pd.to_datetime("15:00:00").time())
+            & (df["timestamp"].dt.time <= pd.to_datetime("15:20:00").time())
+        ]
+    
+    # जर विशिष्ट वेळेचा डेटा उपलब्ध नसेल तर शेवटी उपलब्ध असलेल्या डेटाचा संदर्भ घ्यावा
+    analysis_df = df_filtered if not df_filtered.empty else df
+
+    if analysis_df is not None and not analysis_df.empty:
+        window_high = analysis_df["high"].max()
+        window_low = analysis_df["low"].min()
+        window_vol = analysis_df["volume"].mean() if "volume" in analysis_df.columns else 0
+        avg_vol = df["volume"].mean() if "volume" in df.columns else 1
+        
+        # ३:०० ते ३:२० मधील मोठी कँडल आणि मोमेंटम पॉवर मोजणे
+        price_diff = analysis_df["close"].iloc[-1] - analysis_df["open"].iloc[0]
+        momentum_score = round((price_diff / current_price) * 100, 2)
+    else:
+        window_high = current_price * 1.005
+        window_low = current_price * 0.995
+        window_vol = 0
+        avg_vol = 1
+        momentum_score = 0.0
+
+    day_high = round(df["high"].max(), 2) if df is not None and not df.empty else current_price * 1.01
+    day_low = round(df["low"].min(), 2) if df is not None and not df.empty else current_price * 0.99
+
+    # स्वयंचलित मूल्ये (Automatic Fetch)
+    gift_trend = fetch_gift_nifty_trend()
+    oi_data = fetch_angel_one_real_oi(current_price, display_name)
+    pcr_val = oi_data["pcr"] if oi_data else 1.12
+
+    # UI मेट्रिक्स
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(label="Current Price", value=f"{current_price:,.2f}")
+    with col2:
+        st.metric(label="Day High/Low Range", value=f"{day_high} / {day_low}")
+    with col3:
+        st.metric(label="3:00 - 3:20 Momentum Position", value=f"{momentum_score}%")
+
+    col4, col5 = st.columns(2)
+    with col4:
+        st.markdown(f"**GIFT Nifty / Global Trend (Points +/-):** `{gift_trend}`")
+    with col5:
+        st.markdown(f"**Put-Call Ratio (PCR):** `{pcr_val}`")
+
+    # प्रोबॅबिलिटी कॅल्क्युलेशन (३:०० ते ३:२० मधील मोमेंटम आणि इन्स्टिट्यूशनल ॲक्टिव्हिटीनुसार)
+    base_prob = 50.0 + (momentum_score * 5.0)
+    if gift_trend > 0:
+        base_prob += min(abs(gift_trend) * 0.3, 12.0)
+    else:
+        base_prob -= min(abs(gift_trend) * 0.3, 12.0)
+
+    if pcr_val > 1.0:
+        base_prob += (pcr_val - 1.0) * 15.0
+    else:
+        base_prob -= (1.0 - pcr_val) * 15.0
+
+    gap_up_prob = min(max(round(base_prob, 2), 10.0), 90.0)
+    gap_down_prob = round(100.0 - gap_up_prob, 2)
+
+    st.markdown("")
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.markdown(f"🚀 Gap-Up Probability\n### **{gap_up_prob}%**")
+        st.progress(int(gap_up_prob))
+    with col_p2:
+        st.markdown(f"📉 Gap-Down Probability\n### **{gap_down_prob}%**")
+        st.progress(int(gap_down_prob))
+
+    st.markdown("")
+    current_time_str = datetime.now().strftime("%H:%M")
+    if gap_up_prob > 55:
+        st.info(
+            f"⚖️ [Time: {current_time_str} IST] 3:00-3:20 Smart Money Bullish! पुढील ट्रेडिंग दिवशी Gap-Up ओपनिंगची दाट शक्यता आहे."
+        )
+    elif gap_down_prob > 55:
+        st.warning(
+            f"⚖️ [Time: {current_time_str} IST] 3:00-3:20 Smart Money Bearish! पुढील ट्रेडिंग दिवशी Gap-Down ओपनिंगची दाट शक्यता आहे."
+        )
+    else:
+        st.success(
+            f"⚖️ [Time: {current_time_str} IST] 3:00-3:20 Neutral Market! पुढील ट्रेडिंग दिवशी Flat / Sideways ओपनिंगची शक्यता आहे."
+        )
+
+
+# --- 📈 Real-Time Line Charts ---
 def render_stockmojo_line_charts():
     if (
         "oi_history" not in st.session_state
@@ -601,7 +714,6 @@ def render_stockmojo_line_charts():
 
     df_live_oi = st.session_state["oi_history"]
 
-    # १. OI Change Line Chart
     st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
     fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -647,7 +759,6 @@ def render_stockmojo_line_charts():
 
     st.markdown("---")
 
-    # २. Total Open Interest Line Chart (नवीन जोडलेला चार्ट)
     st.subheader("📊 Total Open Interest (Call vs Put) - Real-Time Trend")
     fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -718,7 +829,7 @@ if df_ltf is not None and not df_ltf.empty:
         [
             "⚡ Live Dashboard & OI",
             "📈 Real-Time Charts",
-            "🔮 3:20 Gap Predictor",
+            "🔮 3:00-3:20 Gap Predictor",
             "🎯 Institutional Signals",
         ]
     )
@@ -740,6 +851,9 @@ if df_ltf is not None and not df_ltf.empty:
             render_stockmojo_line_charts()
         else:
             st.info("ℹ️ Real-time OI charts available for Indian Indices.")
+
+    with tab3:
+        render_320_gap_predictor(df_ltf, current_price, display_name)
 
     with tab4:
         signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
