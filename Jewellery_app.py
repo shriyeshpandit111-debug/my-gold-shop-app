@@ -34,7 +34,7 @@ st.markdown(
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग ---
+# --- ⏱️ १. ऑटो-रिफ्रेश टाईम सेटिंग (स्वतंत्र) ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "रिफ्रेश वेळ निवडा (Refresh Interval):",
@@ -131,6 +131,7 @@ if st.sidebar.button("💾 Save Credentials & Login"):
     else:
       st.session_state["smart_api_session"] = None
 
+# 🟢 एन्जेल वन लाइव्ह कनेक्शन स्टेटस
 if st.session_state.get("smart_api_session") is not None:
   st.sidebar.markdown(
       "<div style='background-color: #d4edda; color: #155724; padding: 8px;"
@@ -200,11 +201,12 @@ timeframe = st.sidebar.selectbox(
 )
 
 
-# --- 🌐 Real Live OI & Option Chain Fetcher ---
+# --- 🌐 Real Live OI & Option Chain Fetcher (Sopya Bhashet / Easy Format) ---
 def fetch_angel_one_real_oi(current_price, symbol_name):
   smart_api = st.session_state.get("smart_api_session", None)
   is_bank = "BANK" in symbol_name.upper()
 
+  # १. Angel One Session चेकिंग
   if smart_api:
     try:
       token = "99926009" if is_bank else "99926000"
@@ -247,6 +249,7 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
     except Exception:
       pass
 
+  # २. Live Option Chain Fallback (yfinance Real-time Data - Distinct for Nifty & BankNifty)
   try:
     yf_symbol = "^NSEBANK" if is_bank else "^NSEI"
     ticker_obj = yf.Ticker(yf_symbol)
@@ -299,6 +302,7 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
   except Exception:
     pass
 
+  # ३. स्वतंत्र डीफॉल्ट डेटा (Nifty आणि Bank Nifty चे वेगवेगळे आकडे)
   if is_bank:
     return {
         "tot_call_cr": 2.40,
@@ -345,9 +349,11 @@ def fetch_gift_nifty_trend():
   return 0.00
 
 
+# --- 🕒 डेटा फेचिंग ---
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
   smart_api = st.session_state.get("smart_api_session", None)
 
+  # १. जर इंडियन मार्केट असेल आणि Angel One Connect असेल
   if is_indian and smart_api:
     try:
       token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
@@ -385,6 +391,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
     except Exception:
       pass
 
+  # २. Global Assets (BTC, Gold, Silver, Forex) किंवा Angel API नसेल तेव्हा yfinance
   try:
     if target_tf in ["1m", "2m", "3m"]:
       source_interval, period = "1m", "2d"
@@ -592,6 +599,7 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
 
   pcr = oi_data["pcr"]
 
+  # सोप्या भाषेत फॉरमॅटिंग तयार करणे
   chg_call_text = (
       f"{chg_call_lakh} लाख" if chg_call_lakh < 100 else f"{chg_call_cr} कोटी"
   )
@@ -603,8 +611,40 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
       f"{tot_call_lakh} लाख" if tot_call_lakh < 100 else f"{tot_call_cr} कोटी"
   )
   tot_put_text = (
-      f"{tot_put_lakh} लाख" if tot_put_lakh < 100 else f"{tot_put_cr} कोटी"
+      f"{tot_put_text}" if tot_put_lakh < 100 else f"{tot_put_cr} कोटी"
   )
+
+  # History DataFrame Update
+  if "oi_history" not in st.session_state:
+    st.session_state["oi_history"] = pd.DataFrame(
+        columns=[
+            "timestamp",
+            "price",
+            "change_call_cr",
+            "change_put_cr",
+            "tot_call_cr",
+            "tot_put_cr",
+        ]
+    )
+
+  IST = timezone(timedelta(hours=5, minutes=30))
+  current_time_str = datetime.now(IST).strftime("%H:%M:%S")
+
+  new_entry = {
+      "timestamp": current_time_str,
+      "price": current_price,
+      "change_call_cr": chg_call_cr,
+      "change_put_cr": chg_put_cr,
+      "tot_call_cr": tot_call_cr,
+      "tot_put_cr": tot_put_cr,
+  }
+
+  st.session_state["oi_history"] = pd.concat(
+      [st.session_state["oi_history"], pd.DataFrame([new_entry])],
+      ignore_index=True,
+  )
+  if len(st.session_state["oi_history"]) > 60:
+    st.session_state["oi_history"] = st.session_state["oi_history"].iloc[-60:]
 
   col_d1, col_d2, col_d3, col_d4 = st.columns(4)
 
@@ -813,532 +853,100 @@ def render_320_gap_predictor(df, current_price, display_name):
     )
 
 
-# --- 📈 STOCKMOJO DYNAMIC LINE CHARTS FUNCTION ---
-def render_stockmojo_line_charts(current_price, asset_name):
-  is_bank = "BANK" in asset_name.upper()
+# --- 📈 Real-Time Line Charts ---
+def render_stockmojo_line_charts():
+  if (
+      "oi_history" not in st.session_state
+      or len(st.session_state["oi_history"]) < 1
+  ):
+    st.info("डेटा गोळा होत आहे... पुढील रिफ्रेशला चार्ट दिसेल.")
+    return
 
-  now = datetime.now()
-  market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
+  df_live_oi = st.session_state["oi_history"]
 
-  timestamps = []
-  curr_t = market_start
-  while curr_t <= now and curr_t.hour < 16:
-    timestamps.append(curr_t.strftime("%H:%M"))
-    curr_t += timedelta(minutes=5)
+  st.subheader("📈 OI Change (Call vs Put) - Real-Time Trend")
+  fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
 
-  if len(timestamps) < 2:
-    timestamps = [
-        (now - timedelta(minutes=i * 5)).strftime("%H:%M")
-        for i in range(12, -1, -1)
-    ]
-
-  n_points = len(timestamps)
-
-  base_call_oi = 25.0 if not is_bank else 2.0
-  base_put_oi = 22.0 if not is_bank else 2.5
-
-  np.random.seed(42)
-  call_trend = np.cumsum(np.random.normal(0.2, 0.1, n_points)) + base_call_oi
-  put_trend = np.cumsum(np.random.normal(0.25, 0.12, n_points)) + base_put_oi
-
-  price_trend = current_price + np.cumsum(
-      np.random.normal(0, current_price * 0.0008, n_points)
-  )
-  price_trend[-1] = current_price
-
-  call_change = np.maximum(
-      0.01, call_trend - base_call_oi + np.abs(np.random.normal(0.5, 0.1))
-  )
-  put_change = np.maximum(
-      0.01, put_trend - base_put_oi + np.abs(np.random.normal(0.6, 0.1))
-  )
-
-  # --- १. OI Change (Call vs Put) Chart ---
-  st.subheader("📊 OI Change (Call vs Put) - Intraday Trend")
-  fig_oic = make_subplots(specs=[[{"secondary_y": True}]])
-
-  fig_oic.add_trace(
+  fig_line_oic.add_trace(
       go.Scatter(
-          x=timestamps,
-          y=price_trend,
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["price"],
           name="Future/Spot Price",
           line=dict(color="#8d99ae", width=1.5, dash="dot"),
       ),
-      secondary_y=True,
+      secondary_y=False,
   )
-
-  fig_oic.add_trace(
+  fig_line_oic.add_trace(
       go.Scatter(
-          x=timestamps,
-          y=np.round(call_change, 2),
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["change_call_cr"],
           name="Call OI Change",
           line=dict(color="#2ecc71", width=2.5),
-          mode="lines",
+          mode="lines+markers",
       ),
-      secondary_y=False,
+      secondary_y=True,
   )
-
-  fig_oic.add_trace(
+  fig_line_oic.add_trace(
       go.Scatter(
-          x=timestamps,
-          y=np.round(put_change, 2),
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["change_put_cr"],
           name="Put OI Change",
           line=dict(color="#e74c3c", width=2.5),
-          mode="lines",
+          mode="lines+markers",
       ),
-      secondary_y=False,
+      secondary_y=True,
   )
 
-  fig_oic.update_layout(
-      height=380,
+  fig_line_oic.update_layout(
+      height=350,
       margin=dict(l=20, r=20, t=20, b=20),
       hovermode="x unified",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
+      xaxis=dict(title="Time (वेळ)", type="category"),
   )
-  fig_oic.update_xaxes(showgrid=True, gridcolor="#222")
-  fig_oic.update_yaxes(
-      title_text="OI Change (Cr)",
-      showgrid=True,
-      gridcolor="#222",
-      secondary_y=False,
-  )
-  fig_oic.update_yaxes(
-      title_text="Price", showgrid=False, zeroline=False, secondary_y=True
-  )
-
-  st.plotly_chart(fig_oic, use_container_width=True, key="mojo_line_oic_v2")
+  st.plotly_chart(fig_line_oic, use_container_width=True, key="mojo_line_oic")
 
   st.markdown("---")
 
-  # --- २. Total OI (Call vs Put) Chart ---
-  st.subheader("📈 Total OI (Call vs Put) - Cumulative Trend")
-  fig_tot = make_subplots(specs=[[{"secondary_y": True}]])
+  st.subheader("📊 Total Open Interest (Call vs Put) - Real-Time Trend")
+  fig_line_tot = make_subplots(specs=[[{"secondary_y": True}]])
 
-  fig_tot.add_trace(
+  fig_line_tot.add_trace(
       go.Scatter(
-          x=timestamps,
-          y=price_trend,
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["price"],
           name="Future/Spot Price",
           line=dict(color="#8d99ae", width=1.5, dash="dot"),
       ),
+      secondary_y=False,
+  )
+  fig_line_tot.add_trace(
+      go.Scatter(
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["tot_call_cr"],
+          name="Total Call OI",
+          line=dict(color="#2ecc71", width=2.5),
+          mode="lines+markers",
+      ),
+      secondary_y=True,
+  )
+  fig_line_tot.add_trace(
+      go.Scatter(
+          x=df_live_oi["timestamp"],
+          y=df_live_oi["tot_put_cr"],
+          name="Total Put OI",
+          line=dict(color="#e74c3c", width=2.5),
+          mode="lines+markers",
+      ),
       secondary_y=True,
   )
 
-  fig_tot.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(call_trend, 2),
-          name="Call OI",
-          line=dict(color="#2ecc71", width=2.5),
-          mode="lines",
-      ),
-      secondary_y=False,
-  )
-
-  fig_tot.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(put_trend, 2),
-          name="Put OI",
-          line=dict(color="#e74c3c", width=2.5),
-          mode="lines",
-      ),
-      secondary_y=False,
-  )
-
-  fig_tot.update_layout(
-      height=380,
+  fig_line_tot.update_layout(
+      height=350,
       margin=dict(l=20, r=20, t=20, b=20),
       hovermode="x unified",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
+      xaxis=dict(title="Time (वेळ)", type="category"),
   )
-  fig_tot.update_xaxes(showgrid=True, gridcolor="#222")
-  fig_tot.update_yaxes(
-      title_text="Total OI (Cr)",
-      showgrid=True,
-      gridcolor="#222",
-      secondary_y=False,
-  )
-  fig_tot.update_yaxes(
-      title_text="Price", showgrid=False, zeroline=False, secondary_y=True
-  )
-
-  st.plotly_chart(fig_tot, use_container_width=True, key="mojo_line_tot_v2")
-
-
-# --- 📉 TAB 6: PREMIUM DECAY & OPTIONS EXPOSURE LAB (STOCKMOJO SCREENSHOT 51 & 50) ---
-def render_tab_6_decay_and_exposure(current_price, asset_name):
-  is_bank = "BANK" in asset_name.upper()
-  step = 100 if is_bank else 50
-  atm_strike = round(current_price / step) * step
-
-  now = datetime.now()
-  market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
-
-  timestamps = []
-  curr_t = market_start
-  while curr_t <= now and curr_t.hour < 16:
-    timestamps.append(curr_t.strftime("%H:%M"))
-    curr_t += timedelta(minutes=5)
-
-  if len(timestamps) < 3:
-    timestamps = [
-        "09:15",
-        "09:20",
-        "09:25",
-        "09:30",
-        "09:35",
-        "09:40",
-        "09:45",
-        "09:50",
-        "09:55",
-        "10:00",
-    ]
-
-  n_points = len(timestamps)
-
-  np.random.seed(42)
-  # Data simulating StockMojo visuals
-  ce_change = (
-      np.sin(np.linspace(0, 3 * np.pi, n_points)) * 40
-      - 30
-      + np.random.normal(0, 5, n_points)
-  )
-  pe_change = (
-      -np.sin(np.linspace(0, 3 * np.pi, n_points)) * 35
-      - 25
-      + np.random.normal(0, 5, n_points)
-  )
-
-  spot_prices = current_price + np.cumsum(
-      np.random.normal(0, 10, n_points)
-  ) - (n_points * 2)
-  spot_prices[-1] = current_price
-
-  base_ce_prem = 425 + np.cumsum(np.random.normal(0, 8, n_points))
-  base_pe_prem = 380 + np.cumsum(np.random.normal(0, 8, n_points))
-
-  # ==========================================
-  # 📊 CHART 1: PREMIUM DECAY (CE & PE CHANGE) - Screenshot 51 (Top Chart)
-  # ==========================================
-  st.markdown("### 📉 Premium Decay")
-
-  fig_decay = make_subplots(specs=[[{"secondary_y": True}]])
-
-  # Future/Spot Price (Left Y-Axis, Gray Dashed Line)
-  fig_decay.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=spot_prices,
-          name="Future",
-          line=dict(color="#8d99ae", width=1.5, dash="dot"),
-          mode="lines",
-      ),
-      secondary_y=False,
-  )
-
-  # CE Change Fill Area (Green)
-  fig_decay.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(ce_change, 2),
-          name="CE Change",
-          line=dict(color="#2ecc71", width=2),
-          fill="tozeroy",
-          fillcolor="rgba(46, 204, 113, 0.2)",
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  # PE Change Fill Area (Red)
-  fig_decay.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(pe_change, 2),
-          name="PE Change",
-          line=dict(color="#e74c3c", width=2),
-          fill="tozeroy",
-          fillcolor="rgba(231, 76, 60, 0.2)",
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  fig_decay.update_layout(
-      height=360,
-      margin=dict(l=10, r=10, t=10, b=10),
-      hovermode="x unified",
-      legend=dict(
-          orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
-      ),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
-  )
-  fig_decay.update_xaxes(showgrid=True, gridcolor="#222222")
-  fig_decay.update_yaxes(
-      title_text="Spot / Future Price",
-      showgrid=True,
-      gridcolor="#222222",
-      secondary_y=False,
-  )
-  fig_decay.update_yaxes(
-      title_text="Decay Points",
-      showgrid=False,
-      zeroline=True,
-      zerolinecolor="#ffffff",
-      secondary_y=True,
-  )
-
-  st.plotly_chart(fig_decay, use_container_width=True, key="mojo_decay_chart_1")
-
-  st.markdown("---")
-
-  # ==========================================
-  # 📈 CHART 2: CALL VS PUT PREMIUM (ABSOLUTE) - Screenshot 51 (Bottom Chart)
-  # ==========================================
-  st.markdown("### 📉 Call vs Put Premium")
-
-  fig_prem = make_subplots(specs=[[{"secondary_y": True}]])
-
-  # Future/Spot Price (Left Y-Axis, Gray Dashed Line)
-  fig_prem.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=spot_prices,
-          name="Future",
-          line=dict(color="#8d99ae", width=1.5, dash="dot"),
-          mode="lines",
-      ),
-      secondary_y=False,
-  )
-
-  # CE Absolute Premium (Green Solid Line)
-  fig_prem.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(base_ce_prem, 2),
-          name="CE",
-          line=dict(color="#2ecc71", width=2.2),
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  # PE Absolute Premium (Red Solid Line)
-  fig_prem.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(base_pe_prem, 2),
-          name="PE",
-          line=dict(color="#e74c3c", width=2.2),
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  fig_prem.update_layout(
-      height=360,
-      margin=dict(l=10, r=10, t=10, b=10),
-      hovermode="x unified",
-      legend=dict(
-          orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
-      ),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
-  )
-  fig_prem.update_xaxes(showgrid=True, gridcolor="#222222")
-  fig_prem.update_yaxes(
-      title_text="Spot / Future Price",
-      showgrid=True,
-      gridcolor="#222222",
-      secondary_y=False,
-  )
-  fig_prem.update_yaxes(
-      title_text="Option Premium Value",
-      showgrid=False,
-      zeroline=False,
-      secondary_y=True,
-  )
-
-  st.plotly_chart(fig_prem, use_container_width=True, key="mojo_decay_chart_2")
-
-  st.markdown("---")
-
-  # ==========================================
-  # ⚡ CHART 3: GAMMA EXPOSURE (GEX) - Screenshot 50
-  # ==========================================
-  st.markdown("### ⚡ Gamma Exposure (GEX)")
-
-  strikes = [atm_strike + (i * step) for i in range(-10, 11)]
-  net_gex = [
-      round(
-          np.sin(i / 2) * (15 if i >= 0 else -18)
-          + np.random.normal(0, 2),
-          2,
-      )
-      for i in range(-10, 11)
-  ]
-  abs_gex_curve = [
-      round(abs(g) * 3 + 5 + np.random.normal(0, 1), 2) for g in net_gex
-  ]
-
-  tot_net_gex = round(sum(net_gex), 2)
-  tot_abs_gex = round(sum(abs_gex_curve), 2)
-
-  st.markdown(
-      f"**Net GEX:** `{tot_net_gex} L Cr` &nbsp;&nbsp;|&nbsp;&nbsp; **ABS"
-      f" GEX:** `{tot_abs_gex} L Cr`"
-  )
-
-  fig_gex = make_subplots(specs=[[{"secondary_y": True}]])
-
-  bar_colors = ["#2ecc71" if g >= 0 else "#e74c3c" for g in net_gex]
-  fig_gex.add_trace(
-      go.Bar(
-          x=strikes,
-          y=net_gex,
-          name="Net GEX (Cr)",
-          marker_color=bar_colors,
-          opacity=0.75,
-      ),
-      secondary_y=False,
-  )
-
-  fig_gex.add_trace(
-      go.Scatter(
-          x=strikes,
-          y=abs_gex_curve,
-          name="ABS GEX (Cr)",
-          line=dict(color="#3498db", width=2.5),
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  fig_gex.add_vline(
-      x=current_price,
-      line_width=1.5,
-      line_dash="dash",
-      line_color="#ffffff",
-      annotation_text=f"Spot: {current_price:.1f}",
-      annotation_position="top",
-  )
-
-  fig_gex.update_layout(
-      height=380,
-      margin=dict(l=20, r=20, t=30, b=20),
-      hovermode="x unified",
-      legend=dict(
-          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-      ),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
-  )
-  fig_gex.update_xaxes(
-      title_text="Strike Price", showgrid=True, gridcolor="#222"
-  )
-  fig_gex.update_yaxes(
-      title_text="Net GEX (Cr)",
-      showgrid=True,
-      gridcolor="#222",
-      secondary_y=False,
-  )
-  fig_gex.update_yaxes(
-      title_text="ABS GEX", showgrid=False, zeroline=False, secondary_y=True
-  )
-
-  st.plotly_chart(fig_gex, use_container_width=True, key="mojo_gex_chart")
-
-  st.markdown("---")
-
-  # ==========================================
-  # 🎯 CHART 4: DELTA EXPOSURE (DEX)
-  # ==========================================
-  st.markdown("### 🎯 Delta Exposure (DEX)")
-
-  delta_exp = [
-      round(
-          np.cos(i / 2) * (25 if i >= 0 else -30)
-          + np.random.normal(0, 3),
-          2,
-      )
-      for i in range(-10, 11)
-  ]
-  abs_dex_curve = [
-      round(abs(d) * 2 + 8 + np.random.normal(0, 1), 2) for d in delta_exp
-  ]
-
-  tot_net_dex = round(sum(delta_exp), 2)
-  tot_abs_dex = round(sum(abs_dex_curve), 2)
-
-  st.markdown(
-      f"**Net DEX:** `{tot_net_dex} L Cr` &nbsp;&nbsp;|&nbsp;&nbsp; **ABS"
-      f" DEX:** `{tot_abs_dex} L Cr`"
-  )
-
-  fig_dex = make_subplots(specs=[[{"secondary_y": True}]])
-
-  dex_bar_colors = ["#2ecc71" if d >= 0 else "#e74c3c" for d in delta_exp]
-  fig_dex.add_trace(
-      go.Bar(
-          x=strikes,
-          y=delta_exp,
-          name="Net DEX (Cr)",
-          marker_color=dex_bar_colors,
-          opacity=0.75,
-      ),
-      secondary_y=False,
-  )
-
-  fig_dex.add_trace(
-      go.Scatter(
-          x=strikes,
-          y=abs_dex_curve,
-          name="ABS DEX (Cr)",
-          line=dict(color="#f39c12", width=2.5),
-          mode="lines",
-      ),
-      secondary_y=True,
-  )
-
-  fig_dex.add_vline(
-      x=current_price,
-      line_width=1.5,
-      line_dash="dash",
-      line_color="#ffffff",
-      annotation_text=f"Spot: {current_price:.1f}",
-      annotation_position="top",
-  )
-
-  fig_dex.update_layout(
-      height=380,
-      margin=dict(l=20, r=20, t=30, b=20),
-      hovermode="x unified",
-      legend=dict(
-          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-      ),
-      plot_bgcolor="rgba(0,0,0,0)",
-      paper_bgcolor="rgba(0,0,0,0)",
-  )
-  fig_dex.update_xaxes(
-      title_text="Strike Price", showgrid=True, gridcolor="#222"
-  )
-  fig_dex.update_yaxes(
-      title_text="Net DEX (Cr)",
-      showgrid=True,
-      gridcolor="#222",
-      secondary_y=False,
-  )
-  fig_dex.update_yaxes(
-      title_text="ABS DEX", showgrid=False, zeroline=False, secondary_y=True
-  )
-
-  st.plotly_chart(fig_dex, use_container_width=True, key="mojo_dex_chart")
+  st.plotly_chart(fig_line_tot, use_container_width=True, key="mojo_line_tot")
 
 
 # --- मुख्य डेटा लोड ब्लॉक ---
@@ -1363,14 +971,13 @@ if df_ltf is not None and not df_ltf.empty:
   current_pcr = 1.0
   st.markdown("---")
 
-  # 🚀 संपूर्ण ६ टॅब्स
-  tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+  # 🚀 सर्व ५ टॅब्स एकत्र
+  tab1, tab2, tab3, tab4, tab5 = st.tabs([
       "⚡ Live Dashboard & OI",
       "📈 Real-Time Charts",
       "🔮 3:00-3:20 Gap Predictor",
       "🎯 Institutional Signals",
       "🚀 Advanced SMC Lab (New)",
-      "📉 Premium Decay & Options Exposure Lab",
   ])
 
   with tab1:
@@ -1386,7 +993,7 @@ if df_ltf is not None and not df_ltf.empty:
 
   with tab2:
     if is_indian_market:
-      render_stockmojo_line_charts(current_price, display_name)
+      render_stockmojo_line_charts()
     else:
       st.info("ℹ️ Real-time OI charts available for Indian Indices.")
 
@@ -1404,6 +1011,7 @@ if df_ltf is not None and not df_ltf.empty:
     else:
       st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
 
+  # 🚀 Tab 5: Advanced SMC Lab with Inner Timeframe Tabs
   with tab5:
     st.subheader(
         "🚀 Advanced Institutional & Multi-Timeframe Lab (Tab 5 Analysis)"
@@ -1487,12 +1095,3 @@ if df_ltf is not None and not df_ltf.empty:
           st.success(
               f"⚡ **FVG Imbalance:** Market TF: {sub_tf} | Gap fill pending."
           )
-
-  with tab6:
-    if is_indian_market:
-      render_tab_6_decay_and_exposure(current_price, display_name)
-    else:
-      st.info(
-          "ℹ️ Premium Decay & Options Exposure Lab available only for Indian"
-          " Indices."
-      )
