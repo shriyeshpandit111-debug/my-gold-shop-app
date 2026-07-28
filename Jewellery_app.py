@@ -970,7 +970,7 @@ def render_stockmojo_line_charts(current_price, asset_name):
   st.plotly_chart(fig_tot, use_container_width=True, key="mojo_line_tot_v2")
 
 
-# --- 📉 TAB 6: PREMIUM DECAY & EXPOSURE LAB (NEW) ---
+# --- 📉 TAB 6: PREMIUM DECAY & OPTIONS EXPOSURE LAB (STOCKMOJO SCREENSHOT 51 & 50) ---
 def render_tab_6_decay_and_exposure(current_price, asset_name):
   is_bank = "BANK" in asset_name.upper()
   step = 100 if is_bank else 50
@@ -985,86 +985,194 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
     timestamps.append(curr_t.strftime("%H:%M"))
     curr_t += timedelta(minutes=5)
 
-  if len(timestamps) < 2:
+  if len(timestamps) < 3:
     timestamps = [
-        (now - timedelta(minutes=i * 5)).strftime("%H:%M")
-        for i in range(12, -1, -1)
+        "09:15",
+        "09:20",
+        "09:25",
+        "09:30",
+        "09:35",
+        "09:40",
+        "09:45",
+        "09:50",
+        "09:55",
+        "10:00",
     ]
 
   n_points = len(timestamps)
 
-  np.random.seed(101)
-  ce_decay = np.cumsum(np.random.normal(-1.5, 3.0, n_points)) - 20
-  pe_decay = np.cumsum(np.random.normal(-1.2, 2.8, n_points)) - 15
-
-  price_trend = current_price + np.cumsum(
-      np.random.normal(0, current_price * 0.0006, n_points)
+  np.random.seed(42)
+  # Data simulating StockMojo visuals
+  ce_change = (
+      np.sin(np.linspace(0, 3 * np.pi, n_points)) * 40
+      - 30
+      + np.random.normal(0, 5, n_points)
   )
-  price_trend[-1] = current_price
+  pe_change = (
+      -np.sin(np.linspace(0, 3 * np.pi, n_points)) * 35
+      - 25
+      + np.random.normal(0, 5, n_points)
+  )
 
-  # --- १. Premium Decay Chart (Fill Area Style - Screenshot 49) ---
-  st.subheader("📉 Premium Decay Change (CE vs PE)")
+  spot_prices = current_price + np.cumsum(
+      np.random.normal(0, 10, n_points)
+  ) - (n_points * 2)
+  spot_prices[-1] = current_price
+
+  base_ce_prem = 425 + np.cumsum(np.random.normal(0, 8, n_points))
+  base_pe_prem = 380 + np.cumsum(np.random.normal(0, 8, n_points))
+
+  # ==========================================
+  # 📊 CHART 1: PREMIUM DECAY (CE & PE CHANGE) - Screenshot 51 (Top Chart)
+  # ==========================================
+  st.markdown("### 📉 Premium Decay")
+
   fig_decay = make_subplots(specs=[[{"secondary_y": True}]])
 
+  # Future/Spot Price (Left Y-Axis, Gray Dashed Line)
   fig_decay.add_trace(
       go.Scatter(
           x=timestamps,
-          y=price_trend,
-          name="Future/Spot Price",
+          y=spot_prices,
+          name="Future",
           line=dict(color="#8d99ae", width=1.5, dash="dot"),
+          mode="lines",
+      ),
+      secondary_y=False,
+  )
+
+  # CE Change Fill Area (Green)
+  fig_decay.add_trace(
+      go.Scatter(
+          x=timestamps,
+          y=np.round(ce_change, 2),
+          name="CE Change",
+          line=dict(color="#2ecc71", width=2),
+          fill="tozeroy",
+          fillcolor="rgba(46, 204, 113, 0.2)",
+          mode="lines",
       ),
       secondary_y=True,
   )
 
+  # PE Change Fill Area (Red)
   fig_decay.add_trace(
       go.Scatter(
           x=timestamps,
-          y=np.round(ce_decay, 2),
-          name="CE Change",
-          line=dict(color="#2ecc71", width=2),
-          fill="tozeroy",
-          fillcolor="rgba(46, 204, 113, 0.15)",
-      ),
-      secondary_y=False,
-  )
-
-  fig_decay.add_trace(
-      go.Scatter(
-          x=timestamps,
-          y=np.round(pe_decay, 2),
+          y=np.round(pe_change, 2),
           name="PE Change",
           line=dict(color="#e74c3c", width=2),
           fill="tozeroy",
-          fillcolor="rgba(231, 76, 60, 0.15)",
+          fillcolor="rgba(231, 76, 60, 0.2)",
+          mode="lines",
+      ),
+      secondary_y=True,
+  )
+
+  fig_decay.update_layout(
+      height=360,
+      margin=dict(l=10, r=10, t=10, b=10),
+      hovermode="x unified",
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+      ),
+      plot_bgcolor="rgba(0,0,0,0)",
+      paper_bgcolor="rgba(0,0,0,0)",
+  )
+  fig_decay.update_xaxes(showgrid=True, gridcolor="#222222")
+  fig_decay.update_yaxes(
+      title_text="Spot / Future Price",
+      showgrid=True,
+      gridcolor="#222222",
+      secondary_y=False,
+  )
+  fig_decay.update_yaxes(
+      title_text="Decay Points",
+      showgrid=False,
+      zeroline=True,
+      zerolinecolor="#ffffff",
+      secondary_y=True,
+  )
+
+  st.plotly_chart(fig_decay, use_container_width=True, key="mojo_decay_chart_1")
+
+  st.markdown("---")
+
+  # ==========================================
+  # 📈 CHART 2: CALL VS PUT PREMIUM (ABSOLUTE) - Screenshot 51 (Bottom Chart)
+  # ==========================================
+  st.markdown("### 📉 Call vs Put Premium")
+
+  fig_prem = make_subplots(specs=[[{"secondary_y": True}]])
+
+  # Future/Spot Price (Left Y-Axis, Gray Dashed Line)
+  fig_prem.add_trace(
+      go.Scatter(
+          x=timestamps,
+          y=spot_prices,
+          name="Future",
+          line=dict(color="#8d99ae", width=1.5, dash="dot"),
+          mode="lines",
       ),
       secondary_y=False,
   )
 
-  fig_decay.update_layout(
-      height=380,
-      margin=dict(l=20, r=20, t=20, b=20),
+  # CE Absolute Premium (Green Solid Line)
+  fig_prem.add_trace(
+      go.Scatter(
+          x=timestamps,
+          y=np.round(base_ce_prem, 2),
+          name="CE",
+          line=dict(color="#2ecc71", width=2.2),
+          mode="lines",
+      ),
+      secondary_y=True,
+  )
+
+  # PE Absolute Premium (Red Solid Line)
+  fig_prem.add_trace(
+      go.Scatter(
+          x=timestamps,
+          y=np.round(base_pe_prem, 2),
+          name="PE",
+          line=dict(color="#e74c3c", width=2.2),
+          mode="lines",
+      ),
+      secondary_y=True,
+  )
+
+  fig_prem.update_layout(
+      height=360,
+      margin=dict(l=10, r=10, t=10, b=10),
       hovermode="x unified",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0
+      ),
       plot_bgcolor="rgba(0,0,0,0)",
       paper_bgcolor="rgba(0,0,0,0)",
   )
-  fig_decay.update_xaxes(showgrid=True, gridcolor="#222")
-  fig_decay.update_yaxes(
-      title_text="Decay (Points)",
+  fig_prem.update_xaxes(showgrid=True, gridcolor="#222222")
+  fig_prem.update_yaxes(
+      title_text="Spot / Future Price",
       showgrid=True,
-      gridcolor="#222",
+      gridcolor="#222222",
       secondary_y=False,
   )
-  fig_decay.update_yaxes(
-      title_text="Price", showgrid=False, zeroline=False, secondary_y=True
+  fig_prem.update_yaxes(
+      title_text="Option Premium Value",
+      showgrid=False,
+      zeroline=False,
+      secondary_y=True,
   )
 
-  st.plotly_chart(fig_decay, use_container_width=True, key="mojo_decay_area")
+  st.plotly_chart(fig_prem, use_container_width=True, key="mojo_decay_chart_2")
 
   st.markdown("---")
 
-  # --- २. Gamma Exposure (GEX) Chart (Screenshot 50) ---
-  st.subheader("⚡ Gamma Exposure (GEX)")
+  # ==========================================
+  # ⚡ CHART 3: GAMMA EXPOSURE (GEX) - Screenshot 50
+  # ==========================================
+  st.markdown("### ⚡ Gamma Exposure (GEX)")
 
   strikes = [atm_strike + (i * step) for i in range(-10, 11)]
   net_gex = [
@@ -1089,7 +1197,6 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
 
   fig_gex = make_subplots(specs=[[{"secondary_y": True}]])
 
-  # Strike Bars (Green for positive, Red for negative)
   bar_colors = ["#2ecc71" if g >= 0 else "#e74c3c" for g in net_gex]
   fig_gex.add_trace(
       go.Bar(
@@ -1102,7 +1209,6 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
       secondary_y=False,
   )
 
-  # Absolute GEX Curve (Blue Curve Line)
   fig_gex.add_trace(
       go.Scatter(
           x=strikes,
@@ -1114,7 +1220,6 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
       secondary_y=True,
   )
 
-  # Vertical Spot Line
   fig_gex.add_vline(
       x=current_price,
       line_width=1.5,
@@ -1125,10 +1230,12 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
   )
 
   fig_gex.update_layout(
-      height=400,
+      height=380,
       margin=dict(l=20, r=20, t=30, b=20),
       hovermode="x unified",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+      ),
       plot_bgcolor="rgba(0,0,0,0)",
       paper_bgcolor="rgba(0,0,0,0)",
   )
@@ -1149,8 +1256,10 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
 
   st.markdown("---")
 
-  # --- ३. Delta Exposure (DEX) Chart ---
-  st.subheader("🎯 Delta Exposure (DEX)")
+  # ==========================================
+  # 🎯 CHART 4: DELTA EXPOSURE (DEX)
+  # ==========================================
+  st.markdown("### 🎯 Delta Exposure (DEX)")
 
   delta_exp = [
       round(
@@ -1207,10 +1316,12 @@ def render_tab_6_decay_and_exposure(current_price, asset_name):
   )
 
   fig_dex.update_layout(
-      height=400,
+      height=380,
       margin=dict(l=20, r=20, t=30, b=20),
       hovermode="x unified",
-      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+      ),
       plot_bgcolor="rgba(0,0,0,0)",
       paper_bgcolor="rgba(0,0,0,0)",
   )
