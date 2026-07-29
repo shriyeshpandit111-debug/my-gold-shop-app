@@ -286,7 +286,7 @@ def fetch_live_gift_nifty_change():
     return 12.50
 
 
-# --- ⚡ 1-Sec Live Price & Angel One Direct Real-Time Fetcher ---
+# --- ⚡ Live Price & Angel One Direct Real-Time Fetcher ---
 def fetch_angel_one_real_oi(current_price, symbol_name):
     smart_api = st.session_state.get("smart_api_session", None)
     is_bank = "BANK" in symbol_name.upper()
@@ -1359,7 +1359,7 @@ with tab6:
     st.markdown("---")
 
     # --------------------------------------------------------------------------
-    # १. Order Flow & Footprint Charts
+    # १. Order Flow & Footprint Charts (दुरुस्त केलेले स्थिर लॉजिक)
     # --------------------------------------------------------------------------
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
     st.caption("कॅन्डलच्या आत चालू असलेले Bid/Ask Volume आणि Imbalance दाखवणारा मोजमाप चार्ट.")
@@ -1374,11 +1374,16 @@ with tab6:
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
 
-            # Dynamic Imbalance Logic (Price Trend Based Simulation)
-            is_falling = df_of['close'].iloc[-1] < df_of['open'].iloc[-1]
-            buy_factor = np.random.uniform(0.35, 0.48) if is_falling else np.random.uniform(0.52, 0.65)
+            # 🛠️ FIXED: Price Action Based Deterministic Split (Random निघून गेले आहे)
+            # कॅन्डलच्या हाय-लो आणि ओपन-क्लोज मधील गॅपवरून फिक्स Buy/Sell Volume काढणे
+            price_spread = (df_of['high'] - df_of['low']).replace(0, 0.01)
+            body_spread = (df_of['close'] - df_of['open'])
+            
+            # कॅन्डलच्या ग्रीन/रेड ताकदीनुसार फिक्स टक्केवारी ठरणार
+            buy_ratio = 0.5 + (body_spread / (2 * price_spread))
+            buy_ratio = buy_ratio.clip(0.2, 0.8)
 
-            df_of['buy_vol'] = (df_of['volume'] * buy_factor).astype(int)
+            df_of['buy_vol'] = (df_of['volume'] * buy_ratio).astype(int)
             df_of['sell_vol'] = (df_of['volume'] - df_of['buy_vol']).astype(int)
             df_of['delta'] = df_of['buy_vol'] - df_of['sell_vol']
 
@@ -1451,7 +1456,8 @@ with tab6:
     with col_lh2:
         st.markdown("##### 📊 **Depth of Market (DOM Liquidity)**")
         dom_prices = [round(current_price + (i*10), 2) for i in range(3, -4, -1)]
-        dom_orders = [np.random.randint(500, 5000) for _ in dom_prices]
+        # स्थिर DOM ऑर्डर दाखवण्यासाठी प्राइस व्हॅल्यूचा वापर
+        dom_orders = [int((p % 1000) * 15 + 500) for p in dom_prices]
         dom_df = pd.DataFrame({"Price Level": dom_prices, "Pending Orders (Contracts/Lots)": dom_orders})
         st.dataframe(dom_df, use_container_width=True, height=180)
 
