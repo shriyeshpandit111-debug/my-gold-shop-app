@@ -212,7 +212,6 @@ timeframe = st.sidebar.selectbox(
 # --- 🌐 LIVE GIFT NIFTY FETCH FUNCTION ---
 def fetch_live_gift_nifty_change():
     try:
-        # GIFT Nifty ticker in Yahoo Finance
         gift_df = yf.download(
             tickers="^NSEI", period="2d", interval="1m", progress=False, timeout=3
         )
@@ -227,7 +226,7 @@ def fetch_live_gift_nifty_change():
             return pts_change
     except Exception:
         pass
-    return 12.50  # Fallback Live Points
+    return 12.50
 
 
 # --- ⚡ 1-Sec Live Price & Angel One Direct Real-Time Fetcher ---
@@ -405,7 +404,16 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
                 "Volume": "volume",
             }
         )
+        
+        # 🔧 ** टाइमझोन दुरुस्ती (UTC ते IST कन्व्हर्जन) **
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if df["timestamp"].dt.tz is None:
+            df["timestamp"] = df["timestamp"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+        else:
+            df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
+        
+        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+
         return df
     except Exception:
         return None
@@ -906,7 +914,7 @@ def render_stockmojo_premium_decay_tab(current_price):
 
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
-with st.spinner("Angel One Direct Tick Data जोडला जात आहे..."):
+with st.spinner("डेटा लोड होत आहे..."):
     daily_trend = get_daily_trend(ticker)
     df_ltf = fetch_and_resample_data(ticker, timeframe, is_indian_market)
 
@@ -1052,25 +1060,19 @@ with tab3:
     )
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 1️⃣ Angel One Data Fetch
     pcr_val = oi_live_data.get("pcr", 1.0)
     high_val = oi_live_data.get("high", current_price + 20)
     low_val = oi_live_data.get("low", current_price - 180)
     chg_call_cr = oi_live_data.get("change_call_cr", 0)
     chg_put_cr = oi_live_data.get("change_put_cr", 0)
 
-    # 2️⃣ Live GIFT Nifty Fetching
     gift_nifty_pts = fetch_live_gift_nifty_change()
 
-    # 3️⃣ Momentum Position Calculation (Relative to Range)
     day_range = high_val - low_val if high_val != low_val else 1.0
     momentum_pct = round(((current_price - low_val) / day_range) * 100, 2)
 
-    # 4️⃣ MULTI-FACTOR HIGH ACCURACY GAP PREDICTION ALGORITHM
-    # Base Weightage: PCR (30%), GIFT Nifty (40%), Closing Price Position (30%)
-    score = 50.0  # Neutral Base Score
+    score = 50.0
 
-    # Factor A: GIFT Nifty Influence
     if gift_nifty_pts > 50:
         score += 20
     elif gift_nifty_pts > 15:
@@ -1080,7 +1082,6 @@ with tab3:
     elif gift_nifty_pts < -15:
         score -= 10
 
-    # Factor B: PCR Influence
     if pcr_val >= 1.25:
         score += 15
     elif pcr_val >= 1.05:
@@ -1090,23 +1091,19 @@ with tab3:
     elif pcr_val <= 0.90:
         score -= 8
 
-    # Factor C: 3:00-3:20 Momentum Close (Near Day High vs Near Day Low)
     if momentum_pct >= 75.0:
         score += 15
     elif momentum_pct <= 25.0:
         score -= 15
 
-    # Factor D: OI Change Unwinding / Writing Shift
     if chg_put_cr > chg_call_cr:
         score += 5
     elif chg_call_cr > chg_put_cr:
         score -= 5
 
-    # Final Probability Boundaries
     gap_up_prob = round(max(5.0, min(95.0, score)), 1)
     gap_down_prob = round(100.0 - gap_up_prob, 1)
 
-    # Metric Cards Top Section
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -1144,7 +1141,6 @@ with tab3:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Live GIFT Nifty / PCR Metrics Row
     gift_color = "#2e7d32" if gift_nifty_pts >= 0 else "#c62828"
     gift_sign = "+" if gift_nifty_pts >= 0 else ""
 
@@ -1156,7 +1152,6 @@ with tab3:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Probabilities Display Section
     col_p1, col_p2 = st.columns(2)
 
     with col_p1:
@@ -1171,7 +1166,6 @@ with tab3:
 
     st.markdown("<br><br>", unsafe_allow_html=True)
 
-    # Smart Money Real-Time Signal Box
     IST = timezone(timedelta(hours=5, minutes=30))
     curr_time_str = datetime.now(IST).strftime("%H:%M")
 
