@@ -33,11 +33,19 @@ st.markdown(
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
 
-# --- ⏱️ १. ऑटो-रिफ्रेश आणि प्रीमियम डीके टाईम सेटिंग ---
+# --- ⏱️ १. ऑटो-रिफ्रेश आणि प्रीमियम डीके टाईम सेटिंग (UPDATED WITH 5m & 10m) ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
 refresh_choice = st.sidebar.selectbox(
     "डॅशबोर्ड रिफ्रेश वेळ (Refresh Speed):",
-    ["१ सेकंद (Super Fast Live)", "५ सेकंद", "१० सेकंद", "३० सेकंद", "१ मिनिट"],
+    [
+        "१ सेकंद (Super Fast Live)",
+        "५ सेकंद",
+        "१० सेकंद",
+        "३० सेकंद",
+        "१ मिनिट",
+        "५ मिनिटे (5m)",
+        "१० मिनिटे (10m)",
+    ],
     index=1,
 )
 
@@ -47,6 +55,8 @@ refresh_map = {
     "१० सेकंद": 10000,
     "३० सेकंद": 30000,
     "१ मिनिट": 60000,
+    "५ मिनिटे (5m)": 300000,   # 5 * 60 * 1000 ms
+    "१० मिनिटे (10m)": 600000,  # 10 * 60 * 1000 ms
 }
 chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
@@ -1209,7 +1219,7 @@ with tab5:
         st.info("ℹ️ Available for Indian Market Indices.")
 
 # ==============================================================================
-# 💎 TAB 6: INSTITUTIONAL SMC & ORDER FLOW (WITH FIXED ZERO-VOLUME BUG)
+# 💎 TAB 6: INSTITUTIONAL SMC & ORDER FLOW
 # ==============================================================================
 with tab6:
     st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
@@ -1217,7 +1227,7 @@ with tab6:
     st.markdown("---")
 
     # --------------------------------------------------------------------------
-    # १. Order Flow & Footprint Charts (Fixed Safe Volume Calculation)
+    # १. Order Flow & Footprint Charts
     # --------------------------------------------------------------------------
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
     st.caption("कॅन्डलच्या आत चालू असलेले Bid/Ask Volume आणि Imbalance दाखवणारा मोजमाप चार्ट.")
@@ -1228,7 +1238,7 @@ with tab6:
         if df_ltf is not None and not df_ltf.empty:
             df_of = df_ltf.tail(15).copy()
             
-            # 🔧 SAFETY FIX: जर yfinance किंवा Angel API मध्ये व्हॉल्यूम ० असेल तर ऑटो-जनरेटेड फॉलबॅक वॉल्यूम
+            # Safety Fix: Fallback Volume
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
             
@@ -1262,7 +1272,6 @@ with tab6:
     with col_of2:
         st.markdown("##### **🔍 Live Footprint Insights**")
         if df_ltf is not None and not df_ltf.empty:
-            # 🔧 SAFETY FIX: नेहमी व्हॅलिड पॉझिटिव्ह व्हॉल्यूम व्हॅल्यूज मिळण्याची खात्री
             last_buy = int(df_of['buy_vol'].iloc[-1])
             last_sell = int(df_of['sell_vol'].iloc[-1])
             last_delta = int(df_of['delta'].iloc[-1])
