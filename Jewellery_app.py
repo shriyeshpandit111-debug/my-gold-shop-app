@@ -965,44 +965,62 @@ with tab2:
         fig_line_oic.update_layout(
             paper_bgcolor="#FFFFFF",
             plot_bgcolor="#FFFFFF",
-            height=380,
-            margin=dict(l=20, r=20, t=30, b=30),
+            height=400,
             hovermode="x unified",
         )
-        st.plotly_chart(
-            fig_line_oic, use_container_width=True, key="mojo_line_oic"
-        )
-    else:
-        st.info("ℹ️ Real-time OI charts available for Indian Indices.")
+        st.plotly_chart(fig_line_oic, use_container_width=True, key="mojo_line_oic")
 
 with tab3:
-    st.markdown(
-        f"### 🎯 3:00 PM - 3:20 PM Market Gap-Up / Gap-Down Predictor"
-        f" ({display_name})"
-    )
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(label="Current Live Price", value=f"{current_price:,.2f}")
-    with col2:
-        st.metric(
-            label="Live Put/Call Ratio", value=f"{oi_live_data.get('pcr', 1.0)}"
+    st.markdown("## 🔮 **3:00 PM - 3:20 PM Institutional Gap Predictor**")
+    st.caption("स्मार्ट मनी पोजिशनिंग आणि बीटीएसटी (BTST/STBT) गॅप अप / गॅप डाऊन अंदाज")
+
+    oi_pred = fetch_angel_one_real_oi(current_price, display_name)
+    call_build = oi_pred["change_call_cr"]
+    put_build = oi_pred["change_put_cr"]
+    pcr_val = oi_pred["pcr"]
+
+    col_g1, col_g2, col_g3 = st.columns(3)
+
+    if put_build > (call_build * 1.25) and pcr_val >= 1.1:
+        gap_status = "🚀 STRONG GAP UP EXPECTED"
+        gap_color = "#22C55E"
+        bias = "OVERNIGHT BULLISH (BTST)"
+        desc = "मोठ्या प्रमाणात पुट रायटिंग (Put Writing) झाली आहे. संस्थात्मक खरेदीदारांनी रात्रीसाठी लाँग पोझिशन्स होल्ड केल्या आहेत."
+    elif call_build > (put_build * 1.25) and pcr_val <= 0.85:
+        gap_status = "🔻 STRONG GAP DOWN EXPECTED"
+        gap_color = "#EF4444"
+        bias = "OVERNIGHT BEARISH (STBT)"
+        desc = "मोठ्या प्रमाणात कॉल रायटिंग (Call Writing) झाली आहे. संस्थात्मक सेलिंंग प्रेशरमुळे उद्या गॅप डाऊन शक्यता जास्त आहे."
+    else:
+        gap_status = "⚖️ NEUTRAL / FLAT OPENING"
+        gap_color = "#EAB308"
+        bias = "NO OVERNIGHT BIAS"
+        desc = "कॉल आणि पुट रायटिंग संतुलित आहे. बाजार उद्या फ्लॅट उघडण्याची दाट शक्यता आहे."
+
+    with col_g1:
+        st.markdown(
+            f"<div style='background-color:{gap_color}; padding:15px; border-radius:10px; text-align:center; color:white; font-size:18px; font-weight:bold;'>"
+            f"{gap_status}</div>",
+            unsafe_allow_html=True,
         )
+    with col_g2:
+        st.metric(label="Predicted Bias", value=bias)
+    with col_g3:
+        st.metric(label="3:00 PM PCR Sentiment", value=f"{pcr_val}")
+
+    st.info(f"💡 **संस्थात्मक विश्लेषण (Institutional Analysis):** {desc}")
 
 with tab4:
+    st.markdown("## 🎯 **Institutional Signals & Order Block Analysis**")
     if df_ltf is not None and not df_ltf.empty:
-        df_ltf = add_indicators(df_ltf)
-        signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
-        st.subheader(
-            f"🎯 Live SMC PRO Institutional Signals on {timeframe} (Ultra-High"
-            " Accuracy)"
-        )
+        df_calc = add_indicators(df_ltf.copy())
+        signals_df = analyze_smc_pro_v2(df_calc, daily_trend)
         if not signals_df.empty:
-            st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+            st.dataframe(signals_df, use_container_width=True)
         else:
-            st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
+            st.warning("सध्याच्या टाईमफ्रेमवर कोणताही स्पष्ट इन्स्टिट्यूशनल सिग्नल मिळालेला नाही.")
+    else:
+        st.error("डेटा लोड होऊ शकला नाही. कृपया कनेक्शन तपासा.")
 
 with tab5:
-    if is_indian_market:
-        render_stockmojo_premium_decay_tab(current_price)
-    else:
-        st.info("ℹ️ Available for Indian Market Indices.")
+    render_stockmojo_premium_decay_tab(current_price)
