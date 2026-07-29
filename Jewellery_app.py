@@ -352,7 +352,11 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
             pass
 
     try:
-        source_interval, period = ("1m", "1d") if target_tf in ["1m", "2m", "3m", "5m"] else ("5m", "5d")
+        source_interval, period = (
+            ("1m", "1d")
+            if target_tf in ["1m", "2m", "3m", "5m"]
+            else ("5m", "5d")
+        )
         data = yf.download(
             tickers=ticker_symbol,
             period=period,
@@ -396,7 +400,8 @@ def get_daily_trend(ticker_symbol):
         if data is not None and not data.empty:
             df_daily = data.reset_index()
             df_daily.columns = [
-                col[0] if isinstance(col, tuple) else col for col in df_daily.columns
+                col[0] if isinstance(col, tuple) else col
+                for col in df_daily.columns
             ]
             df_daily = df_daily.rename(
                 columns={
@@ -407,7 +412,9 @@ def get_daily_trend(ticker_symbol):
                 }
             )
             if len(df_daily) > 20:
-                ema20 = df_daily["close"].ewm(span=20, adjust=False).mean().iloc[-1]
+                ema20 = (
+                    df_daily["close"].ewm(span=20, adjust=False).mean().iloc[-1]
+                )
                 last_price = df_daily["close"].iloc[-1]
                 return "BULLISH 📈" if last_price > ema20 else "BEARISH 📉"
         return "NEUTRAL ➡️"
@@ -517,7 +524,9 @@ def analyze_smc_pro_v2(df, daily_trend):
                     "Entry": round(entry, 2),
                     "Stop_Loss": round(stop_loss, 2),
                     "Take_Profit": round(take_profit, 2),
-                    "Institution Activity": "Smart Money Stop Hunt & Supply Sweep",
+                    "Institution Activity": (
+                        "Smart Money Stop Hunt & Supply Sweep"
+                    ),
                     "Trigger Reason": "Sharp Top Turnaround Confirmed",
                 })
 
@@ -575,7 +584,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
 
     IST = timezone(timedelta(hours=5, minutes=30))
     now = datetime.now(IST)
-    current_time_str = now.strftime("%H:%M:%S")
 
     # ⏳ निवडलेल्या timeframe नुसार चार्टमध्ये नवीन डेटा-पॉईंट जोडणे
     should_add_to_decay = False
@@ -642,7 +650,9 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                 )
             ],
         )
-        st.plotly_chart(fig_sent, use_container_width=True, key="mojo_sentiment")
+        st.plotly_chart(
+            fig_sent, use_container_width=True, key="mojo_sentiment"
+        )
 
     with col_d2:
         st.markdown("##### ⚡ आजचा बदल (Change in OI)")
@@ -659,7 +669,9 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             ]
         )
         fig_oic.update_layout(
-            height=230, margin=dict(l=10, r=10, t=25, b=10), yaxis=dict(visible=False)
+            height=230,
+            margin=dict(l=10, r=10, t=25, b=10),
+            yaxis=dict(visible=False),
         )
         st.plotly_chart(fig_oic, use_container_width=True, key="mojo_oi_change")
 
@@ -678,7 +690,9 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
             ]
         )
         fig_tot.update_layout(
-            height=230, margin=dict(l=10, r=10, t=25, b=10), yaxis=dict(visible=False)
+            height=230,
+            margin=dict(l=10, r=10, t=25, b=10),
+            yaxis=dict(visible=False),
         )
         st.plotly_chart(fig_tot, use_container_width=True, key="mojo_tot_oi")
 
@@ -968,9 +982,7 @@ with tab3:
     )
     col1, col2 = st.columns(2)
     with col1:
-        st.metric(
-            label="Current Live Price", value=f"{current_price:,.2f}"
-        )
+        st.metric(label="Current Live Price", value=f"{current_price:,.2f}")
     with col2:
         st.metric(
             label="Live Put/Call Ratio", value=f"{oi_live_data.get('pcr', 1.0)}"
