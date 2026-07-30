@@ -1001,7 +1001,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
         return
 
     # --- चार्टच्या खाली टॉगल ऑप्शन्स (Checkboxes) ---
-    st.markdown("### 🎛️ **Chart Overlay Toggles (ചാർട്ട് ഘടകങ്ങൾ നിയന്ത്രിക്കുക)**")
+    st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
     col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
     
     with col_t1:
