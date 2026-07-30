@@ -66,9 +66,9 @@ chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
 st.sidebar.markdown("---")
-st.sidebar.header("📉 Premium Decay Timeframe")
+st.sidebar.header("📉 Global Premium Decay Interval")
 decay_tf_choice = st.sidebar.selectbox(
-    "Premium Decay Chart Interval:",
+    "Global Decay Chart Interval:",
     ["1m", "2m", "3m", "5m", "10m", "15m"],
     index=3,
 )
@@ -92,6 +92,8 @@ if "last_decay_time" not in st.session_state:
     st.session_state["last_decay_time"] = None
 if "btc_ws_data" not in st.session_state:
     st.session_state["btc_ws_data"] = {"price": 0.0, "volume": 0.0, "high": 0.0, "low": 0.0, "connected": False}
+if "signals_history" not in st.session_state:
+    st.session_state["signals_history"] = pd.DataFrame()
 
 angel_api_key = st.sidebar.text_input(
     "Angel One API Key:",
@@ -261,8 +263,9 @@ else:
     is_indian_market = False
 
 timeframe = st.sidebar.selectbox(
-    "टाईमफ्रेम निवडा (Timeframe):",
+    "ग्लोबल डिफॉल्ट टाईमफ्रेम (Default TF):",
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+    index=3
 )
 
 
@@ -815,11 +818,10 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
 
 
 # --- 📉 STOCKMOJO PREMIUM DECAY TAB ---
-def render_stockmojo_premium_decay_tab(current_price):
+def render_stockmojo_premium_decay_tab(current_price, custom_tf):
     st.markdown("## 📉 **Premium Decay Analytics (StockMojo Style)**")
     st.caption(
-        f"⏱️ Current Timeframe Interval: **{decay_tf_choice}** (New candle point"
-        f" added every {selected_decay_minutes} min)"
+        f"⏱️ Current Timeframe Interval Selected: **{custom_tf}**"
     )
 
     if (
@@ -1010,7 +1012,14 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "💎 Institutional SMC & Order Flow"
 ])
 
+# --- TAB 1: LIVE DASHBOARD & OI ---
 with tab1:
+    tab1_tf = st.selectbox(
+        "⏱️ Live Dashboard विश्लेषणासाठी टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab1_manual_tf",
+    )
     if is_indian_market:
         pcr, live_p = render_stockmojo_style_dashboard(
             current_price, display_name
@@ -1018,11 +1027,19 @@ with tab1:
     else:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
+# --- TAB 2: REAL-TIME CHARTS ---
 with tab2:
+    tab2_tf = st.selectbox(
+        "⏱️ Real-Time Charts टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab2_manual_tf",
+    )
+    
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
         df_live_oi = st.session_state["oi_history"]
         
-        st.markdown("### 📈 **1. Real-Time Change in OI (Call vs Put)**")
+        st.markdown(f"### 📈 **1. Real-Time Change in OI (Call vs Put) - Timeframe: {tab2_tf}**")
         fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
         fig_line_oic.add_trace(
             go.Scatter(
@@ -1109,13 +1126,21 @@ with tab2:
     else:
         st.info("ℹ️ डेटा गोळा होत आहे... १० सेकंद थांबा, टिक डेटा आल्यावर दोन्ही चार्ट्स लाइव्ह दिसतील.")
 
+# --- TAB 3: 3:00-3:20 GAP PREDICTOR ---
 with tab3:
+    tab3_tf = st.selectbox(
+        "⏱️ Predictor विश्लेषणासाठी टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab3_manual_tf",
+    )
+
     st.markdown(
         f"<h2 style='text-align: left; margin-bottom: 0px;'>🎯 3:00 PM - 3:20 PM Market Gap-Up / Gap-Down Predictor ({display_name})</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='color: #6c757d; font-size: 14px; margin-top: 5px;'>दुपाः ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम, GIFT Nifty आणि Weighted PCR च्या आधारावर पुढील दिवसाचा अंदाज.</p>",
+        f"<p style='color: #6c757d; font-size: 14px; margin-top: 5px;'>निवडलेला टाइमफ्रेम: <b>{tab3_tf}</b> | दुपारच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम आणि PCR चा अंदाज.</p>",
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1258,9 +1283,15 @@ with tab3:
         unsafe_allow_html=True,
     )
 
+# --- TAB 4: INSTITUTIONAL SIGNALS ---
 with tab4:
-    st.subheader(
-        f"🎯 Live SMC PRO Institutional Signals on {timeframe} ({display_name})"
+    st.subheader(f"🎯 Live SMC PRO Institutional Signals ({display_name})")
+
+    tab4_tf = st.selectbox(
+        "⏱️ सिग्नल्स विश्लेषण टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab4_manual_tf",
     )
 
     if is_btc_market:
@@ -1275,7 +1306,6 @@ with tab4:
         btc_vol = btc_ws.get("volume", 0)
         btc_change = btc_ws.get("change", 0)
 
-        # Direct Binance WebSocket Data Driven Analysis Logic
         btc_signals = []
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1299,39 +1329,56 @@ with tab4:
                 "Institution Activity": "Binance Direct WS: Smart Money Distribution Sweep",
                 "Trigger Reason": "Real-time Selling Delta Imbalance",
             })
-        else:
-            btc_signals.append({
-                "Type": "🔴 PERFECT SELL (CHOCH CONFIRMED)",
-                "Time": now_str,
-                "Entry": round(current_btc_price, 2),
-                "Stop_Loss": round(current_btc_price * 1.005, 2),
-                "Take_Profit": round(current_btc_price * 0.985, 2),
-                "Institution Activity": "Binance Direct WS: Institutional Order Block Tap",
-                "Trigger Reason": "Real-Time Liquidity Pool Rejection",
-            })
 
-        st.dataframe(pd.DataFrame(btc_signals), use_container_width=True)
+        new_signals_df = pd.DataFrame(btc_signals)
+        if not new_signals_df.empty:
+            st.session_state["signals_history"] = pd.concat(
+                [st.session_state["signals_history"], new_signals_df]
+            ).drop_duplicates(subset=["Time", "Type"]).reset_index(drop=True)
+
+        st.dataframe(st.session_state["signals_history"].iloc[::-1], use_container_width=True)
 
     else:
-        if df_ltf is not None and not df_ltf.empty:
-            df_ltf = add_indicators(df_ltf)
-            signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
+        df_tab4 = fetch_and_resample_data(ticker, tab4_tf, is_indian_market)
+        if df_tab4 is not None and not df_tab4.empty:
+            df_tab4 = add_indicators(df_tab4)
+            signals_df = analyze_smc_pro_v2(df_tab4, daily_trend)
+            
             if not signals_df.empty:
-                st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+                st.session_state["signals_history"] = pd.concat(
+                    [st.session_state["signals_history"], signals_df]
+                ).drop_duplicates(subset=["Time", "Type"]).reset_index(drop=True)
+
+            if not st.session_state["signals_history"].empty:
+                st.dataframe(st.session_state["signals_history"].iloc[::-1], use_container_width=True)
             else:
                 st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
 
+# --- TAB 5: PREMIUM DECAY ---
 with tab5:
+    tab5_tf = st.selectbox(
+        "⏱️ Premium Decay टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab5_manual_tf",
+    )
     if is_indian_market:
-        render_stockmojo_premium_decay_tab(current_price)
+        render_stockmojo_premium_decay_tab(current_price, tab5_tf)
     else:
         st.info("ℹ️ Available for Indian Market Indices.")
 
-# ==============================================================================
-# 💎 TAB 6: INSTITUTIONAL SMC & ORDER FLOW (FIXED SECTION)
-# ==============================================================================
+# --- TAB 6: INSTITUTIONAL SMC & ORDER FLOW ---
 with tab6:
     st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
+
+    tab6_tf = st.selectbox(
+        "⏱️ Volume Profile & Order Flow टाइमफ्रेम निवडा (Manual Selection):",
+        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        index=3,
+        key="tab6_manual_tf",
+    )
+
+    df_tab6 = fetch_and_resample_data(ticker, tab6_tf, is_indian_market)
 
     if is_btc_market:
         st.markdown(
@@ -1359,7 +1406,7 @@ with tab6:
     st.markdown("---")
 
     # --------------------------------------------------------------------------
-    # १. Order Flow & Footprint Charts (दुरुस्त केलेला भाग)
+    # १. Order Flow & Footprint Charts
     # --------------------------------------------------------------------------
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
     st.caption("कॅन्डलच्या आत चालू असलेले Bid/Ask Volume आणि Imbalance दाखवणारा मोजमाप चार्ट.")
@@ -1367,14 +1414,12 @@ with tab6:
     col_of1, col_of2 = st.columns([3, 1])
 
     with col_of1:
-        if df_ltf is not None and not df_ltf.empty:
-            df_of = df_ltf.tail(15).copy()
+        if df_tab6 is not None and not df_tab6.empty:
+            df_of = df_tab6.tail(15).copy()
 
-            # Safety Fix: Fallback Volume
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
 
-            # --- 🔥 CRITICAL FIX: Price Action Driven Delta Logic ---
             buy_vols = []
             sell_vols = []
             deltas = []
@@ -1384,10 +1429,8 @@ with tab6:
                 tot_vol = row['volume']
                 
                 if is_bullish:
-                    # तेजीत Seller पेक्षा Buyer जास्त असणार
                     b_ratio = np.random.uniform(0.55, 0.72)
                 else:
-                    # मंदीत Buyer पेक्षा Seller जास्त असणार
                     b_ratio = np.random.uniform(0.28, 0.45)
                 
                 b_vol = int(tot_vol * b_ratio)
@@ -1404,7 +1447,6 @@ with tab6:
 
             fig_footprint = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
 
-            # Candlestick
             fig_footprint.add_trace(go.Candlestick(
                 x=df_of['timestamp'],
                 open=df_of['open'], high=df_of['high'],
@@ -1412,7 +1454,6 @@ with tab6:
                 name='Price'
             ), row=1, col=1)
 
-            # Order Flow Delta Histogram
             colors = ['#22c55e' if d >= 0 else '#ef4444' for d in df_of['delta']]
             fig_footprint.add_trace(go.Bar(
                 x=df_of['timestamp'], y=df_of['delta'],
@@ -1426,7 +1467,7 @@ with tab6:
 
     with col_of2:
         st.markdown("##### **🔍 Live Footprint Insights**")
-        if df_ltf is not None and not df_ltf.empty:
+        if df_tab6 is not None and not df_tab6.empty:
             last_buy = int(df_of['buy_vol'].iloc[-1])
             last_sell = int(df_of['sell_vol'].iloc[-1])
             last_delta = int(df_of['delta'].iloc[-1])
@@ -1435,7 +1476,6 @@ with tab6:
             st.metric("Seller Volume (Bid)", f"{last_sell:,}")
             st.metric("Net Delta Imbalance", f"{last_delta:,}", delta_color="normal")
 
-            # 🔥 Dynamic Buy/Sell Signal Adjustment based on Actual Delta
             if last_delta > 0:
                 st.success("🟢 Aggressive Buying Detected (Institutional Absorption)")
             else:
@@ -1484,10 +1524,13 @@ with tab6:
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
     st.caption("किंमतींनुसार सर्वात जास्त ट्रेडिंग झालेल्या पॉईंट ऑफ कंट्रोल (POC) लेव्हल्स.")
 
-    if df_ltf is not None and not df_ltf.empty:
-        price_bins = pd.cut(df_ltf['close'], bins=10)
-        vol_profile = df_ltf.groupby(price_bins, observed=False)['volume'].sum().reset_index()
-        vol_profile['mid_price'] = vol_profile['close'].apply(lambda x: round(x.mid, 2))
+    if df_tab6 is not None and not df_tab6.empty:
+        df_vp = df_tab6.copy()
+        df_vp['volume'] = df_vp['volume'].replace(0, 1)
+        
+        price_bins = pd.cut(df_vp['close'], bins=10)
+        vol_profile = df_vp.groupby(price_bins, observed=False)['volume'].sum().reset_index()
+        vol_profile['mid_price'] = vol_profile['close'].apply(lambda x: round(x.mid, 2) if hasattr(x, 'mid') else round(x, 2))
 
         poc_row = vol_profile.loc[vol_profile['volume'].idxmax()]
         poc_price = poc_row['mid_price']
@@ -1501,11 +1544,18 @@ with tab6:
 
         fig_vp = go.Figure(go.Bar(
             x=vol_profile['volume'],
-            y=vol_profile['mid_price'].astype(str),
+            y=vol_profile['mid_price'],
             orientation='h',
             marker_color=['#ef4444' if p == poc_price else '#3b82f6' for p in vol_profile['mid_price']]
         ))
-        fig_vp.update_layout(title="Horizontal Volume Profile", height=250, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="#ffffff", plot_bgcolor="#ffffff")
+        fig_vp.update_layout(
+            title="Horizontal Volume Profile",
+            height=300,
+            margin=dict(l=10, r=10, t=30, b=10),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            yaxis=dict(title="Price", type='linear')
+        )
         st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart")
 
     st.markdown("---")
@@ -1516,9 +1566,9 @@ with tab6:
     st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
     st.caption("ऑटोमॅटिक Order Blocks (OB), Fair Value Gaps (FVG) आणि CHOCH/BOS ब्रेकआउट्स.")
 
-    if df_ltf is not None and len(df_ltf) > 5:
-        last_low = df_ltf['low'].iloc[-3]
-        last_high = df_ltf['high'].iloc[-3]
+    if df_tab6 is not None and len(df_tab6) > 5:
+        last_low = df_tab6['low'].iloc[-3]
+        last_high = df_tab6['high'].iloc[-3]
 
         col_smc1, col_smc2 = st.columns(2)
 
@@ -1541,8 +1591,8 @@ with tab6:
     st.caption("फ्युचर्स, ऑप्शन्स, क्रिप्टो आणि फॉरेक्स मार्केटमधील Big Players चे पोझिशन ट्रॅकर.")
 
     price_change = 0
-    if df_ltf is not None and len(df_ltf) >= 2:
-        price_change = df_ltf['close'].iloc[-1] - df_ltf['close'].iloc[-2]
+    if df_tab6 is not None and len(df_tab6) >= 2:
+        price_change = df_tab6['close'].iloc[-1] - df_tab6['close'].iloc[-2]
 
     if price_change < 0:
         oi_status = "Increasing 📈"
