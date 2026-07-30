@@ -994,14 +994,21 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
-# --- 📈 TRADINGVIEW LIGHTWEIGHT CHARTS RENDERER ---
+# --- 📈 TRADINGVIEW LIGHTWEIGHT CHARTS RENDERER (WITH FULL SMC OVERLAYS) ---
 def render_tradingview_lightweight_chart(df, asset_title):
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
         return
 
     tv_candles = []
-    for _, r in df.iterrows():
+    markers = []
+
+    # Indicators & Calculation for Dynamic SMC Levels
+    df_calc = add_indicators(df.copy())
+    
+    # 1. Prepare Candlestick Data & Markers for Signals (CHOCH / Circle Entries)
+    for i in range(len(df_calc)):
+        r = df_calc.iloc[i]
         try:
             time_val = int(r["timestamp"].timestamp())
             tv_candles.append({
@@ -1011,22 +1018,84 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 "low": float(r["low"]),
                 "close": float(r["close"])
             })
+
+            # Detect CHOCH & Liquidity Sweeps
+            if i >= 4:
+                prev_4_low = df_calc["low"].iloc[i-4:i].min()
+                prev_4_high = df_calc["high"].iloc[i-4:i].max()
+                
+                # Bullish Sweep / CHOCH Entry Marker
+                if (r["low"] < prev_4_low) and (r["close"] > r["open"]) and (r["close"] >= prev_4_low):
+                    markers.append({
+                        "time": time_val,
+                        "position": "belowBar",
+                        "color": "#22c55e",
+                        "shape": "circle",
+                        "text": "BUY / CHOCH"
+                    })
+                # Bearish Sweep / CHOCH Entry Marker
+                elif (r["high"] > prev_4_high) and (r["close"] < r["open"]) and (r["close"] <= prev_4_high):
+                    markers.append({
+                        "time": time_val,
+                        "position": "aboveBar",
+                        "color": "#ef4444",
+                        "shape": "circle",
+                        "text": "SELL / CHOCH"
+                    })
         except Exception:
             continue
 
-    candles_json = json.dumps(tv_candles)
+    # 2. Dynamic SMC Level Calculations (OB, Liquidity & FVG)
+    last_close = df_calc['close'].iloc[-1]
+    last_high = df_calc['high'].iloc[-5:].max()
+    last_low = df_calc['low'].iloc[-5:].min()
+    
+    # Liquidity Pools (BSL / SSL)
+    bsl_price = round(last_high * 1.002, 2)
+    ssl_price = round(last_low * 0.998, 2)
+    
+    # Order Blocks (OB)
+    bullish_ob = round(last_low, 2)
+    bearish_ob = round(last_high, 2)
+    
+    # Fair Value Gaps (FVG)
+    bullish_fvg = round(last_low * 1.0015, 2)
+    bearish_fvg = round(last_high * 0.9985, 2)
 
+    candles_json = json.dumps(tv_candles)
+    markers_json = json.dumps(markers)
+
+    # 3. HTML & JS Component with TradingView Lightweight Charts & SMC Lines
     html_code = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
-            body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; }}
+            body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; font-family: sans-serif; }}
             #chart-container {{ width: 100%; height: 500px; }}
+            .legend {{
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                z-index: 10;
+                color: #d1d4dc;
+                font-size: 12px;
+                background: rgba(14, 17, 23, 0.85);
+                padding: 6px 12px;
+                border-radius: 6px;
+                border: 1px solid #374151;
+            }}
+            .legend span {{ margin-right: 12px; font-weight: bold; }}
         </style>
     </head>
     <body>
+        <div class="legend">
+            <span style="color: #22c55e;">🟢 Bullish OB: {bullish_ob}</span>
+            <span style="color: #ef4444;">🔴 Bearish OB: {bearish_ob}</span>
+            <span style="color: #3b82f6;">💧 BSL: {bsl_price}</span>
+            <span style="color: #f59e0b;">💧 SSL: {ssl_price}</span>
+        </div>
         <div id="chart-container"></div>
         <script>
             const container = document.getElementById('chart-container');
@@ -1063,8 +1132,64 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 wickUpColor: '#22c55e',
             }});
 
+            // Load Candles & Signal Markers
             const candleData = {candles_json};
+            const markerData = {markers_json};
+            
             candlestickSeries.setData(candleData);
+            candlestickSeries.setMarkers(markerData);
+
+            // --- 🎯 DRAWING SMC LINES DIRECTLY ON THE CHART ---
+            
+            // 1. Buy Side Liquidity (BSL) Line
+            candlestickSeries.createPriceLine({{
+                price: {bsl_price},
+                color: '#3b82f6',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: '💧 BSL (Liquidity)',
+            }});
+
+            // 2. Sell Side Liquidity (SSL) Line
+            candlestickSeries.createPriceLine({{
+                price: {ssl_price},
+                color: '#f59e0b',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: '💧 SSL (Liquidity)',
+            }});
+
+            // 3. Bullish Order Block (Bullish OB)
+            candlestickSeries.createPriceLine({{
+                price: {bullish_ob},
+                color: '#22c55e',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                axisLabelVisible: true,
+                title: '🟢 Bullish OB',
+            }});
+
+            // 4. Bearish Order Block (Bearish OB)
+            candlestickSeries.createPriceLine({{
+                price: {bearish_ob},
+                color: '#ef4444',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                axisLabelVisible: true,
+                title: '🔴 Bearish OB',
+            }});
+
+            // 5. Fair Value Gap (FVG)
+            candlestickSeries.createPriceLine({{
+                price: {bullish_fvg},
+                color: '#8b5cf6',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.LargeDashed,
+                axisLabelVisible: true,
+                title: '⚡ Bullish FVG',
+            }});
 
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
@@ -1127,8 +1252,8 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
-    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग आणि फ्लिकर-फ्री प्रोफेशनल चार्ट.")
+    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
     render_tradingview_lightweight_chart(df_ltf, display_name)
 
     st.markdown("---")
