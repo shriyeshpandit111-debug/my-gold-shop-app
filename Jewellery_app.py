@@ -1115,7 +1115,7 @@ with tab3:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='color: #6c757d; font-size: 14px; margin-top: 5px;'>दुपाः ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम, GIFT Nifty आणि Weighted PCR च्या आधारावर पुढील दिवसाचा अंदाज.</p>",
+        "<p style='color: #6c757d; font-size: 14px; margin-top: 5px;'>दुपाः ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम, GIFT Nifty आणि Weighted PCR च्या आधारे पुढील दिवसाचा अंदाज.</p>",
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1258,6 +1258,7 @@ with tab3:
         unsafe_allow_html=True,
     )
 
+# --- 🎯 TAB 4: INSTITUTIONAL SIGNALS (BTC FIXED SECTION) ---
 with tab4:
     st.subheader(
         f"🎯 Live SMC PRO Institutional Signals on {timeframe} ({display_name})"
@@ -1267,52 +1268,56 @@ with tab4:
         st.markdown(
             "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
             " border-radius: 5px; font-weight: bold;'>⚡ Direct Binance"
-            " WebSocket API Live Analysis (Real-time Dynamic Signals Connected)</div>",
+            " WebSocket API + Historical SMC Engine Active</div>",
             unsafe_allow_html=True,
         )
-        btc_ws = st.session_state["btc_ws_data"]
-        current_btc_price = btc_ws["price"] if btc_ws["price"] > 0 else current_price
-        btc_vol = btc_ws.get("volume", 0)
-        btc_change = btc_ws.get("change", 0)
 
-        # Direct Binance WebSocket Data Driven Analysis Logic
-        btc_signals = []
+        # १. हिस्टॉरिकल सिग्नल तयार करा (Full Candle Data Analysis)
+        if df_ltf is not None and not df_ltf.empty:
+            df_ltf_calc = add_indicators(df_ltf.copy())
+            btc_hist_signals = analyze_smc_pro_v2(df_ltf_calc, daily_trend)
+        else:
+            btc_hist_signals = pd.DataFrame()
+
+        # २. चालू सेकंदाचा Binance WebSocket चा Live Tick Signal तयार करा
+        btc_ws = st.session_state.get("btc_ws_data", {})
+        current_btc_price = btc_ws.get("price", current_price) if btc_ws.get("price", 0) > 0 else current_price
+        btc_change = btc_ws.get("change", 0)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if btc_change > 0.1:
-            btc_signals.append({
-                "Type": "🟢 PERFECT BUY (CIRCLE ENTRY)",
-                "Time": now_str,
-                "Entry": round(current_btc_price, 2),
-                "Stop_Loss": round(current_btc_price * 0.992, 2),
-                "Take_Profit": round(current_btc_price * 1.02, 2),
-                "Institution Activity": "Binance Direct WS: Smart Money Accumulation & Volume Spike",
-                "Trigger Reason": "Real-time Buying Delta Imbalance",
-            })
-        elif btc_change < -0.1:
-            btc_signals.append({
-                "Type": "🔴 PERFECT SELL (CIRCLE ENTRY)",
-                "Time": now_str,
-                "Entry": round(current_btc_price, 2),
-                "Stop_Loss": round(current_btc_price * 1.008, 2),
-                "Take_Profit": round(current_btc_price * 0.98, 2),
-                "Institution Activity": "Binance Direct WS: Smart Money Distribution Sweep",
-                "Trigger Reason": "Real-time Selling Delta Imbalance",
-            })
-        else:
-            btc_signals.append({
-                "Type": "🔴 PERFECT SELL (CHOCH CONFIRMED)",
-                "Time": now_str,
-                "Entry": round(current_btc_price, 2),
-                "Stop_Loss": round(current_btc_price * 1.005, 2),
-                "Take_Profit": round(current_btc_price * 0.985, 2),
-                "Institution Activity": "Binance Direct WS: Institutional Order Block Tap",
-                "Trigger Reason": "Real-Time Liquidity Pool Rejection",
-            })
+        live_sig_type = "🔴 PERFECT SELL (CHOCH CONFIRMED)"
+        inst_act = "Binance Direct WS: Institutional Order Block Tap"
+        trig_reason = "Real-Time Liquidity Pool Rejection"
 
-        st.dataframe(pd.DataFrame(btc_signals), use_container_width=True)
+        if btc_change > 0.1:
+            live_sig_type = "🟢 PERFECT BUY (CIRCLE ENTRY)"
+            inst_act = "Binance Direct WS: Smart Money Accumulation & Volume Spike"
+            trig_reason = "Real-time Buying Delta Imbalance"
+        elif btc_change < -0.1:
+            live_sig_type = "🔴 PERFECT SELL (CIRCLE ENTRY)"
+            inst_act = "Binance Direct WS: Smart Money Distribution Sweep"
+            trig_reason = "Real-time Selling Delta Imbalance"
+
+        live_signal_row = pd.DataFrame([{
+            "Type": live_sig_type,
+            "Time": f"{now_str} (LIVE TICK)",
+            "Entry": round(current_btc_price, 2),
+            "Stop_Loss": round(current_btc_price * (1.005 if "SELL" in live_sig_type else 0.995), 2),
+            "Take_Profit": round(current_btc_price * (0.985 if "SELL" in live_sig_type else 1.015), 2),
+            "Institution Activity": inst_act,
+            "Trigger Reason": trig_reason
+        }])
+
+        # ३. दोन्ही सिग्नल डेटा एकत्र करा (Live + Historical)
+        if not btc_hist_signals.empty:
+            final_btc_df = pd.concat([live_signal_row, btc_hist_signals.iloc[::-1]], ignore_index=True)
+        else:
+            final_btc_df = live_signal_row
+
+        st.dataframe(final_btc_df, use_container_width=True)
 
     else:
+        # Indian Market & Other Assets Logic
         if df_ltf is not None and not df_ltf.empty:
             df_ltf = add_indicators(df_ltf)
             signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
@@ -1327,9 +1332,7 @@ with tab5:
     else:
         st.info("ℹ️ Available for Indian Market Indices.")
 
-# ==============================================================================
-# 💎 TAB 6: INSTITUTIONAL SMC & ORDER FLOW (FIXED VOLUME PROFILE SECTION)
-# ==============================================================================
+# --- 💎 TAB 6: INSTITUTIONAL SMC & ORDER FLOW ---
 with tab6:
     st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
 
@@ -1358,9 +1361,7 @@ with tab6:
     st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
     # १. Order Flow & Footprint Charts
-    # --------------------------------------------------------------------------
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
     st.caption("कॅन्डलच्या आत चालू असलेले Bid/Ask Volume आणि Imbalance दाखवणारा मोजमाप चार्ट.")
 
@@ -1370,7 +1371,6 @@ with tab6:
         if df_ltf is not None and not df_ltf.empty:
             df_of = df_ltf.tail(15).copy()
 
-            # Safety Fix: Fallback Volume
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
 
@@ -1437,9 +1437,7 @@ with tab6:
 
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
-    # २. Liquidity Heatmap & Depth of Market (DOM)
-    # --------------------------------------------------------------------------
+    # २. Liquidity Heatmap & DOM
     st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
     st.caption("रिटेल ट्रेडर्सचे Stop-Losses कुठे साचले आहेत (Liquidity Sweep Entry Points).")
 
@@ -1472,24 +1470,19 @@ with tab6:
 
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
-    # ३. Volume Profile (POC, VAH, VAL) --- [संपूर्ण दुरुस्त केलेला भाग]
-    # --------------------------------------------------------------------------
+    # ३. Volume Profile (POC, VAH, VAL)
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
     st.caption("किंमतींनुसार सर्वात जास्त ट्रेडिंग झालेल्या पॉईंट ऑफ कंट्रोल (POC) लेव्हल्स.")
 
     if df_ltf is not None and not df_ltf.empty:
         df_vp_data = df_ltf.copy()
 
-        # Fallback Check: Volume 0 असल्यास बॅकअप Volume भरणे
         if df_vp_data['volume'].sum() == 0 or df_vp_data['volume'].isna().all():
             df_vp_data['volume'] = np.random.randint(1000, 5000, size=len(df_vp_data))
 
-        # binning साठी सेफ्टी लॉजिक
         price_bins = pd.cut(df_vp_data['close'], bins=12)
         vol_profile = df_vp_data.groupby(price_bins, observed=False)['volume'].sum().reset_index()
 
-        # Y-Axis वर नाव दिसण्यासाठी Price Range/Mid point योग्य Format मधे कन्व्हर्ट करणे
         vol_profile['mid_price'] = vol_profile['close'].apply(lambda x: round(x.mid, 2) if hasattr(x, 'mid') else 0)
         vol_profile['price_label'] = vol_profile['mid_price'].astype(str)
 
@@ -1503,7 +1496,6 @@ with tab6:
         col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price}", delta="Heavy Zone")
         col_vp3.metric("Value Area Low (VAL)", f"{val_price}")
 
-        # Horizontal Bars Color Logic
         bar_colors = ['#ef4444' if p == poc_price else '#3b82f6' for p in vol_profile['mid_price']]
 
         fig_vp = go.Figure(go.Bar(
@@ -1520,7 +1512,7 @@ with tab6:
             plot_bgcolor="#ffffff",
             xaxis_title="Volume",
             yaxis_title="Price Level",
-            yaxis=dict(type='category') # Explicit category type formatting
+            yaxis=dict(type='category')
         )
         st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed")
     else:
@@ -1528,9 +1520,7 @@ with tab6:
 
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
-    # ४. Smart Money Concepts (SMC) Automatic Indicators
-    # --------------------------------------------------------------------------
+    # ४. Automatic SMC Zones
     st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
     st.caption("ऑटोमॅटिक Order Blocks (OB), Fair Value Gaps (FVG) आणि CHOCH/BOS ब्रेकआउट्स.")
 
@@ -1552,9 +1542,7 @@ with tab6:
 
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
-    # ५. Open Interest (OI) + Funding Rate Filter
-    # --------------------------------------------------------------------------
+    # ५. OI + Funding Rate Filter
     st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
     st.caption("फ्युचर्स, ऑप्शन्स, क्रिप्टो आणि फॉरेक्स मार्केटमधील Big Players चे पोझिशन ट्रॅकर.")
 
