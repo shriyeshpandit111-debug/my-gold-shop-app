@@ -994,11 +994,26 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
-# --- 📈 TRADINGVIEW LIGHTWEIGHT CHARTS RENDERER (WITH FULL SMC OVERLAYS) ---
+# --- 📈 TRADINGVIEW LIGHTWEIGHT CHARTS RENDERER (WITH FULL SMC OVERLAYS & TOGGLE OPTIONS) ---
 def render_tradingview_lightweight_chart(df, asset_title):
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
         return
+
+    # --- चार्टच्या खाली टॉगल ऑप्शन्स (Checkboxes) ---
+    st.markdown("### 🎛️ **Chart Overlay Toggles (ചാർട്ട് ഘടകങ്ങൾ നിയന്ത്രിക്കുക)**")
+    col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
+    
+    with col_t1:
+        show_ob = st.checkbox("Order Blocks (OB)", value=True, key="toggle_ob")
+    with col_t2:
+        show_liq = st.checkbox("BSL / SSL Liquidity", value=True, key="toggle_liq")
+    with col_t3:
+        show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key="toggle_fvg")
+    with col_t4:
+        show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key="toggle_choch")
+    with col_t5:
+        show_legend = st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
 
     tv_candles = []
     markers = []
@@ -1019,8 +1034,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 "close": float(r["close"])
             })
 
-            # Detect CHOCH & Liquidity Sweeps
-            if i >= 4:
+            # Detect CHOCH & Liquidity Sweeps if enabled
+            if show_choch and i >= 4:
                 prev_4_low = df_calc["low"].iloc[i-4:i].min()
                 prev_4_high = df_calc["high"].iloc[i-4:i].max()
                 
@@ -1063,7 +1078,22 @@ def render_tradingview_lightweight_chart(df, asset_title):
     bearish_fvg = round(last_high * 0.9985, 2)
 
     candles_json = json.dumps(tv_candles)
-    markers_json = json.dumps(markers)
+    markers_json = json.dumps(markers) if show_choch else json.dumps([])
+
+    # Conditional Javascript lines based on user toggle ticks
+    bsl_line_js = f"""
+    candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }});
+    candlestickSeries.createPriceLine({{ price: {ssl_price}, color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 SSL (Liquidity)' }});
+    """ if show_liq else ""
+
+    ob_lines_js = f"""
+    candlestickSeries.createPriceLine({{ price: {bullish_ob}, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🟢 Bullish OB' }});
+    candlestickSeries.createPriceLine({{ price: {bearish_ob}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 Bearish OB' }});
+    """ if show_ob else ""
+
+    fvg_lines_js = f"""
+    candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
+    """ if show_fvg else ""
 
     # 3. HTML & JS Component with TradingView Lightweight Charts & SMC Lines
     html_code = f"""
@@ -1091,10 +1121,10 @@ def render_tradingview_lightweight_chart(df, asset_title):
     </head>
     <body>
         <div class="legend">
-            <span style="color: #22c55e;">🟢 Bullish OB: {bullish_ob}</span>
-            <span style="color: #ef4444;">🔴 Bearish OB: {bearish_ob}</span>
-            <span style="color: #3b82f6;">💧 BSL: {bsl_price}</span>
-            <span style="color: #f59e0b;">💧 SSL: {ssl_price}</span>
+            {"<span style='color: #22c55e;'>🟢 Bullish OB: " + str(bullish_ob) + "</span>" if show_ob else ""}
+            {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
+            {"<span style='color: #3b82f6;'>💧 BSL: " + str(bsl_price) + "</span>" if show_liq else ""}
+            {"<span style='color: #f59e0b;'>💧 SSL: " + str(ssl_price) + "</span>" if show_liq else ""}
         </div>
         <div id="chart-container"></div>
         <script>
@@ -1139,57 +1169,10 @@ def render_tradingview_lightweight_chart(df, asset_title):
             candlestickSeries.setData(candleData);
             candlestickSeries.setMarkers(markerData);
 
-            // --- 🎯 DRAWING SMC LINES DIRECTLY ON THE CHART ---
-            
-            // 1. Buy Side Liquidity (BSL) Line
-            candlestickSeries.createPriceLine({{
-                price: {bsl_price},
-                color: '#3b82f6',
-                lineWidth: 2,
-                lineStyle: LightweightCharts.LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: '💧 BSL (Liquidity)',
-            }});
-
-            // 2. Sell Side Liquidity (SSL) Line
-            candlestickSeries.createPriceLine({{
-                price: {ssl_price},
-                color: '#f59e0b',
-                lineWidth: 2,
-                lineStyle: LightweightCharts.LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: '💧 SSL (Liquidity)',
-            }});
-
-            // 3. Bullish Order Block (Bullish OB)
-            candlestickSeries.createPriceLine({{
-                price: {bullish_ob},
-                color: '#22c55e',
-                lineWidth: 2,
-                lineStyle: LightweightCharts.LineStyle.Solid,
-                axisLabelVisible: true,
-                title: '🟢 Bullish OB',
-            }});
-
-            // 4. Bearish Order Block (Bearish OB)
-            candlestickSeries.createPriceLine({{
-                price: {bearish_ob},
-                color: '#ef4444',
-                lineWidth: 2,
-                lineStyle: LightweightCharts.LineStyle.Solid,
-                axisLabelVisible: true,
-                title: '🔴 Bearish OB',
-            }});
-
-            // 5. Fair Value Gap (FVG)
-            candlestickSeries.createPriceLine({{
-                price: {bullish_fvg},
-                color: '#8b5cf6',
-                lineWidth: 1,
-                lineStyle: LightweightCharts.LineStyle.LargeDashed,
-                axisLabelVisible: true,
-                title: '⚡ Bullish FVG',
-            }});
+            // --- 🎯 DRAWING SMC LINES DIRECTLY ON THE CHART (BASED ON TOGGLES) ---
+            {bsl_line_js}
+            {ob_lines_js}
+            {fvg_lines_js}
 
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
