@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 import pyotp
 from SmartApi import SmartConnect
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
@@ -66,6 +67,11 @@ chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
 st.sidebar.markdown("---")
+# 🔊 VOICE ALERTS SYSTEM CONFIGURATION
+st.sidebar.header("🔊 Voice & Audio Alerts")
+enable_voice = st.sidebar.checkbox("🔊 Enable Voice Alerts", value=True)
+
+st.sidebar.markdown("---")
 st.sidebar.header("📉 Premium Decay Timeframe")
 decay_tf_choice = st.sidebar.selectbox(
     "Premium Decay Chart Interval:",
@@ -92,6 +98,8 @@ if "last_decay_time" not in st.session_state:
     st.session_state["last_decay_time"] = None
 if "btc_ws_data" not in st.session_state:
     st.session_state["btc_ws_data"] = {"price": 0.0, "volume": 0.0, "high": 0.0, "low": 0.0, "connected": False}
+if "last_processed_signal" not in st.session_state:
+    st.session_state["last_processed_signal"] = None
 
 angel_api_key = st.sidebar.text_input(
     "Angel One API Key:",
@@ -264,6 +272,24 @@ timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Timeframe):",
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
 )
+
+
+# --- 🔊 TEXT TO SPEECH HELPER FUNCTION ---
+def trigger_voice_alert(text_msg):
+    if enable_voice:
+        js_speech_code = f"""
+        <script>
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                var msg = new SpeechSynthesisUtterance('{text_msg}');
+                msg.rate = 0.95;
+                msg.pitch = 1.0;
+                msg.lang = 'en-US';
+                window.speechSynthesis.speak(msg);
+            }}
+        </script>
+        """
+        components.html(js_speech_code, height=0, width=0)
 
 
 # --- 🌐 LIVE GIFT NIFTY FETCH FUNCTION ---
@@ -968,6 +994,88 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
+# --- 📈 TRADINGVIEW LIGHTWEIGHT CHARTS RENDERER ---
+def render_tradingview_lightweight_chart(df, asset_title):
+    if df is None or df.empty:
+        st.info("चार्ट डेटा लोड होत आहे...")
+        return
+
+    tv_candles = []
+    for _, r in df.iterrows():
+        try:
+            time_val = int(r["timestamp"].timestamp())
+            tv_candles.append({
+                "time": time_val,
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"])
+            })
+        except Exception:
+            continue
+
+    candles_json = json.dumps(tv_candles)
+
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
+        <style>
+            body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; }}
+            #chart-container {{ width: 100%; height: 500px; }}
+        </style>
+    </head>
+    <body>
+        <div id="chart-container"></div>
+        <script>
+            const container = document.getElementById('chart-container');
+            const chart = LightweightCharts.createChart(container, {{
+                width: container.clientWidth,
+                height: 500,
+                layout: {{
+                    backgroundColor: '#0e1117',
+                    textColor: '#d1d4dc',
+                }},
+                grid: {{
+                    vertLines: {{ color: '#1f2937' }},
+                    horzLines: {{ color: '#1f2937' }},
+                }},
+                crosshair: {{
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                }},
+                rightPriceScale: {{
+                    borderColor: '#2B2B43',
+                }},
+                timeScale: {{
+                    borderColor: '#2B2B43',
+                    timeVisible: true,
+                    secondsVisible: false,
+                }},
+            }});
+
+            const candlestickSeries = chart.addCandlestickSeries({{
+                upColor: '#22c55e',
+                downColor: '#ef4444',
+                borderDownColor: '#ef4444',
+                borderUpColor: '#22c55e',
+                wickDownColor: '#ef4444',
+                wickUpColor: '#22c55e',
+            }});
+
+            const candleData = {candles_json};
+            candlestickSeries.setData(candleData);
+
+            window.addEventListener('resize', () => {{
+                chart.applyOptions({{ width: container.clientWidth }});
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html_code, height=520, scrolling=False)
+
+
 # --- मुख्य डेटा लोड ब्लॉक ---
 df_ltf = None
 with st.spinner("डेटा लोड होत आहे..."):
@@ -1019,6 +1127,11 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
+    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart ({display_name})**")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग आणि फ्लिकर-फ्री प्रोफेशनल चार्ट.")
+    render_tradingview_lightweight_chart(df_ltf, display_name)
+
+    st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
         df_live_oi = st.session_state["oi_history"]
         
@@ -1107,7 +1220,7 @@ with tab2:
         st.plotly_chart(fig_tot_oi, use_container_width=True, key="mojo_tot_oi_trend")
 
     else:
-        st.info("ℹ️ डेटा गोळा होत आहे... १० सेकंद थांबा, टिक डेटा आल्यावर दोन्ही चार्ट्स लाइव्ह दिसतील.")
+        st.info("ℹ️ OI डेटा गोळा होत आहे... १० सेकंद थांबा, टिक डेटा आल्यावर चार्ट्स अपडेट होतील.")
 
 with tab3:
     st.markdown(
@@ -1258,11 +1371,13 @@ with tab3:
         unsafe_allow_html=True,
     )
 
-# --- 🎯 TAB 4: INSTITUTIONAL SIGNALS (BTC FIXED SECTION) ---
+# --- 🎯 TAB 4: INSTITUTIONAL SIGNALS WITH AUDIO ALERTS ---
 with tab4:
     st.subheader(
         f"🎯 Live SMC PRO Institutional Signals on {timeframe} ({display_name})"
     )
+
+    detected_signal = None
 
     if is_btc_market:
         st.markdown(
@@ -1272,14 +1387,12 @@ with tab4:
             unsafe_allow_html=True,
         )
 
-        # १. हिस्टॉरिकल सिग्नल तयार करा (Full Candle Data Analysis)
         if df_ltf is not None and not df_ltf.empty:
             df_ltf_calc = add_indicators(df_ltf.copy())
             btc_hist_signals = analyze_smc_pro_v2(df_ltf_calc, daily_trend)
         else:
             btc_hist_signals = pd.DataFrame()
 
-        # २. चालू सेकंदाचा Binance WebSocket चा Live Tick Signal तयार करा
         btc_ws = st.session_state.get("btc_ws_data", {})
         current_btc_price = btc_ws.get("price", current_price) if btc_ws.get("price", 0) > 0 else current_price
         btc_change = btc_ws.get("change", 0)
@@ -1308,7 +1421,8 @@ with tab4:
             "Trigger Reason": trig_reason
         }])
 
-        # ३. दोन्ही सिग्नल डेटा एकत्र करा (Live + Historical)
+        detected_signal = live_sig_type
+
         if not btc_hist_signals.empty:
             final_btc_df = pd.concat([live_signal_row, btc_hist_signals.iloc[::-1]], ignore_index=True)
         else:
@@ -1317,14 +1431,22 @@ with tab4:
         st.dataframe(final_btc_df, use_container_width=True)
 
     else:
-        # Indian Market & Other Assets Logic
         if df_ltf is not None and not df_ltf.empty:
             df_ltf = add_indicators(df_ltf)
             signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
             if not signals_df.empty:
                 st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+                detected_signal = signals_df.iloc[-1]["Type"]
             else:
                 st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
+
+    # 🔊 VOICE ALERT TRIGGERING LOGIC
+    if detected_signal and (st.session_state["last_processed_signal"] != detected_signal):
+        st.session_state["last_processed_signal"] = detected_signal
+        if "BUY" in detected_signal:
+            trigger_voice_alert("Attention! New Bullish Signal Detected")
+        elif "SELL" in detected_signal:
+            trigger_voice_alert("Attention! New Bearish Signal Detected")
 
 with tab5:
     if is_indian_market:
