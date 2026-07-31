@@ -433,7 +433,8 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
             }
             angel_tf = interval_map.get(target_tf, "ONE_MINUTE")
 
-            from_date = (datetime.now() - timedelta(days=2)).strftime(
+            # 🛠️ मागील ५ दिवसांच्या कॅन्डल्स मिळवण्यासाठी days=5 केले आहे
+            from_date = (datetime.now() - timedelta(days=5)).strftime(
                 "%Y-%m-%d %H:%M"
             )
             to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -457,10 +458,11 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
             pass
 
     try:
+        # 🛠️ मागील ५ दिवसांच्या कॅन्डल्स मिळवण्यासाठी period="5d" केले आहे
         source_interval, period = (
-            ("1m", "1d")
+            ("1m", "5d")
             if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
-            else ("5m", "5d")
+            else ("5m", "1mo")
         )
         data = yf.download(
             tickers=ticker_symbol,
