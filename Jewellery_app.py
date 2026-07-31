@@ -269,7 +269,7 @@ else:
     is_indian_market = False
 
 timeframe = st.sidebar.selectbox(
-    "टाईमफ्रेम निवडा (Timeframe):",
+    "टाईमफ्रेम निवडा (Global Timeframe):",
     ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
 )
 
@@ -459,7 +459,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
     try:
         source_interval, period = (
             ("1m", "1d")
-            if target_tf in ["1m", "2m", "3m", "5m"]
+            if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
             else ("5m", "5d")
         )
         data = yf.download(
@@ -495,6 +495,25 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
             df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
 
         df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+
+        # Resample logic for custom timeframes (e.g., 2m, 3m, 10m, 15m, 30m)
+        tf_map = {
+            "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min",
+            "10m": "10min", "15m": "15min", "30m": "30min",
+            "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D"
+        }
+        resample_rule = tf_map.get(target_tf, "1min")
+        
+        if resample_rule != "1min":
+            df.set_index("timestamp", inplace=True)
+            resampled_df = df.resample(resample_rule).agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum"
+            }).dropna().reset_index()
+            return resampled_df
 
         return df
     except Exception:
@@ -1237,7 +1256,21 @@ with tab1:
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
     st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
-    render_tradingview_lightweight_chart(df_ltf, display_name)
+    
+    # ⏱️ चार्टचा टाईमफ्रेम बदलण्यासाठी मॅन्युअल ऑप्शन
+    col_tf1, col_tf2 = st.columns([2, 5])
+    with col_tf1:
+        chart_timeframe = st.selectbox(
+            "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m"],
+            index=0,
+            key="custom_chart_tf"
+        )
+    
+    # चार्टसाठी निवडलेल्या टाईमफ्रेमनुसार डेटा फेच करणे
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market)
+    
+    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
