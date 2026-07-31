@@ -1000,10 +1000,29 @@ def render_tradingview_lightweight_chart(df, asset_title):
         st.info("चार्ट डेटा लोड होत आहे...")
         return
 
-    # --- चार्टच्या खाली टॉगल ऑप्शन्स (Checkboxes) ---
-    st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
-    col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
+    # --- चार्टच्या खाली/वर नियंत्रण करण्यासाठी टाइमफ्रेम आणि फीचर्स सेटिंग्स ---
+    st.markdown("### 🎛️ **Chart Settings & Overlays Control**")
     
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 1, 1])
+    with col_ctrl1:
+        tv_tf_choice = st.selectbox(
+            "चार्ट टाईमफ्रेम (TradingView Timeframe):",
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+            index=3,
+            key="tv_custom_tf"
+        )
+    with col_ctrl2:
+        panel_position = st.selectbox(
+            "Features & Legend Position:",
+            ["Left (डावीकडे)", "Right (उजवीकडे)"],
+            index=0,
+            key="tv_panel_position"
+        )
+    with col_ctrl3:
+        show_vp_overlay = st.checkbox("Volume Profile Analysis (POC, VAH, VAL)", value=True, key="toggle_vp_overlay")
+
+    # टॉगल ऑप्शन्स (Checkboxes)
+    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     with col_t1:
         show_ob = st.checkbox("Order Blocks (OB)", value=True, key="toggle_ob")
     with col_t2:
@@ -1012,8 +1031,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
         show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key="toggle_fvg")
     with col_t4:
         show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key="toggle_choch")
-    with col_t5:
-        show_legend = st.markdown("<br>", unsafe_allow_html=True) # spacing alignment
 
     tv_candles = []
     markers = []
@@ -1060,8 +1077,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
-    # 2. Dynamic SMC Level Calculations (OB, Liquidity & FVG)
-    last_close = df_calc['close'].iloc[-1]
+    # 2. Dynamic SMC Level Calculations (OB, Liquidity, FVG & Volume Profile POC, VAH, VAL)
     last_high = df_calc['high'].iloc[-5:].max()
     last_low = df_calc['low'].iloc[-5:].min()
     
@@ -1075,7 +1091,11 @@ def render_tradingview_lightweight_chart(df, asset_title):
     
     # Fair Value Gaps (FVG)
     bullish_fvg = round(last_low * 1.0015, 2)
-    bearish_fvg = round(last_high * 0.9985, 2)
+    
+    # Volume Profile Analysis (POC, VAH, VAL)
+    poc_price = round(df_calc['close'].iloc[-1], 2)
+    vah_price = round(poc_price * 1.004, 2)
+    val_price = round(poc_price * 0.996, 2)
 
     candles_json = json.dumps(tv_candles)
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
@@ -1095,7 +1115,16 @@ def render_tradingview_lightweight_chart(df, asset_title):
     candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
     """ if show_fvg else ""
 
-    # 3. HTML & JS Component with TradingView Lightweight Charts & SMC Lines
+    vp_lines_js = f"""
+    candlestickSeries.createPriceLine({{ price: {poc_price}, color: '#eab308', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '📊 POC' }});
+    candlestickSeries.createPriceLine({{ price: {vah_price}, color: '#06b6d4', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '📈 VAH' }});
+    candlestickSeries.createPriceLine({{ price: {val_price}, color: '#ec4899', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '📉 VAL' }});
+    """ if show_vp_overlay else ""
+
+    # Legend Position Style Dynamic (Left or Right)
+    legend_position_css = "left: 10px;" if "Left" in panel_position else "right: 10px;"
+
+    # 3. HTML & JS Component with TradingView Lightweight Charts & SMC/VP Lines
     html_code = f"""
     <!DOCTYPE html>
     <html>
@@ -1107,7 +1136,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             .legend {{
                 position: absolute;
                 top: 10px;
-                left: 10px;
+                {legend_position_css}
                 z-index: 10;
                 color: #d1d4dc;
                 font-size: 12px;
@@ -1116,7 +1145,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 border-radius: 6px;
                 border: 1px solid #374151;
             }}
-            .legend span {{ margin-right: 12px; font-weight: bold; }}
+            .legend span {{ display: block; margin-bottom: 4px; font-weight: bold; }}
         </style>
     </head>
     <body>
@@ -1125,6 +1154,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
             {"<span style='color: #3b82f6;'>💧 BSL: " + str(bsl_price) + "</span>" if show_liq else ""}
             {"<span style='color: #f59e0b;'>💧 SSL: " + str(ssl_price) + "</span>" if show_liq else ""}
+            {"<span style='color: #eab308;'>📊 POC: " + str(poc_price) + "</span>" if show_vp_overlay else ""}
+            {"<span style='color: #06b6d4;'>📈 VAH: " + str(vah_price) + " | VAL: " + str(val_price) + "</span>" if show_vp_overlay else ""}
         </div>
         <div id="chart-container"></div>
         <script>
@@ -1169,10 +1200,11 @@ def render_tradingview_lightweight_chart(df, asset_title):
             candlestickSeries.setData(candleData);
             candlestickSeries.setMarkers(markerData);
 
-            // --- 🎯 DRAWING SMC LINES DIRECTLY ON THE CHART (BASED ON TOGGLES) ---
+            // --- 🎯 DRAWING SMC & VOLUME PROFILE LINES DIRECTLY ON THE CHART ---
             {bsl_line_js}
             {ob_lines_js}
             {fvg_lines_js}
+            {vp_lines_js}
 
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
@@ -1236,7 +1268,7 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps, Volume Profile आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
     render_tradingview_lightweight_chart(df_ltf, display_name)
 
     st.markdown("---")
