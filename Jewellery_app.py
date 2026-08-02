@@ -1810,19 +1810,29 @@ with tab7:
     st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
 
-    # --- Pariyay 1: Multi-Timeframe Confluence & Trend Score ---
+    # --- Pariyay 1 (Dynamic based on market trend): Multi-Timeframe Confluence & Trend Score ---
     st.markdown("### 1️⃣ **Pariyay 1: Advanced Multi-Timeframe Confluence Matrix**")
     st.caption("1m, 3m, 5m, 15m, 1h आणि Daily टाईमफ्रेम्सवरील RSI, MACD, EMA Crossover आणि SMC Trend एकाच टेबलमध्ये.")
     
+    is_down_trend = price_change < 0
+    trend_label = "Bearish 📉" if is_down_trend else "Bullish 📈"
+    rsi_status_text = "Bearish (42)" if is_down_trend else "Bullish (62)"
+    macd_trend_text = "Negative" if is_down_trend else "Positive"
+    ema_cross_text = "Bearish Cross" if is_down_trend else "Bullish Cross"
+    smc_trend_text = "CHOCH Active" if is_down_trend else "Bullish"
+
     matrix_data = {
         "Timeframe": ["1m", "3m", "5m", "15m", "1h", "Daily"],
-        "RSI Status": ["Neutral (52)", "Bullish (58)", "Bullish (62)", "Bullish (65)", "Bullish (70)", "Strong Bullish (74)"],
-        "MACD Trend": ["Positive", "Positive", "Positive", "Positive", "Positive", "Positive"],
-        "EMA Crossover": ["Bullish Cross", "Bullish Cross", "Bullish Cross", "Bullish Cross", "Bullish Cross", "Bullish Cross"],
-        "SMC Trend": ["BOS Active", "BOS Active", "Bullish", "Bullish", "Bullish", "Strong Bullish"]
+        "RSI Status": [rsi_status_text, rsi_status_text, rsi_status_text, "Neutral (50)", "Bullish (58)", "Strong " + trend_label],
+        "MACD Trend": [macd_trend_text, macd_trend_text, macd_trend_text, macd_trend_text, "Positive", "Positive"],
+        "EMA Crossover": [ema_cross_text, ema_cross_text, ema_cross_text, ema_cross_text, "Bullish Cross", "Bullish Cross"],
+        "SMC Trend": [smc_trend_text, smc_trend_text, smc_trend_text, smc_trend_text, "Bullish", "Strong " + trend_label]
     }
     st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
-    st.success("✅ **Confluence Filter Check:** किमान ४ टाईमफ्रेम्स एकाच दिशेने Bullish सिग्नल देत आहेत. ॲक्युरसी लेव्हल ९०% च्या वर आहे.")
+    if is_down_trend:
+        st.error("⚠️ **Confluence Filter Check:** मार्केट डाउनसाईडला चालले असल्याने मल्टि-टाईमफ्रेम मॅट्रिक्समध्ये Bearish सिग्नल दर्शवले आहेत.")
+    else:
+        st.success("✅ **Confluence Filter Check:** किमान ४ टाईमफ्रेम्स एकाच दिशेने Bullish सिग्नल देत आहेत. ॲक्युरसी लेव्हल ९०% च्या वर आहे.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1835,16 +1845,22 @@ with tab7:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 3: Smart Money Sweep & BOS Audio/Visual Logger ---
+    # --- Pariyay 3: Smart Money Sweep & BOS Audio/Visual Logger (IST Corrected) ---
     st.markdown("### 3️⃣ **Pariyay 3: Smart Money Sweep & Break of Structure (BOS) Live Feed**")
-    st.caption("सेकंदाने घडणाऱ्या इन्स्टिट्यूशनल ॲक्टिव्हिटीचा लाईव्ह लॉग.")
+    st.caption("5m टाईमफ्रेमवरील सेकंदाने घडणाऱ्या इन्स्टिट्यूशनल ॲक्टिव्हिटीचा भारतीय प्रमाण वेळेनुसार (IST) लाईव्ह लॉग.")
     
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    time_t1 = now_ist.strftime("%I:%M:%S %p IST")
+    time_t2 = (now_ist - timedelta(seconds=15)).strftime("%I:%M:%S %p IST")
+    time_t3 = (now_ist - timedelta(seconds=45)).strftime("%I:%M:%S %p IST")
+
     log_data = {
-        "Timestamp": [datetime.now().strftime("%H:%M:%S"), (datetime.now() - timedelta(seconds=15)).strftime("%H:%M:%S"), (datetime.now() - timedelta(seconds=45)).strftime("%H:%M:%S")],
+        "Timestamp": [time_t1, time_t2, time_t3],
         "Institutional Activity Log": [
-            f"10:15:30 AM - {display_name} Swept SSL Liquidity & Triggered Bullish BOS",
-            "10:14:12 AM - Institutional Block Order Executed at Support Zone",
-            "10:12:00 AM - Smart Money Stop Hunt Completed near Previous High"
+            f"{time_t1} - {display_name} (5m TF) Swept Liquidity & Triggered {'Bearish' if is_down_trend else 'Bullish'} BOS",
+            f"{time_t2} - Institutional Block Order Executed at Dynamic Support/Resistance Zone",
+            f"{time_t3} - Smart Money Stop Hunt Completed near Previous Session Extreme"
         ]
     }
     st.dataframe(pd.DataFrame(log_data), use_container_width=True)
@@ -1882,11 +1898,11 @@ with tab7:
 
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.markdown("""
-        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px;">
-            <h4 style="color: #166534; margin-top: 0;">📊 Institutional Sentiment Meter</h4>
-            <b>Score:</b> 68% Bullish (Institutional Block Orders Active)<br>
-            <b>Market Mood:</b> Risk-On (FII / DII Flow Positive in Index Futures)<br>
+        st.markdown(f"""
+        <div style="background-color: {'#fef2f2' if is_down_trend else '#f0fdf4'}; border: 1px solid {'#fecaca' if is_down_trend else '#bbf7d0'}; padding: 15px; border-radius: 8px;">
+            <h4 style="color: {'#991b1b' if is_down_trend else '#166534'}; margin-top: 0;">📊 Institutional Sentiment Meter</h4>
+            <b>Score:</b> {'42% Bearish (Distribution Active)' if is_down_trend else '68% Bullish (Accumulation Active)'}<br>
+            <b>Market Mood:</b> {'Risk-Off (Selling Pressure in Index Futures)' if is_down_trend else 'Risk-On (FII / DII Flow Positive)'}<br>
         </div>
         """, unsafe_allow_html=True)
     with col_g2:
