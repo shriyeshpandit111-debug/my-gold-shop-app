@@ -1069,8 +1069,13 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
-    last_high = df_calc['high'].iloc[-5:].max()
-    last_low = df_calc['low'].iloc[-5:].min()
+    # --- 🛠️ Fixed Stability Logic to prevent jittering on page refresh ---
+    if "stable_high" not in st.session_state or "stable_low" not in st.session_state:
+        st.session_state["stable_high"] = float(df_calc['high'].max())
+        st.session_state["stable_low"] = float(df_calc['low'].min())
+
+    last_high = st.session_state["stable_high"]
+    last_low = st.session_state["stable_low"]
     
     bsl_price = round(last_high * 1.002, 2)
     ssl_price = round(last_low * 0.998, 2)
