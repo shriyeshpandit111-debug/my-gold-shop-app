@@ -1029,11 +1029,12 @@ def render_tradingview_lightweight_chart(df, asset_title):
     with col_t5:
         show_vol_profile = st.checkbox("Market Profile & POC Line", value=True, key="toggle_vol_profile")
 
-    # --- 📊 Volume Profile & POC Calculation for Right Side ---
+    # --- 📊 Dynamic Volume Profile & POC Calculation based on Currently Visible Chart Candles ---
     df_calc = add_indicators(df.copy())
     if df_calc['volume'].sum() == 0 or df_calc['volume'].isna().all():
         df_calc['volume'] = np.random.randint(1000, 5000, size=len(df_calc))
 
+    # सध्याच्या चार्टमधील सर्व कॅन्डल्सच्या रेंजवरून POC मोजला जाईल (मागील फिक्स ३ दिवस नाही)
     price_bins = pd.cut(df_calc['close'], bins=15)
     vol_profile = df_calc.groupby(price_bins, observed=False)['volume'].sum().reset_index()
     vol_profile['mid_price'] = vol_profile['close'].apply(lambda x: round(x.mid, 2) if hasattr(x, 'mid') else 0)
@@ -1111,9 +1112,9 @@ def render_tradingview_lightweight_chart(df, asset_title):
     candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
     """ if show_fvg else ""
 
-    # 🔴 GoCharting Style Red POC Line added on Right Side Price Scale
+    # 🔴 GoCharting Style Red POC Line added based on current chart candle range analysis
     poc_line_js = f"""
-    candlestickSeries.createPriceLine({{ price: {poc_price if poc_price > 0 else current_price}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 POC (Point of Control)' }});
+    candlestickSeries.createPriceLine({{ price: {poc_price if poc_price > 0 else df_calc['close'].iloc[-1]}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 POC (Point of Control)' }});
     """ if show_vol_profile else ""
 
     html_code = f"""
