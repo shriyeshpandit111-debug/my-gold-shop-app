@@ -458,7 +458,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
 
     try:
         source_interval, period = (
-            ("1m", "5d")
+            ("1m", "7d")
             if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
             else ("5m", "1mo")
         )
@@ -1046,11 +1046,11 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 "close": float(r["close"])
             })
 
-            if show_choch and i >= 4:
-                prev_4_low = df_calc["low"].iloc[i-4:i].min()
-                prev_4_high = df_calc["high"].iloc[i-4:i].max()
+            if show_choch and i >= 10:
+                prev_highs = df_calc["high"].iloc[i-10:i].max()
+                prev_lows = df_calc["low"].iloc[i-10:i].min()
                 
-                if (r["low"] < prev_4_low) and (r["close"] > r["open"]) and (r["close"] >= prev_4_low):
+                if (r["low"] <= prev_lows * 1.001) and (r["close"] > r["open"]):
                     markers.append({
                         "time": time_val,
                         "position": "belowBar",
@@ -1058,7 +1058,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
                         "shape": "circle",
                         "text": "BUY / CHOCH"
                     })
-                elif (r["high"] > prev_4_high) and (r["close"] < r["open"]) and (r["close"] <= prev_4_high):
+                elif (r["high"] >= prev_highs * 0.999) and (r["close"] < r["open"]):
                     markers.append({
                         "time": time_val,
                         "position": "aboveBar",
@@ -1069,22 +1069,19 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
-    # --- 🛠️ Fixed Stability Logic to prevent jittering on page refresh ---
-    if "stable_high" not in st.session_state or "stable_low" not in st.session_state:
-        st.session_state["stable_high"] = float(df_calc['high'].max())
-        st.session_state["stable_low"] = float(df_calc['low'].min())
-
-    last_high = st.session_state["stable_high"]
-    last_low = st.session_state["stable_low"]
+    # --- 🛠️ सुधारित लॉजिक: फक्त मागील ५ कॅन्डलऐवजी संपूर्ण उपलब्ध डेटा किंवा मागील मजबूत हाय-लोचा वापर ---
+    lookback_window = min(len(df_calc), 75)
+    stable_high = df_calc['high'].iloc[-lookback_window:].max()
+    stable_low = df_calc['low'].iloc[-lookback_window:].min()
     
-    bsl_price = round(last_high * 1.002, 2)
-    ssl_price = round(last_low * 0.998, 2)
+    bsl_price = round(stable_high * 1.002, 2)
+    ssl_price = round(stable_low * 0.998, 2)
     
-    bullish_ob = round(last_low, 2)
-    bearish_ob = round(last_high, 2)
+    bullish_ob = round(df_calc['low'].iloc[-lookback_window:].min() * 1.001, 2)
+    bearish_ob = round(df_calc['high'].iloc[-lookback_window:].max() * 0.999, 2)
     
-    bullish_fvg = round(last_low * 1.0015, 2)
-    bearish_fvg = round(last_high * 0.9985, 2)
+    bullish_fvg = round(stable_low * 1.0015, 2)
+    bearish_fvg = round(stable_high * 0.9985, 2)
 
     candles_json = json.dumps(tv_candles)
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
@@ -1219,7 +1216,7 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Now with Tab 7 added)
+# 🌟 TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
@@ -1809,13 +1806,12 @@ with tab6:
     else:
         st.success(bias_desc)
 
-# --- 🚀 TAB 7: ADVANCED MARKET SCANNER & REAL-TIME SUGGESTION ENGINE (PARIYAY 1 TO 6) ---
+# --- 🚀 TAB 7: ADVANCED MARKET SCANNER & REAL-TIME SUGGESTION ENGINE ---
 with tab7:
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
     st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
 
-    # --- Pariyay 1 (Dynamic based on market trend): Multi-Timeframe Confluence & Trend Score ---
     st.markdown("### 1️⃣ **Pariyay 1: Advanced Multi-Timeframe Confluence Matrix**")
     st.caption("1m, 3m, 5m, 15m, 1h आणि Daily टाईमफ्रेम्सवरील RSI, MACD, EMA Crossover आणि SMC Trend एकाच टेबलमध्ये.")
     
@@ -1841,19 +1837,14 @@ with tab7:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 2: VWAP & Anchored VWAP Dynamic Bands ---
     st.markdown("### 2️⃣ **Pariyay 2: VWAP & Anchored VWAP (AVWAP) Dynamic Bands**")
-    st.caption("इन्स्टिट्यूशनल व्हॅल्यू एरिया शोधण्यासाठी Anchored VWAP आणि स्टँडर्ड बँड्स.")
     col_v1, col_v2 = st.columns(2)
     col_v1.metric("Standard VWAP", f"{current_price - 12.50:,.2f}", "Institutional Fair Value")
     col_v2.metric("Anchored VWAP (Swing Low)", f"{current_price - 35.00:,.2f}", "Strong Support Level")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 3: Smart Money Sweep & BOS Audio/Visual Logger (IST Corrected) ---
     st.markdown("### 3️⃣ **Pariyay 3: Smart Money Sweep & Break of Structure (BOS) Live Feed**")
-    st.caption("5m टाईमफ्रेमवरील सेकंदाने घडणाऱ्या इन्स्टिट्यूशनल ॲक्टिव्हिटीचा भारतीय प्रमाण वेळेनुसार (IST) लाईव्ह लॉग.")
-    
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
     time_t1 = now_ist.strftime("%I:%M:%S %p IST")
@@ -1872,10 +1863,7 @@ with tab7:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 4: Risk-to-Reward & Position Sizing Calculator ---
     st.markdown("### 4️⃣ **Pariyay 4: Risk-to-Reward (RR) & Position Sizing Calculator**")
-    st.caption("एकूण भांडवल आणि रिस्क टक्केवारीनुसार ऑटोमॅटिक लॉट/क्वांटिटी कॅल्क्युलेटर.")
-
     col_rc1, col_rc2 = st.columns(2)
     with col_rc1:
         user_capital = st.number_input("तुमचे एकूण भांडवल (Total Capital ₹):", value=100000, step=10000)
@@ -1887,9 +1875,7 @@ with tab7:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 5: IV & VIX Spike Alert System ---
     st.markdown("### 5️⃣ **Pariyay 5: IV (Implied Volatility) & VIX Spike Alert System**")
-    st.caption("इंडिया VIX आणि Implied Volatility मधील अचानक होणाऱ्या स्पाइकचे लाईव्ह मॉनिटरिंग.")
     col_ix1, col_ix2, col_ix3 = st.columns(3)
     col_ix1.metric("India VIX", "13.45", "-0.35 (-2.5%)")
     col_ix2.metric("Implied Volatility (IV)", "14.20%", "Stable / Low Decay")
@@ -1897,10 +1883,7 @@ with tab7:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Pariyay 6: AI Sentiment & Global Macro Liquidity Tracker ---
     st.markdown("### 6️⃣ **Pariyay 6: AI Sentiment & Global Macro Liquidity Tracker**")
-    st.caption("ग्लोबल मॅक्रो लिक्विडिटी आणि इन्स्टिट्यूशनल सेंटिमेंट मीटर.")
-
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown(f"""
