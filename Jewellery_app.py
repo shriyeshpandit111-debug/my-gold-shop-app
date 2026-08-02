@@ -14,64 +14,23 @@ from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
 
-# पानाची रचना सेट करा (Modern Dashboard Config)
+# पानाची रचना सेट करा
 st.set_page_config(
     page_title="SMC PRO Options Lab Dashboard",
     layout="wide",
     page_icon="⚡",
 )
 
-# --- 🎨 Ultra-Modern Custom CSS (Dark Glassmorphism UI) ---
+# --- 🎨 Custom CSS ---
 st.markdown(
     """
     <style>
-        /* Main Theme Background */
-        .main { background-color: #0b0f19; color: #f3f4f6 !important; }
-        
-        /* Modern Cards & Metrics styling */
-        .stMetric, div[data-testid="stMetric"] { 
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important; 
-            border: 1px solid #334155 !important; 
-            padding: 18px !important; 
-            border-radius: 14px !important; 
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-        }
-        div[data-testid="stMetricLabel"] { color: #94a3b8 !important; font-weight: 600; font-size: 13px !important; }
-        div[data-testid="stMetricValue"] { color: #f8fafc !important; font-weight: 800; font-size: 26px !important; }
-        
-        /* Typography */
-        h1, h2, h3, h4, h5, h6, p, span { color: #f1f5f9; }
-        .stApp header + div h1 { color: #ffffff !important; letter-spacing: -0.5px; }
-
-        /* Sidebar Styling */
-        section[data-testid="stSidebar"] {
-            background-color: #0f172a;
-            border-right: 1px solid #1e293b;
-        }
-        
-        /* Custom Tab Styling Enhancements */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-            background-color: #0f172a;
-            padding: 8px;
-            border-radius: 12px;
-            border: 1px solid #1e293b;
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 45px;
-            white-space: pre-wrap;
-            background-color: #1e293b;
-            border-radius: 8px;
-            color: #94a3b8;
-            font-weight: 600;
-            border: none;
-            transition: all 0.3s ease;
-        }
-        .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
-            color: #ffffff !important;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-        }
+        .main { background-color: #0e1117; color: #ffffff !important; }
+        .stMetric, div[data-testid="stMetric"] { background-color: #ffffff !important; border: 1px solid #d0d7de !important; padding: 15px; border-radius: 10px; }
+        div[data-testid="stMetricLabel"] { color: #57606a !important; font-weight: 600; }
+        div[data-testid="stMetricValue"] { color: #1f2328 !important; font-weight: 700; }
+        h1, h2, h3, h4, h5, h6, p, span { color: #1f2328; }
+        .stApp header + div h1 { color: #ffffff !important; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -206,16 +165,16 @@ if st.sidebar.button("💾 Save Credentials & Login"):
 
 if st.session_state.get("smart_api_session") is not None:
     st.sidebar.markdown(
-        "<div style='background-color: #064e3b; color: #34d399; padding: 10px;"
-        " border-radius: 8px; text-align: center; font-weight: bold; margin-bottom:"
-        " 10px; border: 1px solid #059669;'>🟢 Angel One: Live Connected (1s Tick)</div>",
+        "<div style='background-color: #d4edda; color: #155724; padding: 8px;"
+        " border-radius: 5px; text-align: center; font-weight: bold; margin-bottom:"
+        " 10px;'>🟢 Angel One: Live Connected (1s Tick)</div>",
         unsafe_allow_html=True,
     )
 else:
     st.sidebar.markdown(
-        "<div style='background-color: #7f1d1d; color: #fca5a5; padding: 10px;"
-        " border-radius: 8px; text-align: center; font-weight: bold; margin-bottom:"
-        " 10px; border: 1px solid #dc2626;'>🔴 Angel One: Disconnected</div>",
+        "<div style='background-color: #f8d7da; color: #721c24; padding: 8px;"
+        " border-radius: 5px; text-align: center; font-weight: bold; margin-bottom:"
+        " 10px;'>🔴 Angel One: Disconnected</div>",
         unsafe_allow_html=True,
     )
 
@@ -800,18 +759,15 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     labels=["Bullish", "Bearish"],
                     values=[70, 30] if pcr >= 1.0 else [30, 70],
                     hole=0.7,
-                    marker_colors=["#22c55e", "#ef4444"],
+                    marker_colors=["#2ecc71", "#e74c3c"],
                     textinfo="none",
                 )
             ]
         )
         fig_sent.update_layout(
             height=200,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=10, r=10, t=10, b=10),
             showlegend=False,
-            font=dict(color="#f1f5f9"),
             annotations=[
                 dict(
                     text=f"<b>{sent_text}</b><br><span"
@@ -820,7 +776,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     y=0.5,
                     showarrow=False,
                     font_size=13,
-                    font_color="#f1f5f9"
                 )
             ],
         )
@@ -837,18 +792,15 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     y=[chg_call_cr, chg_put_cr],
                     text=[chg_call_text, chg_put_text],
                     textposition="outside",
-                    marker_color=["#22c55e", "#ef4444"],
+                    marker_color=["#2ecc71", "#e74c3c"],
                     width=0.4,
                 )
             ]
         )
         fig_oic.update_layout(
             height=230,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=10, r=10, t=25, b=10),
             yaxis=dict(visible=False),
-            font=dict(color="#f1f5f9"),
         )
         st.plotly_chart(fig_oic, use_container_width=True, key="mojo_oi_change")
 
@@ -861,18 +813,15 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     y=[tot_call_cr, tot_put_cr],
                     text=[tot_call_text, tot_put_text],
                     textposition="outside",
-                    marker_color=["#22c55e", "#ef4444"],
+                    marker_color=["#2ecc71", "#e74c3c"],
                     width=0.4,
                 )
             ]
         )
         fig_tot.update_layout(
             height=230,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=10, r=10, t=25, b=10),
             yaxis=dict(visible=False),
-            font=dict(color="#f1f5f9"),
         )
         st.plotly_chart(fig_tot, use_container_width=True, key="mojo_tot_oi")
 
@@ -884,18 +833,15 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     labels=["Call OI", "Put OI"],
                     values=[tot_call_cr, tot_put_cr],
                     hole=0.7,
-                    marker_colors=["#22c55e", "#ef4444"],
+                    marker_colors=["#2ecc71", "#e74c3c"],
                     textinfo="label+percent",
                 )
             ]
         )
         fig_pcr.update_layout(
             height=200,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=10, r=10, t=10, b=10),
             showlegend=False,
-            font=dict(color="#f1f5f9"),
             annotations=[
                 dict(
                     text=f"<b>PCR</b><br><b>{pcr}</b>",
@@ -903,7 +849,6 @@ def render_stockmojo_style_dashboard(current_price, asset_name):
                     y=0.5,
                     showarrow=False,
                     font_size=13,
-                    font_color="#f1f5f9"
                 )
             ],
         )
@@ -938,7 +883,7 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["price"],
             name="Future",
             mode="lines",
-            line=dict(color="#94a3b8", width=1.5, dash="dot"),
+            line=dict(color="#6B7280", width=1.5, dash="dot"),
             hovertemplate="<b>Future:</b> %{y:,.2f}<extra></extra>",
         ),
         secondary_y=False,
@@ -950,9 +895,9 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["ce_change"],
             name="CE Change",
             mode="lines",
-            line=dict(color="#22c55e", width=2),
+            line=dict(color="#22C55E", width=2),
             fill="tozeroy",
-            fillcolor="rgba(34, 197, 94, 0.1)",
+            fillcolor="rgba(34, 197, 94, 0.15)",
             hovertemplate="<b>CE Change:</b> %{y:.2f}<extra></extra>",
         ),
         secondary_y=True,
@@ -964,18 +909,17 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["pe_change"],
             name="PE Change",
             mode="lines",
-            line=dict(color="#ef4444", width=2),
+            line=dict(color="#EF4444", width=2),
             fill="tozeroy",
-            fillcolor="rgba(239, 68, 68, 0.1)",
+            fillcolor="rgba(239, 68, 68, 0.15)",
             hovertemplate="<b>PE Change:</b> %{y:.2f}<extra></extra>",
         ),
         secondary_y=True,
     )
 
     fig_decay1.update_layout(
-        paper_bgcolor="#0f172a",
-        plot_bgcolor="#0f172a",
-        font=dict(color="#f1f5f9"),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
         height=420,
         margin=dict(l=20, r=20, t=30, b=30),
         hovermode="x unified",
@@ -985,15 +929,15 @@ def render_stockmojo_premium_decay_tab(current_price):
     )
     fig_decay1.update_yaxes(
         showgrid=True,
-        gridcolor="#1e293b",
-        tickfont=dict(color="#94a3b8"),
+        gridcolor="#E2E8F0",
+        tickfont=dict(color="#475569"),
         secondary_y=False,
     )
     fig_decay1.update_yaxes(
-        showgrid=False, tickfont=dict(color="#94a3b8"), secondary_y=True
+        showgrid=False, tickfont=dict(color="#475569"), secondary_y=True
     )
     fig_decay1.update_xaxes(
-        showgrid=True, gridcolor="#1e293b", tickfont=dict(color="#94a3b8")
+        showgrid=True, gridcolor="#E2E8F0", tickfont=dict(color="#475569")
     )
 
     st.plotly_chart(fig_decay1, use_container_width=True, key="mojo_decay_chg")
@@ -1010,7 +954,7 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["price"],
             name="Future",
             mode="lines",
-            line=dict(color="#94a3b8", width=1.5, dash="dot"),
+            line=dict(color="#6B7280", width=1.5, dash="dot"),
             hovertemplate="<b>Future:</b> %{y:,.2f}<extra></extra>",
         ),
         secondary_y=False,
@@ -1022,7 +966,7 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["ce_price"],
             name="CE",
             mode="lines",
-            line=dict(color="#22c55e", width=2.2),
+            line=dict(color="#22C55E", width=2.2),
             hovertemplate="<b>CE:</b> %{y:.2f}<extra></extra>",
         ),
         secondary_y=True,
@@ -1034,16 +978,15 @@ def render_stockmojo_premium_decay_tab(current_price):
             y=df_hist["pe_price"],
             name="PE",
             mode="lines",
-            line=dict(color="#ef4444", width=2.2),
+            line=dict(color="#EF4444", width=2.2),
             hovertemplate="<b>PE:</b> %{y:.2f}<extra></extra>",
         ),
         secondary_y=True,
     )
 
     fig_decay2.update_layout(
-        paper_bgcolor="#0f172a",
-        plot_bgcolor="#0f172a",
-        font=dict(color="#f1f5f9"),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
         height=420,
         margin=dict(l=20, r=20, t=30, b=30),
         hovermode="x unified",
@@ -1053,15 +996,15 @@ def render_stockmojo_premium_decay_tab(current_price):
     )
     fig_decay2.update_yaxes(
         showgrid=True,
-        gridcolor="#1e293b",
-        tickfont=dict(color="#94a3b8"),
+        gridcolor="#E2E8F0",
+        tickfont=dict(color="#475569"),
         secondary_y=False,
     )
     fig_decay2.update_yaxes(
-        showgrid=False, tickfont=dict(color="#94a3b8"), secondary_y=True
+        showgrid=False, tickfont=dict(color="#475569"), secondary_y=True
     )
     fig_decay2.update_xaxes(
-        showgrid=True, gridcolor="#1e293b", tickfont=dict(color="#94a3b8")
+        showgrid=True, gridcolor="#E2E8F0", tickfont=dict(color="#475569")
     )
 
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
@@ -1161,20 +1104,19 @@ def render_tradingview_lightweight_chart(df, asset_title):
     <head>
         <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
-            body {{ margin: 0; padding: 0; background-color: #0b0f19; overflow: hidden; font-family: sans-serif; }}
+            body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; font-family: sans-serif; }}
             #chart-container {{ width: 100%; height: 500px; }}
             .legend {{
                 position: absolute;
                 top: 10px;
                 left: 10px;
                 z-index: 10;
-                color: #f1f5f9;
+                color: #d1d4dc;
                 font-size: 12px;
-                background: rgba(15, 23, 42, 0.9);
-                padding: 8px 14px;
-                border-radius: 8px;
-                border: 1px solid #334155;
-                backdrop-filter: blur(5px);
+                background: rgba(14, 17, 23, 0.85);
+                padding: 6px 12px;
+                border-radius: 6px;
+                border: 1px solid #374151;
             }}
             .legend span {{ margin-right: 12px; font-weight: bold; }}
         </style>
@@ -1193,21 +1135,21 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 width: container.clientWidth,
                 height: 500,
                 layout: {{
-                    backgroundColor: '#0b0f19',
-                    textColor: '#94a3b8',
+                    backgroundColor: '#0e1117',
+                    textColor: '#d1d4dc',
                 }},
                 grid: {{
-                    vertLines: {{ color: '#1e293b' }},
-                    horzLines: {{ color: '#1e293b' }},
+                    vertLines: {{ color: '#1f2937' }},
+                    horzLines: {{ color: '#1f2937' }},
                 }},
                 crosshair: {{
                     mode: LightweightCharts.CrosshairMode.Normal,
                 }},
                 rightPriceScale: {{
-                    borderColor: '#334155',
+                    borderColor: '#2B2B43',
                 }},
                 timeScale: {{
-                    borderColor: '#334155',
+                    borderColor: '#2B2B43',
                     timeVisible: true,
                     secondsVisible: false,
                 }},
@@ -1272,7 +1214,7 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Ultra-Modern UI Tabs)
+# 🌟 TAB NAVIGATION (Now with Tab 7 added)
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
@@ -1319,7 +1261,7 @@ with tab2:
                 y=df_live_oi["price"],
                 name="Future Price",
                 mode="lines",
-                line=dict(color="#94a3b8", width=1.5, dash="dot"),
+                line=dict(color="#6B7280", width=1.5, dash="dot"),
             ),
             secondary_y=False,
         )
@@ -1329,7 +1271,7 @@ with tab2:
                 y=df_live_oi["change_put_cr"],
                 name="Put OI Change (Cr)",
                 mode="lines+markers",
-                line=dict(color="#ef4444", width=2.5),
+                line=dict(color="#EF4444", width=2.5),
             ),
             secondary_y=True,
         )
@@ -1339,14 +1281,13 @@ with tab2:
                 y=df_live_oi["change_call_cr"],
                 name="Call OI Change (Cr)",
                 mode="lines+markers",
-                line=dict(color="#22c55e", width=2.5),
+                line=dict(color="#22C55E", width=2.5),
             ),
             secondary_y=True,
         )
         fig_line_oic.update_layout(
-            paper_bgcolor="#0f172a",
-            plot_bgcolor="#0f172a",
-            font=dict(color="#f1f5f9"),
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
             height=350,
             margin=dict(l=20, r=20, t=30, b=30),
             hovermode="x unified",
@@ -1363,7 +1304,7 @@ with tab2:
                 y=df_live_oi["price"],
                 name="Future Price",
                 mode="lines",
-                line=dict(color="#94a3b8", width=1.5, dash="dot"),
+                line=dict(color="#6B7280", width=1.5, dash="dot"),
             ),
             secondary_y=False,
         )
@@ -1373,7 +1314,7 @@ with tab2:
                 y=df_live_oi["tot_put_cr"],
                 name="Total Put OI (Cr)",
                 mode="lines+markers",
-                line=dict(color="#22c55e", width=2.5),
+                line=dict(color="#22C55E", width=2.5),
             ),
             secondary_y=True,
         )
@@ -1383,14 +1324,13 @@ with tab2:
                 y=df_live_oi["tot_call_cr"],
                 name="Total Call OI (Cr)",
                 mode="lines+markers",
-                line=dict(color="#ef4444", width=2.5),
+                line=dict(color="#EF4444", width=2.5),
             ),
             secondary_y=True,
         )
         fig_tot_oi.update_layout(
-            paper_bgcolor="#0f172a",
-            plot_bgcolor="#0f172a",
-            font=dict(color="#f1f5f9"),
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
             height=350,
             margin=dict(l=20, r=20, t=30, b=30),
             hovermode="x unified",
@@ -1406,7 +1346,7 @@ with tab3:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='color: #94a3b8; font-size: 14px; margin-top: 5px;'>दुपाः ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम, GIFT Nifty आणि Weighted PCR च्या आधारे पुढील दिवसाचा अंदाज.</p>",
+        "<p style='color: #6c757d; font-size: 14px; margin-top: 5px;'>दुपाः ३:०० ते ३:२० दरम्यानच्या शेवटच्या २० मिनिटांमधील स्मार्ट मनी मोमेंटम, वॉल्यूम, GIFT Nifty आणि Weighted PCR च्या आधारे पुढील दिवसाचा अंदाज.</p>",
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1467,9 +1407,9 @@ with tab3:
     with col1:
         st.markdown(
             f"""
-            <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #334155; border-radius: 12px; padding: 18px;'>
-                <span style='color: #94a3b8; font-size: 13px; font-weight: 600;'>Current Price</span>
-                <h1 style='color: #f8fafc; margin: 10px 0 0 0; font-size: 34px; font-weight: 800;'>{current_price:,.2f}</h1>
+            <div style='background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px;'>
+                <span style='color: #6c757d; font-size: 14px; font-weight: 500;'>Current Price</span>
+                <h1 style='color: #1f2328; margin: 10px 0 0 0; font-size: 38px; font-weight: 800;'>{current_price:,.2f}</h1>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1478,9 +1418,9 @@ with tab3:
     with col2:
         st.markdown(
             f"""
-            <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #334155; border-radius: 12px; padding: 18px;'>
-                <span style='color: #94a3b8; font-size: 13px; font-weight: 600;'>Day High/Low Range</span>
-                <h1 style='color: #f8fafc; margin: 10px 0 0 0; font-size: 28px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{high_val:,.2f} / {low_val:,.2f}</h1>
+            <div style='background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px;'>
+                <span style='color: #6c757d; font-size: 14px; font-weight: 500;'>Day High/Low Range</span>
+                <h1 style='color: #1f2328; margin: 10px 0 0 0; font-size: 32px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{high_val:,.2f} / {low_val:,.2f}</h1>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1489,9 +1429,9 @@ with tab3:
     with col3:
         st.markdown(
             f"""
-            <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #334155; border-radius: 12px; padding: 18px;'>
-                <span style='color: #94a3b8; font-size: 13px; font-weight: 600;'>3:00 - 3:20 Closing Momentum</span>
-                <h1 style='color: #f8fafc; margin: 10px 0 0 0; font-size: 34px; font-weight: 800;'>{momentum_pct}%</h1>
+            <div style='background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px;'>
+                <span style='color: #6c757d; font-size: 14px; font-weight: 500;'>3:00 - 3:20 Closing Momentum Position</span>
+                <h1 style='color: #1f2328; margin: 10px 0 0 0; font-size: 38px; font-weight: 800;'>{momentum_pct}%</h1>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1499,14 +1439,14 @@ with tab3:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    gift_color = "#34d399" if gift_nifty_pts >= 0 else "#f87171"
+    gift_color = "#2e7d32" if gift_nifty_pts >= 0 else "#c62828"
     gift_sign = "+" if gift_nifty_pts >= 0 else ""
 
     c_m1, c_m2 = st.columns(2)
     with c_m1:
         st.markdown(f"**GIFT Nifty / Global Trend (Points +/-):** <span style='color: {gift_color}; font-weight: bold;'>{gift_sign}{gift_nifty_pts} pts (Live)</span>", unsafe_allow_html=True)
     with c_m2:
-        st.markdown(f"**Put-Call Ratio (PCR):** <span style='color: #34d399; font-weight: bold;'>{pcr_val}</span>", unsafe_allow_html=True)
+        st.markdown(f"**Put-Call Ratio (PCR):** <span style='color: #2e7d32; font-weight: bold;'>{pcr_val}</span>", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1514,12 +1454,12 @@ with tab3:
 
     with col_p1:
         st.markdown("🚀 **Gap-Up Probability**", unsafe_allow_html=True)
-        st.markdown(f"<h1 style='font-size: 32px; font-weight: bold; margin-bottom: 5px; color:#34d399;'>{gap_up_prob}%</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='font-size: 36px; font-weight: bold; margin-bottom: 5px; color:#2e7d32;'>{gap_up_prob}%</h1>", unsafe_allow_html=True)
         st.progress(int(gap_up_prob))
 
     with col_p2:
         st.markdown("📉 **Gap-Down Probability**", unsafe_allow_html=True)
-        st.markdown(f"<h1 style='font-size: 32px; font-weight: bold; margin-bottom: 5px; color:#f87171;'>{gap_down_prob}%</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='font-size: 36px; font-weight: bold; margin-bottom: 5px; color:#c62828;'>{gap_down_prob}%</h1>", unsafe_allow_html=True)
         st.progress(int(gap_down_prob))
 
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -1529,20 +1469,20 @@ with tab3:
 
     if gap_up_prob >= 58.0:
         signal_text = f"⚖️ **[Time: {curr_time_str} IST] 3:00-3:20 Smart Money Bullish! GIFT Nifty आणि OI डेटानुसार पुढील दिवशी Gap-Up ओपनिंगची दाट शक्यता आहे.**"
-        box_bg = "linear-gradient(135deg, #064e3b 0%, #022c22 100%)"
-        border_color = "#059669"
+        box_bg = "#e8f4fd"
+        border_color = "#90caf9"
     elif gap_down_prob >= 58.0:
         signal_text = f"⚖️ **[Time: {curr_time_str} IST] 3:00-3:20 Smart Money Bearish! GIFT Nifty आणि OI डेटानुसार पुढील दिवशी Gap-Down ओपनिंगची दाट शक्यता आहे.**"
-        box_bg = "linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%)"
-        border_color = "#dc2626"
+        box_bg = "#fde8e8"
+        border_color = "#f99090"
     else:
         signal_text = f"⚖️ **[Time: {curr_time_str} IST] 3:00-3:20 Smart Money Neutral! मार्केट साईडवेज / फ्लॅट ओपनिंगची शक्यता आहे.**"
-        box_bg = "linear-gradient(135deg, #78350f 0%, #451a03 100%)"
-        border_color = "#d97706"
+        box_bg = "#fff8e1"
+        border_color = "#ffe082"
 
     st.markdown(
         f"""
-        <div style='background: {box_bg}; border: 1px solid {border_color}; border-radius: 12px; padding: 20px; text-align: left; font-size: 16px; color: #f8fafc; box-shadow: 0 4px 15px rgba(0,0,0,0.3);'>
+        <div style='background-color: {box_bg}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; text-align: left; font-size: 16px; color: #1c2d42;'>
             {signal_text}
         </div>
         """,
@@ -1558,8 +1498,8 @@ with tab4:
 
     if is_btc_market:
         st.markdown(
-            "<div style='background-color: #064e3b; color: #34d399; padding: 12px;"
-            " border-radius: 8px; font-weight: bold; border: 1px solid #059669;'>⚡ Direct Binance"
+            "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+            " border-radius: 5px; font-weight: bold;'>⚡ Direct Binance"
             " WebSocket API + Historical SMC Engine Active</div>",
             unsafe_allow_html=True,
         )
@@ -1635,23 +1575,23 @@ with tab6:
 
     if is_btc_market:
         st.markdown(
-            "<div style='background-color: #064e3b; color: #34d399; padding: 12px;"
-            " border-radius: 8px; font-weight: bold; border: 1px solid #059669;'>⚡ Direct Binance"
+            "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+            " border-radius: 5px; font-weight: bold;'>⚡ Direct Binance"
             " WebSocket API Connected for Real-time Order Flow & SMC</div>",
             unsafe_allow_html=True,
         )
     elif is_indian_market:
         if st.session_state.get("smart_api_session") is not None:
             st.markdown(
-                "<div style='background-color: #064e3b; color: #34d399; padding: 12px;"
-                " border-radius: 8px; font-weight: bold; border: 1px solid #059669;'>🟢 Angel One SmartAPI"
+                "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+                " border-radius: 5px; font-weight: bold;'>🟢 Angel One SmartAPI"
                 " Live Connected (Real-Time Indian Market Data)</div>",
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                "<div style='background-color: #78350f; color: #fde68a; padding: 12px;"
-                " border-radius: 8px; font-weight: bold; border: 1px solid #d97706;'>⚠️ Angel One Not Connected - Connect API for Live Institutional Data</div>",
+                "<div style='background-color: #fff3cd; color: #664d03; padding: 10px;"
+                " border-radius: 5px; font-weight: bold;'>⚠️ Angel One Not Connected - Connect API for Live Institutional Data</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1710,7 +1650,7 @@ with tab6:
                 marker_color=colors, name='Cumulative Delta'
             ), row=2, col=1)
 
-            fig_footprint.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), showlegend=False, paper_bgcolor="#0f172a", plot_bgcolor="#0f172a", font=dict(color="#f1f5f9"))
+            fig_footprint.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), showlegend=False, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff")
             st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_chart")
         else:
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
@@ -1744,15 +1684,15 @@ with tab6:
         ssl_level = round(current_price * 0.992, 2)
 
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #064e3b 0%, #022c22 100%); border: 1px solid #059669; padding: 14px; border-radius: 10px; margin-bottom: 12px;">
-            <b style="color: #34d399;">🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b> <br>
-            <span style="font-size: 22px; font-weight: bold; color: #6ee7b7;">{bsl_level}</span> 
-            <small style="color: #cbd5e1;">(इथे Short SLs साचले आहेत)</small>
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+            <b style="color: #166534;">🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b> <br>
+            <span style="font-size: 20px; font-weight: bold; color: #15803d;">{bsl_level}</span> 
+            <small style="color: #4b5563;">(इथे Short SLs साचले आहेत)</small>
         </div>
-        <div style="background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%); border: 1px solid #dc2626; padding: 14px; border-radius: 10px;">
-            <b style="color: #f87171;">🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b> <br>
-            <span style="font-size: 22px; font-weight: bold; color: #fca5a5;">{ssl_level}</span> 
-            <small style="color: #cbd5e1;">(इथे Long SLs साचले आहेत)</small>
+        <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 8px;">
+            <b style="color: #991b1b;">🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b> <br>
+            <span style="font-size: 20px; font-weight: bold; color: #b91c1c;">{ssl_level}</span> 
+            <small style="color: #4b5563;">(इथे Long SLs साचले आहेत)</small>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1802,9 +1742,8 @@ with tab6:
             title="Horizontal Volume Profile",
             height=300,
             margin=dict(l=10, r=10, t=30, b=10),
-            paper_bgcolor="#0f172a",
-            plot_bgcolor="#0f172a",
-            font=dict(color="#f1f5f9"),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
             xaxis_title="Volume",
             yaxis_title="Price Level",
             yaxis=dict(type='category')
@@ -1960,16 +1899,16 @@ with tab7:
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, {'#7f1d1d' if is_down_trend else '#064e3b'} 0%, {'#450a0a' if is_down_trend else '#022c22'} 100%); border: 1px solid {'#dc2626' if is_down_trend else '#059669'}; padding: 16px; border-radius: 10px;">
-            <h4 style="color: {'#f87171' if is_down_trend else '#34d399'}; margin-top: 0;">📊 Institutional Sentiment Meter</h4>
+        <div style="background-color: {'#fef2f2' if is_down_trend else '#f0fdf4'}; border: 1px solid {'#fecaca' if is_down_trend else '#bbf7d0'}; padding: 15px; border-radius: 8px;">
+            <h4 style="color: {'#991b1b' if is_down_trend else '#166534'}; margin-top: 0;">📊 Institutional Sentiment Meter</h4>
             <b>Score:</b> {'42% Bearish (Distribution Active)' if is_down_trend else '68% Bullish (Accumulation Active)'}<br>
             <b>Market Mood:</b> {'Risk-Off (Selling Pressure in Index Futures)' if is_down_trend else 'Risk-On (FII / DII Flow Positive)'}<br>
         </div>
         """, unsafe_allow_html=True)
     with col_g2:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #1e3a8a 0%, #172554 100%); border: 1px solid #2563eb; padding: 16px; border-radius: 10px;">
-            <h4 style="color: #60a5fa; margin-top: 0;">🌐 Global Macro Heatmap</h4>
+        <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 8px;">
+            <h4 style="color: #1e40af; margin-top: 0;">🌐 Global Macro Heatmap</h4>
             <b>US Dollar Index (DXY):</b> Bearish (-0.35%) → Favorable for Gold, Crypto & Emerging Markets<br>
             <b>US 10Y Bond Yield:</b> Stable / Cooling → Supports Equity Breakouts<br>
         </div>
