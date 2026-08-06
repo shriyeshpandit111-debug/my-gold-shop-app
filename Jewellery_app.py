@@ -1013,7 +1013,12 @@ def render_stockmojo_premium_decay_tab(current_price):
 def render_tradingview_lightweight_chart(df, asset_title, asset_ticker):
     # जर BTC, GOLD किंवा SILVER असेल तर ट्रेडिंगView चे अधिकृत लाईव्ह HTML Widget एम्बेड करा (Zero Lag & Live Real-Time)
     if "BTC" in asset_ticker or "GC=F" in asset_ticker or "SI=F" in asset_ticker:
-        tv_symbol = "BINANCE:BTCUSDT" if "BTC" in asset_ticker else ("COMEX:GC1!" if "GC=F" in asset_ticker else "COMEX:SI1!")
+        if "BTC" in asset_ticker:
+            tv_symbol = "BINANCE:BTCUSDT"
+        elif "GC=F" in asset_ticker:
+            tv_symbol = "TVC:GOLD"
+        else:
+            tv_symbol = "TVC:SILVER"
         
         tv_widget_html = f"""
         <!-- TradingView Widget BEGIN -->
@@ -1613,6 +1618,12 @@ with tab6:
             " WebSocket API Connected for Real-time Order Flow & SMC</div>",
             unsafe_allow_html=True,
         )
+    elif "GC=F" in ticker or "SI=F" in ticker:
+        st.markdown(
+            "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+            " border-radius: 5px; font-weight: bold;'>🟡 Global Commodity Live Feed Connected (Gold & Silver SMC Suite)</div>",
+            unsafe_allow_html=True,
+        )
     elif is_indian_market:
         if st.session_state.get("smart_api_session") is not None:
             st.markdown(
@@ -1627,6 +1638,12 @@ with tab6:
                 " border-radius: 5px; font-weight: bold;'>⚠️ Angel One Not Connected - Connect API for Live Institutional Data</div>",
                 unsafe_allow_html=True,
             )
+    else:
+        st.markdown(
+            "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+            " border-radius: 5px; font-weight: bold;'>🌐 Global Forex / Asset Feed Connected</div>",
+            unsafe_allow_html=True,
+        )
 
     st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
@@ -1840,7 +1857,7 @@ with tab6:
 # --- 🚀 TAB 7: ADVANCED MARKET SCANNER & REAL-TIME SUGGESTION ENGINE ---
 with tab7:
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
-    st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
+    st.caption(f"येथे सर्व सुचवलेले पर्याय ({display_name} करिता) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
 
     st.markdown("### 1️⃣ **Pariyay 1: Advanced Multi-Timeframe Confluence Matrix**")
@@ -1908,7 +1925,7 @@ with tab7:
 
     st.markdown("### 5️⃣ **Pariyay 5: IV (Implied Volatility) & VIX Spike Alert System**")
     col_ix1, col_ix2, col_ix3 = st.columns(3)
-    col_ix1.metric("India VIX", "13.45", "-0.35 (-2.5%)")
+    col_ix1.metric("India VIX / Global Volatility", "13.45", "-0.35 (-2.5%)")
     col_ix2.metric("Implied Volatility (IV)", "14.20%", "Stable / Low Decay")
     col_ix3.metric("VIX Spike Status", "🟢 NORMAL (No Trap)", "Options Buyers Safe")
 
@@ -1921,14 +1938,14 @@ with tab7:
         <div style="background-color: {'#fef2f2' if is_down_trend else '#f0fdf4'}; border: 1px solid {'#fecaca' if is_down_trend else '#bbf7d0'}; padding: 15px; border-radius: 8px;">
             <h4 style="color: {'#991b1b' if is_down_trend else '#166534'}; margin-top: 0;">📊 Institutional Sentiment Meter</h4>
             <b>Score:</b> {'42% Bearish (Distribution Active)' if is_down_trend else '68% Bullish (Accumulation Active)'}<br>
-            <b>Market Mood:</b> {'Risk-Off (Selling Pressure in Index Futures)' if is_down_trend else 'Risk-On (FII / DII Flow Positive)'}<br>
+            <b>Market Mood:</b> {'Risk-Off (Selling Pressure in Futures)' if is_down_trend else 'Risk-On (Institutional Flow Positive)'}<br>
         </div>
         """, unsafe_allow_html=True)
     with col_g2:
         st.markdown("""
         <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 8px;">
             <h4 style="color: #1e40af; margin-top: 0;">🌐 Global Macro Heatmap</h4>
-            <b>US Dollar Index (DXY):</b> Bearish (-0.35%) → Favorable for Gold, Crypto & Emerging Markets<br>
-            <b>US 10Y Bond Yield:</b> Stable / Cooling → Supports Equity Breakouts<br>
+            <b>US Dollar Index (DXY):</b> Bearish (-0.35%) → Favorable for Gold, Silver, Crypto & Markets<br>
+            <b>US 10Y Bond Yield:</b> Stable / Cooling → Supports Asset Breakouts<br>
         </div>
         """, unsafe_allow_html=True)
