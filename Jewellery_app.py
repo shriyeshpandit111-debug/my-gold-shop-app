@@ -1069,7 +1069,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
-    # --- 🛠️ सुधारित लॉजिक: फक्त मागील ५ कॅन्डलऐवजी संपूर्ण उपलब्ध डेटा किंवा मागील मजबूत हाय-लोचा वापर ---
     lookback_window = min(len(df_calc), 75)
     stable_high = df_calc['high'].iloc[-lookback_window:].max()
     stable_low = df_calc['low'].iloc[-lookback_window:].min()
@@ -1186,6 +1185,34 @@ def render_tradingview_lightweight_chart(df, asset_title):
     components.html(html_code, height=520, scrolling=False)
 
 
+# --- TradingView Widget function for other assets ---
+def render_tv_widget(symbol, title):
+    widget_html = f"""
+    <div class="tradingview-widget-container">
+      <div id="tradingview_{symbol}"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget({{
+      "width": "100%",
+      "height": 400,
+      "symbol": "{symbol}",
+      "interval": "D",
+      "timezone": "Asia/Kolkata",
+      "theme": "dark",
+      "style": "1",
+      "locale": "en",
+      "toolbar_bg": "#f1f3f6",
+      "enable_publishing": false,
+      "allow_symbol_change": true,
+      "container_id": "tradingview_{symbol}"
+      }});
+      </script>
+    </div>
+    """
+    st.markdown(f"### {title}")
+    components.html(widget_html, height=420)
+
+
 df_ltf = None
 with st.spinner("डेटा लोड होत आहे..."):
     daily_trend = get_daily_trend(ticker)
@@ -1236,6 +1263,7 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
+    # मूळ चार्ट विभाग
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
     st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
     
@@ -1250,6 +1278,21 @@ with tab2:
     
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
+
+    # नवीन जोडलेले चार्ट्स
+    st.markdown("---")
+    st.markdown("### 🌎 Global Asset Live Charts")
+    c1, c2 = st.columns(2)
+    with c1:
+        render_tv_widget("TVC:GOLD", "Gold Live Chart")
+    with c2:
+        render_tv_widget("TVC:SILVER", "Silver Live Chart")
+    
+    c3, c4 = st.columns(2)
+    with c3:
+        render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
+    with c4:
+        render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
@@ -1658,7 +1701,7 @@ with tab6:
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
 
     with col_of2:
-        st.markdown("##### **🔍 Live Footprint Insights**")
+        st.markdown("##### 🔍 Live Footprint Insights")
         if df_ltf is not None and not df_ltf.empty:
             last_buy = int(df_of['buy_vol'].iloc[-1])
             last_sell = int(df_of['sell_vol'].iloc[-1])
