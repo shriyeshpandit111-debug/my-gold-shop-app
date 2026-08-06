@@ -1175,9 +1175,15 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {ob_lines_js}
             {fvg_lines_js}
 
+            // --- दुरुस्ती: टॅब स्विच केल्यावर किंवा विंदू रीसाईज झाल्यावर चार्ट ऑटोमॅटिक अड्जस्ट होईल ---
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
             }});
+            
+            // टॅब लोड झाल्यावर लगेच रीसाईज इव्हेंट ट्रिगर करण्यासाठी
+            setTimeout(() => {{
+                window.dispatchEvent(new Event('resize'));
+            500}});
         </script>
     </body>
     </html>
