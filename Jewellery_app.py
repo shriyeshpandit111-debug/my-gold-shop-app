@@ -239,7 +239,7 @@ if market_type == "यादीमधून निवडा":
     ticker_map = {
         "NIFTY 50 (NSE)": "^NSEI",
         "BANK NIFTY (NSE)": "^NSEBANK",
-        "BTC (Bitcoin)": "BTC-USD",
+        "BTC (Bitcoin)": "BTCUSDT",
         "GOLD (सोने)": "GC=F",
         "SILVER (चांदी)": "SI=F",
     }
@@ -1010,7 +1010,39 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
-def render_tradingview_lightweight_chart(df, asset_title):
+def render_tradingview_lightweight_chart(df, asset_title, asset_ticker):
+    # जर BTC, GOLD किंवा SILVER असेल तर ट्रेडिंगView चे अधिकृत लाईव्ह HTML Widget एम्बेड करा (Zero Lag & Live Real-Time)
+    if "BTC" in asset_ticker or "GC=F" in asset_ticker or "SI=F" in asset_ticker:
+        tv_symbol = "BINANCE:BTCUSDT" if "BTC" in asset_ticker else ("COMEX:GC1!" if "GC=F" in asset_ticker else "COMEX:SI1!")
+        
+        tv_widget_html = f"""
+        <!-- TradingView Widget BEGIN -->
+        <div class="tradingview-widget-container" style="height:500px;width:100%">
+          <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+          {{
+            "width": "100%",
+            "height": "500",
+            "symbol": "{tv_symbol}",
+            "interval": "D",
+            "timezone": "Asia/Kolkata",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "enable_publishing": false,
+            "hide_top_toolbar": false,
+            "save_image": false,
+            "calendar": false,
+            "support_host": "https://www.tradingview.com"
+          }}
+          </script>
+        </div>
+        <!-- TradingView Widget END -->
+        """
+        components.html(tv_widget_html, height=520, scrolling=False)
+        return
+
+    # इतरांसाठी पूर्वीप्रमाणे Lightweight Chart
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
         return
@@ -1069,7 +1101,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
-    # --- 🛠️ सुधारित लॉजिक: फक्त मागील ५ कॅन्डलऐवजी संपूर्ण उपलब्ध डेटा किंवा मागील मजबूत हाय-लोचा वापर ---
     lookback_window = min(len(df_calc), 75)
     stable_high = df_calc['high'].iloc[-lookback_window:].max()
     stable_low = df_calc['low'].iloc[-lookback_window:].min()
@@ -1249,7 +1280,7 @@ with tab2:
         )
     
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market)
-    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
+    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name, ticker)
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
