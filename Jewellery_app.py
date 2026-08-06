@@ -1019,13 +1019,13 @@ def render_tradingview_lightweight_chart(df, asset_title):
     col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
     
     with col_t1:
-        show_ob = st.checkbox("Order Blocks (OB)", value=True, key=f"toggle_ob_{asset_title}")
+        show_ob = st.checkbox("Order Blocks (OB)", value=True, key="toggle_ob")
     with col_t2:
-        show_liq = st.checkbox("BSL / SSL Liquidity", value=True, key=f"toggle_liq_{asset_title}")
+        show_liq = st.checkbox("BSL / SSL Liquidity", value=True, key="toggle_liq")
     with col_t3:
-        show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key=f"toggle_fvg_{asset_title}")
+        show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key="toggle_fvg")
     with col_t4:
-        show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key=f"toggle_choch_{asset_title}")
+        show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key="toggle_choch")
     with col_t5:
         show_legend = st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1235,9 +1235,8 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
-    # 🌟 येथे फक्त निवडलेल्या मार्केटचा (Asset) Chart Overlay Toggles आणि HTML Widget दिसेल
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
-    st.caption(f"निवडलेल्या **{display_name}** ॲसेटसाठी अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
@@ -1255,7 +1254,7 @@ with tab2:
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
         df_live_oi = st.session_state["oi_history"]
         
-        st.markdown(f"### 📈 **1. Real-Time Change in OI for {display_name} (Call vs Put)**")
+        st.markdown("### 📈 **1. Real-Time Change in OI for BANK NIFTY (NSE) (Call vs Put)**")
         fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
         fig_line_oic.add_trace(
             go.Scatter(
@@ -1298,7 +1297,7 @@ with tab2:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown(f"### 📊 **2. Total Open Interest Trend for {display_name} (Call vs Put)**")
+        st.markdown("### 📊 **2. Total Open Interest Trend for BANK NIFTY (NSE) (Call vs Put)**")
         fig_tot_oi = make_subplots(specs=[[{"secondary_y": True}]])
         fig_tot_oi.add_trace(
             go.Scatter(
