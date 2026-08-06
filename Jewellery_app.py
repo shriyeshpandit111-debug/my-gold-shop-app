@@ -1069,6 +1069,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
         except Exception:
             continue
 
+    # --- 🛠️ सुधारित लॉजिक: फक्त मागील ५ कॅन्डलऐवजी संपूर्ण उपलब्ध डेटा किंवा मागील मजबूत हाय-लोचा वापर ---
     lookback_window = min(len(df_calc), 75)
     stable_high = df_calc['high'].iloc[-lookback_window:].max()
     stable_low = df_calc['low'].iloc[-lookback_window:].min()
@@ -1175,15 +1176,9 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {ob_lines_js}
             {fvg_lines_js}
 
-            // --- दुरुस्ती: टॅब स्विच केल्यावर किंवा विंदू रीसाईज झाल्यावर चार्ट ऑटोमॅटिक अड्जस्ट होईल ---
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
             }});
-            
-            // टॅब लोड झाल्यावर लगेच रीसाईज इव्हेंट ट्रिगर करण्यासाठी
-            setTimeout(() => {{
-                window.dispatchEvent(new Event('resize'));
-            500}});
         </script>
     </body>
     </html>
@@ -1260,7 +1255,7 @@ with tab2:
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
         df_live_oi = st.session_state["oi_history"]
         
-        st.markdown("### 📈 **1. Real-Time Change in OI for BANK NIFTY (NSE) (Call vs Put)**")
+        st.markdown("### 📈 **1. Real-Time Change in OI (Call vs Put)**")
         fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
         fig_line_oic.add_trace(
             go.Scatter(
@@ -1303,7 +1298,7 @@ with tab2:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("### 📊 **2. Total Open Interest Trend for BANK NIFTY (NSE) (Call vs Put)**")
+        st.markdown("### 📊 **2. Total Open Interest Trend (Call vs Put)**")
         fig_tot_oi = make_subplots(specs=[[{"secondary_y": True}]])
         fig_tot_oi.add_trace(
             go.Scatter(
