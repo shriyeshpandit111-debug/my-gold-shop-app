@@ -1185,34 +1185,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
     components.html(html_code, height=520, scrolling=False)
 
 
-# --- TradingView Widget function for other assets ---
-def render_tv_widget(symbol, title):
-    widget_html = f"""
-    <div class="tradingview-widget-container">
-      <div id="tradingview_{symbol}"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-      new TradingView.widget({{
-      "width": "100%",
-      "height": 400,
-      "symbol": "{symbol}",
-      "interval": "D",
-      "timezone": "Asia/Kolkata",
-      "theme": "dark",
-      "style": "1",
-      "locale": "en",
-      "toolbar_bg": "#f1f3f6",
-      "enable_publishing": false,
-      "allow_symbol_change": true,
-      "container_id": "tradingview_{symbol}"
-      }});
-      </script>
-    </div>
-    """
-    st.markdown(f"### {title}")
-    components.html(widget_html, height=420)
-
-
 df_ltf = None
 with st.spinner("डेटा लोड होत आहे..."):
     daily_trend = get_daily_trend(ticker)
@@ -1263,9 +1235,9 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
-    # मूळ चार्ट विभाग
+    # 🌟 येथे फक्त निवडलेल्या मार्केटचा (Asset) Chart Overlay Toggles आणि HTML Widget दिसेल[cite: 3]
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
+    st.caption(f"निवडलेल्या **{display_name}** ॲसेटसाठी अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
@@ -1279,26 +1251,11 @@ with tab2:
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
-    # नवीन जोडलेले चार्ट्स
-    st.markdown("---")
-    st.markdown("### 🌎 Global Asset Live Charts")
-    c1, c2 = st.columns(2)
-    with c1:
-        render_tv_widget("TVC:GOLD", "Gold Live Chart")
-    with c2:
-        render_tv_widget("TVC:SILVER", "Silver Live Chart")
-    
-    c3, c4 = st.columns(2)
-    with c3:
-        render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
-    with c4:
-        render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
-
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
         df_live_oi = st.session_state["oi_history"]
         
-        st.markdown("### 📈 **1. Real-Time Change in OI (Call vs Put)**")
+        st.markdown(f"### 📈 **1. Real-Time Change in OI for {display_name} (Call vs Put)**")
         fig_line_oic = make_subplots(specs=[[{"secondary_y": True}]])
         fig_line_oic.add_trace(
             go.Scatter(
@@ -1341,7 +1298,7 @@ with tab2:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown("### 📊 **2. Total Open Interest Trend (Call vs Put)**")
+        st.markdown(f"### 📊 **2. Total Open Interest Trend for {display_name} (Call vs Put)**")
         fig_tot_oi = make_subplots(specs=[[{"secondary_y": True}]])
         fig_tot_oi.add_trace(
             go.Scatter(
@@ -1701,7 +1658,7 @@ with tab6:
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
 
     with col_of2:
-        st.markdown("##### 🔍 Live Footprint Insights")
+        st.markdown("##### **🔍 Live Footprint Insights**")
         if df_ltf is not None and not df_ltf.empty:
             last_buy = int(df_of['buy_vol'].iloc[-1])
             last_sell = int(df_of['sell_vol'].iloc[-1])
