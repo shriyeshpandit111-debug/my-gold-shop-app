@@ -1027,12 +1027,16 @@ def render_tradingview_lightweight_chart(df, asset_title):
     with col_t4:
         show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key="toggle_choch")
     with col_t5:
-        show_legend = st.markdown("<br>", unsafe_allow_html=True)
+        show_vwap = st.checkbox("VWAP (Volume Weighted)", value=True, key="toggle_vwap")
 
     tv_candles = []
+    tv_vwap = []
     markers = []
 
     df_calc = add_indicators(df.copy())
+    df_calc["typical_price"] = (df_calc["high"] + df_calc["low"] + df_calc["close"]) / 3
+    df_calc["vwap"] = (df_calc["typical_price"] * df_calc["volume"]).cumsum() / df_calc["volume"].cumsum()
+    df_calc["vwap"] = df_calc["vwap"].fillna(df_calc["close"])
     
     for i in range(len(df_calc)):
         r = df_calc.iloc[i]
@@ -1044,6 +1048,11 @@ def render_tradingview_lightweight_chart(df, asset_title):
                 "high": float(r["high"]),
                 "low": float(r["low"]),
                 "close": float(r["close"])
+            })
+
+            tv_vwap.append({
+                "time": time_val,
+                "value": float(r["vwap"])
             })
 
             if show_choch and i >= 10:
@@ -1084,6 +1093,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
 
     candles_json = json.dumps(tv_candles)
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
+    vwap_json = json.dumps(tv_vwap)
 
     bsl_line_js = f"""
     candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }});
@@ -1098,6 +1108,15 @@ def render_tradingview_lightweight_chart(df, asset_title):
     fvg_lines_js = f"""
     candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
     """ if show_fvg else ""
+
+    vwap_series_js = f"""
+    const vwapSeries = chart.addLineSeries({{
+        color: '#2962FF',
+        lineWidth: 2,
+        title: 'VWAP',
+    }});
+    vwapSeries.setData({vwap_json});
+    """ if show_vwap else ""
 
     html_code = f"""
     <!DOCTYPE html>
@@ -1128,6 +1147,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
             {"<span style='color: #3b82f6;'>💧 BSL: " + str(bsl_price) + "</span>" if show_liq else ""}
             {"<span style='color: #f59e0b;'>💧 SSL: " + str(ssl_price) + "</span>" if show_liq else ""}
+            {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
         </div>
         <div id="chart-container"></div>
         <script>
@@ -1174,6 +1194,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {bsl_line_js}
             {ob_lines_js}
             {fvg_lines_js}
+            {vwap_series_js}
 
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
@@ -1264,8 +1285,8 @@ with tab1:
 
 with tab2:
     # मूळ चार्ट विभाग
-    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps आणि BUY/SELL CHOCH सिग्नल असलेला लाईव्ह चार्ट.")
+    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps, BUY/SELL CHOCH सिग्नल आणि VWAP इंडिकेटर असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
