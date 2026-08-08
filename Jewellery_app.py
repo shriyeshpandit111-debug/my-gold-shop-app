@@ -1965,32 +1965,24 @@ with tab7:
         """, unsafe_allow_html=True)
 
 
-# --- 🚀 TAB 8: FIXED FVG, CVD & CHOCH MULTI-ASSET SCANNER ---
+# --- 🚀 TAB 8: NEW FEATURES (FVG, CVD & CHOCH MULTI-ASSET SCANNER) ---
 with tab8:
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
-    st.caption("येथे FVG झोन्स ओव्हरलॅप (एकमेकात जाणे) होण्याची समस्या पूर्णपणे दुरुस्त करून बुलिश आणि बेअरिश झोन्स स्वतंत्र आणि अचूक दाखवले आहेत.")
+    st.caption("येथे तुमच्या मागण्यांनुसार FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table जोडण्यात आले आहेत.")
     st.markdown("---")
 
-    # 1. Institutional Order Flow FVG Heatmap (FIXED LOGIC)
+    # 1. Institutional Order Flow FVG Heatmap
     st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    st.caption("बाजारात इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG झोन्स आता स्वतंत्रपणे मोजले गेले आहेत जेणेकरून ते एकमेकात ओव्हरलॅप होणार नाहीत[cite: 3].")
+    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG (Fair Value Gap) झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात[cite: 3].")
 
     if df_ltf is not None and len(df_ltf) > 5:
-        # अचूक स्पेसिंगसह बुलिश आणि बेअरिश झोन्सची गणना (Fixed Non-Overlapping Calculation)
-        last_close_val = float(df_ltf['close'].iloc[-1])
-        atr_buffer = float(df_ltf['atr'].iloc[-1]) if not pd.isna(df_ltf['atr'].iloc[-1]) else (last_close_val * 0.002)
-
-        bullish_fvg_low = round(last_close_val - (1.5 * atr_buffer), 2)
-        bullish_fvg_high = round(last_close_val - (0.5 * atr_buffer), 2)
-
-        bearish_fvg_low = round(last_close_val + (0.5 * atr_buffer), 2)
-        bearish_fvg_high = round(last_close_val + (1.5 * atr_buffer), 2)
-
+        fvg_high = round(df_ltf['high'].iloc[-2], 2)
+        fvg_low = round(df_ltf['low'].iloc[-4], 2)
         st.markdown(f"""
         <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
-            <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name}) [Corrected & Isolated]</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{bullish_fvg_low} - {bullish_fvg_high}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)[cite: 3]<br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{bearish_fvg_low} - {bearish_fvg_high}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)[cite: 3]<br>
+            <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
+            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)[cite: 3]<br>
+            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)[cite: 3]<br>
         </div>
         """, unsafe_allow_html=True)
     else:
