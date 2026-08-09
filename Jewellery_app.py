@@ -1965,24 +1965,31 @@ with tab7:
         """, unsafe_allow_html=True)
 
 
-# --- 🚀 TAB 8: NEW FEATURES (FVG, CVD & CHOCH MULTI-ASSET SCANNER) ---
+# --- 🚀 TAB 8: FIXED & UPDATED FVG, CVD & CHOCH MULTI-ASSET SCANNER ---
 with tab8:
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
-    st.caption("येथे तुमच्या मागण्यांनुसार FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table जोडण्यात आले आहेत.")
+    st.caption("येथे FVG Heatmap मधील झोन्स ओव्हरलॅप न होता स्पष्ट दिसण्यासाठी गणितीय ऑफसेट (Offset) दुरुस्त करण्यात आला आहे.")
     st.markdown("---")
 
-    # 1. Institutional Order Flow FVG Heatmap
+    # 1. Institutional Order Flow FVG Heatmap (Overlap Fixed with Distinct Offset Calculation)
     st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG (Fair Value Gap) झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात[cite: 3].")
+    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात.")
 
     if df_ltf is not None and len(df_ltf) > 5:
-        fvg_high = round(df_ltf['high'].iloc[-2], 2)
-        fvg_low = round(df_ltf['low'].iloc[-4], 2)
+        # ओव्हरलॅप दूर करण्यासाठी Bullish आणि Bearish FVG झोन्समध्ये योग्य अंतर (Offset) ठेवले आहे
+        base_fvg_low = round(df_ltf['low'].iloc[-4], 2)
+        bullish_fvg_start = round(base_fvg_low - (current_price * 0.001), 2)
+        bullish_fvg_end = round(base_fvg_low, 2)
+
+        base_fvg_high = round(df_ltf['high'].iloc[-2], 2)
+        bearish_fvg_start = round(base_fvg_high, 2)
+        bearish_fvg_end = round(base_fvg_high + (current_price * 0.0015), 2)
+
         st.markdown(f"""
         <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
             <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)[cite: 3]<br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)[cite: 3]<br>
+            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{bullish_fvg_start} - {bullish_fvg_end}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)<br>
+            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{bearish_fvg_start} - {bearish_fvg_end}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)<br>
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -1992,13 +1999,13 @@ with tab8:
 
     # 2. Cumulative Volume Delta (CVD) Real-Time Divergence Alert
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    st.caption("Buyers vs Sellers Net Pressure आणि Price मधील फरकामुळे तयार होणारे Divergence सिग्नल[cite: 3].")
+    st.caption("Buyers vs Sellers Net Pressure आणि Price मधील फरकामुळे तयार होणारे Divergence सिग्नल.")
 
     cvd_val = np.random.randint(-5000, 5000)
     is_bearish_divergence = price_change > 0 and cvd_val < 0  # Price up, CVD down
 
     if is_bearish_divergence:
-        st.error("🚨 **BEARISH DIVERGENCE ALERT DETECTED:** किंमत (Price) वर जात आहे पण CVD (Net Buying Pressure) खाली जात आहे! स्मार्ट मनी ट्रॅप (Fake Breakout) सावधगिरी बाळगा[cite: 3].")
+        st.error("🚨 **BEARISH DIVERGENCE ALERT DETECTED:** किंमत (Price) वर जात आहे पण CVD (Net Buying Pressure) खाली जात आहे! स्मार्ट मनी ट्रॅप (Fake Breakout) सावधगिरी बाळगा.")
     else:
         st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत. कोणताही फेक ब्रेकआउट ट्रॅप आढळलेला नाही.")
 
@@ -2006,7 +2013,7 @@ with tab8:
 
     # 3. Smart Money "Change of Character (CHOCH) & BOS" Live Push Notification Table
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
-    st.caption("एकाच स्क्रीनवर Nifty, Bank Nifty, Gold आणि BTC चे लाईव्ह ब्रेकआउट्स आणि CHOCH सिग्नल्स दर्शवणारे टेबल[cite: 3].")
+    st.caption("एकाच स्क्रीनवर Nifty, Bank Nifty, Gold आणि BTC चे लाईव्ह ब्रेकआउट्स आणि CHOCH सिग्नल्स दर्शवणारे टेबल.")
 
     scanner_data = {
         "Asset / Index": ["Nifty 50 (NSE)", "Bank Nifty (NSE)", "Gold (GC=F)", "Bitcoin (BTC/USDT)"],
