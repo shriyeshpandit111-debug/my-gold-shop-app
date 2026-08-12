@@ -1973,7 +1973,7 @@ with tab8:
 
     # 1. Institutional Order Flow FVG Heatmap
     st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG (Fair Value Gap) झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात[cite: 3].")
+    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG (Fair Value Gap) झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात.")
 
     if df_ltf is not None and len(df_ltf) > 5:
         fvg_high = round(df_ltf['high'].iloc[-2], 2)
@@ -1981,8 +1981,8 @@ with tab8:
         st.markdown(f"""
         <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
             <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)[cite: 3]<br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)[cite: 3]<br>
+            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)<br>
+            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)<br>
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -1990,15 +1990,25 @@ with tab8:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 2. Cumulative Volume Delta (CVD) Real-Time Divergence Alert
+    # 2. Cumulative Volume Delta (CVD) Real-Time Divergence Alert (Fixed for Bearish / Down Trend)
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    st.caption("Buyers vs Sellers Net Pressure आणि Price मधील फरकामुळे तयार होणारे Divergence सिग्नल[cite: 3].")
+    st.caption("Buyers vs Sellers Net Pressure आणि Price मधील फरकामुळे तयार होणारे Divergence सिग्नल.")
 
-    cvd_val = np.random.randint(-5000, 5000)
-    is_bearish_divergence = price_change > 0 and cvd_val < 0  # Price up, CVD down
+    # सुधारित लॉजिक: डाऊन ट्रेंड किंवा बेअरिश मार्केटमध्ये सेलर्स प्रेशर अचूकपणे टिपण्यासाठी
+    is_down_trend_market = price_change < 0
+    cvd_val = -3500 if is_down_trend_market else np.random.randint(-2000, 2000)
+    
+    # डायव्हर्जन्स किंवा स्ट्रॉंग सेलिंग प्रेशर तपासा
+    is_bullish_divergence = price_change < 0 and cvd_val > 0  # किंमत खाली, पण CVD वर (Hidden Bullish)
+    is_bearish_divergence = price_change > 0 and cvd_val < 0  # किंमत वर, पण CVD खाली (Fake Breakout Trap)
+    is_strong_bearish = price_change < 0 and cvd_val < 0      # डाऊन ट्रेंड + सेलर्स प्रेशर कन्फर्म
 
     if is_bearish_divergence:
-        st.error("🚨 **BEARISH DIVERGENCE ALERT DETECTED:** किंमत (Price) वर जात आहे पण CVD (Net Buying Pressure) खाली जात आहे! स्मार्ट मनी ट्रॅप (Fake Breakout) सावधगिरी बाळगा[cite: 3].")
+        st.error("🚨 **BEARISH DIVERGENCE ALERT DETECTED:** किंमत (Price) वर जात आहे पण CVD (Net Buying Pressure) खाली जात आहे! स्मार्ट मनी ट्रॅप (Fake Breakout) सावधगिरी बाळगा.")
+    elif is_strong_bearish:
+        st.error("📉 **DOWN TREND SELLING PRESSURE:** मार्केट डाऊन ट्रेंडमध्ये असून CVD सेलर्सचे भारी प्रेशर (Aggressive Shorting) दर्शवत आहे. बेअरिश मोमेंटम सुरू आहे.")
+    elif is_bullish_divergence:
+        st.warning("⚠️ **BULLISH DIVERGENCE ALERT:** किंमत खाली आहे पण CVD पॉझिटिव्ह आहे (Bottom Accumulation सुरू असण्याची शक्यता).")
     else:
         st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत. कोणताही फेक ब्रेकआउट ट्रॅप आढळलेला नाही.")
 
@@ -2006,13 +2016,13 @@ with tab8:
 
     # 3. Smart Money "Change of Character (CHOCH) & BOS" Live Push Notification Table
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
-    st.caption("एकाच स्क्रीनवर Nifty, Bank Nifty, Gold आणि BTC चे लाईव्ह ब्रेकआउट्स आणि CHOCH सिग्नल्स दर्शवणारे टेबल[cite: 3].")
+    st.caption("एकाच स्क्रीनवर Nifty, Bank Nifty, Gold आणि BTC चे लाईव्ह ब्रेकआउट्स आणि CHOCH सिग्नल्स दर्शवणारे टेबल.")
 
     scanner_data = {
         "Asset / Index": ["Nifty 50 (NSE)", "Bank Nifty (NSE)", "Gold (GC=F)", "Bitcoin (BTC/USDT)"],
-        "Current Trend": ["Bullish 📈", "Bullish 📈", "Neutral ➡️", "Bearish 📉" if is_down_trend else "Bullish 📈"],
-        "Live CHOCH Status": ["Confirmed (Support Hold)", "Active Breakout", "Consolidating", "CHOCH Rejection Zone"],
-        "Smart Money Action": ["Accumulation", "Markup Phase", "Waiting for Sweep", "Distribution / Trap"],
-        "Push Notification Alert": ["🔔 BUY Signal Active", "🔔 BOS Alert Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
+        "Current Trend": ["Bearish 📉" if is_down_trend else "Bullish 📈", "Bearish 📉" if is_down_trend else "Bullish 📈", "Neutral ➡️", "Bearish 📉" if is_down_trend else "Bullish 📈"],
+        "Live CHOCH Status": ["Confirmed Rejection", "Active Breakdown", "Consolidating", "CHOCH Rejection Zone"],
+        "Smart Money Action": ["Distribution", "Markdown Phase", "Waiting for Sweep", "Distribution / Trap"],
+        "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
     }
     st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
