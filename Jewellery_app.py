@@ -416,10 +416,10 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
     }
 
 
-def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
+def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     smart_api = st.session_state.get("smart_api_session", None)
 
-    if is_indian and smart_api:
+    if is_indian and smart_api and target_tf not in ["1h", "4h", "1d"]:
         try:
             token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
             interval_map = {
@@ -428,12 +428,11 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
                 "5m": "FIVE_MINUTE",
                 "15m": "FIFTEEN_MINUTE",
                 "30m": "THIRTY_MINUTE",
-                "1h": "ONE_HOUR",
-                "1d": "ONE_DAY",
             }
             angel_tf = interval_map.get(target_tf, "ONE_MINUTE")
 
-            from_date = (datetime.now() - timedelta(days=5)).strftime(
+            days_back = 30 if "mo" in custom_period or "y" in custom_period else 5
+            from_date = (datetime.now() - timedelta(days=days_back)).strftime(
                 "%Y-%m-%d %H:%M"
             )
             to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -458,9 +457,9 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
 
     try:
         source_interval, period = (
-            ("1m", "7d")
+            ("1m", custom_period)
             if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
-            else ("5m", "1mo")
+            else ("1h" if target_tf in ["1h", "4h"] else "1d", "max" if "y" in custom_period else custom_period)
         )
         data = yf.download(
             tickers=ticker_symbol,
@@ -503,7 +502,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False):
         }
         resample_rule = tf_map.get(target_tf, "1min")
         
-        if resample_rule != "1min":
+        if resample_rule != "1min" and target_tf not in ["1h", "4h", "1d"]:
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1016,20 +1015,47 @@ def render_tradingview_lightweight_chart(df, asset_title):
         return
 
     st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
+    
+    # Custom names state initialization for Tab 2 features
+    if "name_ob" not in st.session_state:
+        st.session_state["name_ob"] = "Order Blocks (OB)"
+    if "name_liq" not in st.session_state:
+        st.session_state["name_liq"] = "BSL / SSL Liquidity"
+    if "name_fvg" not in st.session_state:
+        st.session_state["name_fvg"] = "FVG (Fair Value Gaps)"
+    if "name_choch" not in st.session_state:
+        st.session_state["name_choch"] = "BUY / SELL CHOCH"
+    if "name_vwap" not in st.session_state:
+        st.session_state["name_vwap"] = "VWAP"
+    if "name_yt" not in st.session_state:
+        st.session_state["name_yt"] = "🎯 YouTube Strategy Lines"
+
+    with st.expander("✏️ Customize Feature Names (वैशिष्ट्यांचे नाव बदला)", expanded=False):
+        c_n1, c_n2, c_n3 = st.columns(3)
+        with c_n1:
+            st.session_state["name_ob"] = st.text_input("OB Name", value=st.session_state["name_ob"])
+            st.session_state["name_liq"] = st.text_input("Liquidity Name", value=st.session_state["name_liq"])
+        with c_n2:
+            st.session_state["name_fvg"] = st.text_input("FVG Name", value=st.session_state["name_fvg"])
+            st.session_state["name_choch"] = st.text_input("CHOCH Name", value=st.session_state["name_choch"])
+        with c_n3:
+            st.session_state["name_vwap"] = st.text_input("VWAP Name", value=st.session_state["name_vwap"])
+            st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
+
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     
     with col_t1:
-        show_ob = st.checkbox("Order Blocks (OB)", value=True, key="toggle_ob")
+        show_ob = st.checkbox(st.session_state["name_ob"], value=True, key="toggle_ob")
     with col_t2:
-        show_liq = st.checkbox("BSL / SSL Liquidity", value=True, key="toggle_liq")
+        show_liq = st.checkbox(st.session_state["name_liq"], value=True, key="toggle_liq")
     with col_t3:
-        show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key="toggle_fvg")
+        show_fvg = st.checkbox(st.session_state["name_fvg"], value=True, key="toggle_fvg")
     with col_t4:
-        show_choch = st.checkbox("BUY / SELL CHOCH", value=True, key="toggle_choch")
+        show_choch = st.checkbox(st.session_state["name_choch"], value=True, key="toggle_choch")
     with col_t5:
-        show_vwap = st.checkbox("VWAP", value=True, key="toggle_vwap")
+        show_vwap = st.checkbox(st.session_state["name_vwap"], value=True, key="toggle_vwap")
     with col_t6:
-        show_yt_range = st.checkbox("🎯 YouTube Strategy Lines", value=True, key="toggle_yt_range")
+        show_yt_range = st.checkbox(st.session_state["name_yt"], value=True, key="toggle_yt_range")
 
     tv_candles = []
     tv_vwap = []
@@ -1093,7 +1119,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
     bullish_fvg = round(stable_low * 1.0015, 2)
     bearish_fvg = round(stable_high * 0.9985, 2)
 
-    # YouTube Price Range Strategy Lines (Red & Green lines calculation)
     lookback_p = min(len(df_calc), 10)
     yt_recent_high = df_calc['high'].iloc[-lookback_p:].max()
     yt_recent_low = df_calc['low'].iloc[-lookback_p:].min()
@@ -1127,7 +1152,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
     vwapSeries.setData({vwap_json});
     """ if show_vwap else ""
 
-    # YouTube Strategy Price Lines Integration on Lightweight Chart
     yt_strategy_lines_js = f"""
     candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
     candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
@@ -1280,8 +1304,8 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Added Tab 8 for FVG/CVD and retained Tab 2 for Main Chart)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+# 🌟 TAB NAVIGATION
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
     "🔮 3:00-3:20 Gap Predictor",
@@ -1289,7 +1313,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📉 Premium Decay (StockMojo)",
     "💎 Institutional SMC & Order Flow",
     "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner"
+    "🚀 FVG, CVD & CHOCH Scanner",
+    "🎯 YouTube Price Range Strategy"
 ])
 
 with tab1:
@@ -1302,18 +1327,25 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps, BUY/SELL CHOCH सिग्नल, VWAP आणि नवीन YouTube Price Range Strategy लाइन्स असलेला लाईव्ह चार्ट.")
+    st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
         chart_timeframe = st.selectbox(
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-            ["1m", "2m", "3m", "5m", "10m", "15m", "30m"],
-            index=0,
+            ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+            index=1,
             key="custom_chart_tf"
         )
     
-    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market)
+    # 20 days historical period mapping for Tab 2 chart data
+    chart_period_map = {
+        "1m": "20d", "5m": "20d", "15m": "20d", "30m": "30d", 
+        "1h": "60d", "4h": "120d", "1d": "1y"
+    }
+    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
@@ -2019,3 +2051,116 @@ with tab8:
         "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
     }
     st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
+
+with tab9:
+    st.markdown(f"""
+        <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 25px; border-radius: 12px; border: 1px solid #334155; margin-bottom: 25px;'>
+            <h2 style='color: #38bdf8; margin: 0; font-size: 26px;'>🎯 YouTube Price Range Strategy Lab ({display_name})</h2>
+            <p style='color: #94a3b8; font-size: 15px; margin-top: 8px; margin-bottom: 0;'>
+                व्हिडिओमधील रणनीतीनुसार <b>Red Line (Selling)</b> आणि <b>Green Line (Buying)</b> लेव्हल्स स्वयंचलितरीत्या मोजून रिअल-टाइम सिग्नल देणारे प्रगत मॉडर्न डॅशबोर्ड.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    if df_ltf is not None and not df_ltf.empty:
+        lookback_p = min(len(df_ltf), 10)
+        recent_high = df_ltf['high'].iloc[-lookback_p:].max()
+        recent_low = df_ltf['low'].iloc[-lookback_p:].min()
+        
+        red_sell_line = round(recent_high * 0.999, 2)
+        green_buy_line = round(recent_low * 1.001, 2)
+        
+        if current_price >= red_sell_line:
+            status_title = "🔴 SELL SIGNAL ACTIVE (RED LINE ZONE)"
+            status_desc = f"किंमत सेलिंग लेव्हल ({red_sell_line:,.2f}) जवळ किंवा वर आहे. व्हिडिओनुसार शॉर्ट ट्रेड प्लॅन करा."
+            status_bg = "#450a0a"
+            status_border = "#ef4444"
+            status_text_color = "#fca5a5"
+        elif current_price <= green_buy_line:
+            status_title = "🟢 BUY SIGNAL ACTIVE (GREEN LINE ZONE)"
+            status_desc = f"किंमत बाइंग लेव्हल ({green_buy_line:,.2f}) जवळ किंवा खाली आहे. व्हिडिओनुसार लॉंग ट्रेड प्लॅन करा."
+            status_bg = "#064e3b"
+            status_border = "#22c55e"
+            status_text_color = "#86efac"
+        else:
+            status_title = "⏳ WAITING FOR PRICE RANGE SWEEP / BREAKOUT"
+            status_desc = f"किंमत सध्या सुरक्षित झोनमध्ये आहे. रेड ({red_sell_line:,.2f}) किंवा ग्रीन ({green_buy_line:,.2f}) लाइनकडे जाण्याची वाट पाहा."
+            status_bg = "#1e293b"
+            status_border = "#64748b"
+            status_text_color = "#cbd5e1"
+
+        c_card1, c_card2 = st.columns(2)
+        
+        with c_card1:
+            st.markdown(f"""
+                <div style="background-color: #18181b; border: 1px solid #27272a; border-left: 5px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                    <span style="color: #ef4444; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
+                    <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
+                    <p style="color: #a1a1aa; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+        with c_card2:
+            st.markdown(f"""
+                <div style="background-color: #18181b; border: 1px solid #27272a; border-left: 5px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                    <span style="color: #22c55e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
+                    <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
+                    <p style="color: #a1a1aa; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
+                </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown(f"""
+            <div style="background-color: {status_bg}; border: 1px solid {status_border}; padding: 18px 22px; border-radius: 10px; text-align: left;">
+                <h4 style="color: {status_text_color}; margin: 0 0 5px 0; font-size: 17px; font-weight: 700;">{status_title}</h4>
+                <p style="color: #f1f5f9; margin: 0; font-size: 14px;">{status_desc}</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"### 📊 **Interactive Strategy Price Chart ({display_name})**")
+        
+        fig_strategy = go.Figure()
+        
+        fig_strategy.add_trace(go.Candlestick(
+            x=df_ltf['timestamp'],
+            open=df_ltf['open'], high=df_ltf['high'],
+            low=df_ltf['low'], close=df_ltf['close'],
+            name='Candles'
+        ))
+        
+        fig_strategy.add_hline(
+            y=red_sell_line, 
+            line_dash="dash", 
+            line_color="#ef4444", 
+            line_width=2,
+            annotation_text=f"Red Line (Sell): {red_sell_line:,.2f}", 
+            annotation_position="top right",
+            annotation_font_color="#ef4444"
+        )
+        
+        fig_strategy.add_hline(
+            y=green_buy_line, 
+            line_dash="dash", 
+            line_color="#22c55e", 
+            line_width=2,
+            annotation_text=f"Green Line (Buy): {green_buy_line:,.2f}", 
+            annotation_position="bottom right",
+            annotation_font_color="#22c55e"
+        )
+        
+        fig_strategy.update_layout(
+            height=480,
+            margin=dict(l=10, r=10, t=30, b=10),
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#0e1117",
+            font=dict(color="#ffffff"),
+            xaxis=dict(gridcolor="#1f2937", showgrid=True),
+            yaxis=dict(gridcolor="#1f2937", showgrid=True),
+            showlegend=False
+        )
+        st.plotly_chart(fig_strategy, use_container_width=True, key="modern_youtube_strategy_chart")
+
+    else:
+        st.info("डेटा लोड होत आहे... कृपया थोडा वेळ प्रतीक्षा करा.")
