@@ -503,7 +503,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         }
         resample_rule = tf_map.get(target_tf, "1min")
         
-        if resample_rule != "1min" and target_tf in ["10m", "15m", "30m"]:
+        if resample_rule != "1min":
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -2103,22 +2103,22 @@ with tab9:
 
         c_card1, c_card2 = st.columns(2)
         
-        # 🎨 Fixed high-contrast cards so values are crystal clear and readable
+        # 🎨 Fixed high-contrast cards so values are crystal clear and readable (White text & clear boxes)
         with c_card1:
             st.markdown(f"""
-                <div style="background-color: #27272a; border: 1px solid #3f3f46; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
+                <div style="background-color: #1f2937; border: 1px solid #374151; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
                     <span style="color: #f87171; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
-                    <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
-                    <p style="color: #d4d4d8; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
+                    <h2 style="color: #ffffff !important; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
+                    <p style="color: #f3f4f6 !important; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
             
         with c_card2:
             st.markdown(f"""
-                <div style="background-color: #27272a; border: 1px solid #3f3f46; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
+                <div style="background-color: #1f2937; border: 1px solid #374151; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
                     <span style="color: #4ade80; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
-                    <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
-                    <p style="color: #d4d4d8; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
+                    <h2 style="color: #ffffff !important; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
+                    <p style="color: #f3f4f6 !important; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -2139,39 +2139,23 @@ with tab9:
         
         fig_strategy.add_trace(go.Candlestick(
             x=df_use_tab9['timestamp'],
-            open=df_use_tab9['open'], high=df_use_tab9['high'],
-            low=df_use_tab9['low'], close=df_use_tab9['close'],
-            name='Candles'
+            open=df_use_tab9['open'],
+            high=df_use_tab9['high'],
+            low=df_use_tab9['low'],
+            close=df_use_tab9['close'],
+            name="Candlesticks"
         ))
-        
-        fig_strategy.add_hline(
-            y=red_sell_line, 
-            line_dash="dash", 
-            line_color="#ef4444", 
-            line_width=2,
-            annotation_text=f"Red Line (Sell): {red_sell_line:,.2f}", 
-            annotation_position="top right",
-            annotation_font_color="#ef4444"
-        )
 
-        fig_strategy.add_hline(
-            y=green_buy_line, 
-            line_dash="dash", 
-            line_color="#22c55e", 
-            line_width=2,
-            annotation_text=f"Green Line (Buy): {green_buy_line:,.2f}", 
-            annotation_position="bottom right",
-            annotation_font_color="#22c55e"
-        )
+        fig_strategy.add_hline(y=red_sell_line, line_dash="dot", line_color="#ef4444", line_width=2.5, annotation_text=f"Red Sell Line: {red_sell_line}", annotation_position="top right")
+        fig_strategy.add_hline(y=green_buy_line, line_dash="dot", line_color="#22c55e", line_width=2.5, annotation_text=f"Green Buy Line: {green_buy_line}", annotation_position="bottom right")
 
         fig_strategy.update_layout(
             height=450,
             margin=dict(l=20, r=20, t=30, b=20),
-            paper_bgcolor="#0e1117",
-            plot_bgcolor="#0e1117",
-            font=dict(color="#ffffff"),
-            xaxis=dict(gridcolor="#1f2937"),
-            yaxis=dict(gridcolor="#1f2937")
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis_title="Time",
+            yaxis_title="Price",
+            xaxis_rangeslider_visible=False
         )
-
-        st.plotly_chart(fig_strategy, use_container_width=True, key="tab9_strategy_chart_complete")
+        st.plotly_chart(fig_strategy, use_container_width=True, key="tab9_strategy_chart")
