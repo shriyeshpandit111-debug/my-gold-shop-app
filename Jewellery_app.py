@@ -1016,7 +1016,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
         return
 
     st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
-    col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
+    col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     
     with col_t1:
         show_ob = st.checkbox("Order Blocks (OB)", value=True, key="toggle_ob")
@@ -1025,9 +1025,11 @@ def render_tradingview_lightweight_chart(df, asset_title):
     with col_t3:
         show_fvg = st.checkbox("FVG (Fair Value Gaps)", value=True, key="toggle_fvg")
     with col_t4:
-        show_choch = st.checkbox("BUY / SELL CHOCH Markers", value=True, key="toggle_choch")
+        show_choch = st.checkbox("BUY / SELL CHOCH", value=True, key="toggle_choch")
     with col_t5:
-        show_vwap = st.checkbox("VWAP (Volume Weighted)", value=True, key="toggle_vwap")
+        show_vwap = st.checkbox("VWAP", value=True, key="toggle_vwap")
+    with col_t6:
+        show_yt_range = st.checkbox("🎯 YouTube Strategy Lines", value=True, key="toggle_yt_range")
 
     tv_candles = []
     tv_vwap = []
@@ -1091,6 +1093,13 @@ def render_tradingview_lightweight_chart(df, asset_title):
     bullish_fvg = round(stable_low * 1.0015, 2)
     bearish_fvg = round(stable_high * 0.9985, 2)
 
+    # YouTube Price Range Strategy Lines (Red & Green lines calculation)
+    lookback_p = min(len(df_calc), 10)
+    yt_recent_high = df_calc['high'].iloc[-lookback_p:].max()
+    yt_recent_low = df_calc['low'].iloc[-lookback_p:].min()
+    yt_red_sell = round(yt_recent_high * 0.999, 2)
+    yt_green_buy = round(yt_recent_low * 1.001, 2)
+
     candles_json = json.dumps(tv_candles)
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
     vwap_json = json.dumps(tv_vwap)
@@ -1117,6 +1126,12 @@ def render_tradingview_lightweight_chart(df, asset_title):
     }});
     vwapSeries.setData({vwap_json});
     """ if show_vwap else ""
+
+    # YouTube Strategy Price Lines Integration on Lightweight Chart
+    yt_strategy_lines_js = f"""
+    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
+    """ if show_yt_range else ""
 
     html_code = f"""
     <!DOCTYPE html>
@@ -1145,8 +1160,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
         <div class="legend">
             {"<span style='color: #22c55e;'>🟢 Bullish OB: " + str(bullish_ob) + "</span>" if show_ob else ""}
             {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
-            {"<span style='color: #3b82f6;'>💧 BSL: " + str(bsl_price) + "</span>" if show_liq else ""}
-            {"<span style='color: #f59e0b;'>💧 SSL: " + str(ssl_price) + "</span>" if show_liq else ""}
+            {"<span style='color: #ef4444;'>🎯 YT Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
+            {"<span style='color: #22c55e;'>🎯 YT Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
             {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
         </div>
         <div id="chart-container"></div>
@@ -1195,6 +1210,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             {ob_lines_js}
             {fvg_lines_js}
             {vwap_series_js}
+            {yt_strategy_lines_js}
 
             window.addEventListener('resize', () => {{
                 chart.applyOptions({{ width: container.clientWidth }});
@@ -1264,7 +1280,7 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Added Tab 8 for New Features)
+# 🌟 TAB NAVIGATION (Added Tab 8 for FVG/CVD and retained Tab 2 for Main Chart)
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
@@ -1273,7 +1289,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📉 Premium Decay (StockMojo)",
     "💎 Institutional SMC & Order Flow",
     "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner (Tab 8)"
+    "🚀 FVG, CVD & CHOCH Scanner"
 ])
 
 with tab1:
@@ -1286,7 +1302,7 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps, BUY/SELL CHOCH सिग्नल आणि VWAP इंडिकेटर असलेला लाईव्ह चार्ट.")
+    st.caption("अल्ट्रा-फास्ट रिफ्रेशसह झिरो-लॅग, Order Blocks, Liquidity Sweeps, BUY/SELL CHOCH सिग्नल, VWAP आणि नवीन YouTube Price Range Strategy लाइन्स असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
@@ -1964,60 +1980,37 @@ with tab7:
         </div>
         """, unsafe_allow_html=True)
 
-
-# --- 🚀 TAB 8: NEW FEATURES (FVG, CVD & CHOCH MULTI-ASSET SCANNER) ---
 with tab8:
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
-    st.caption("येथे तुमच्या मागण्यांनुसार FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table जोडण्यात आले आहेत.")
+    st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
     st.markdown("---")
 
-    # 1. Institutional Order Flow FVG Heatmap
     st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    st.caption("बाजारात मोठी इन्स्टिट्यूशनल ऑर्डर सुटल्यामुळे तयार झालेले FVG (Fair Value Gap) झोन्स ऑटोमॅटिकली डिटेक्ट करून ट्रेडरला रिट्रेसमेंट बाऊन्ससाठी सज्ज करतात.")
-
     if df_ltf is not None and len(df_ltf) > 5:
         fvg_high = round(df_ltf['high'].iloc[-2], 2)
         fvg_low = round(df_ltf['low'].iloc[-4], 2)
         st.markdown(f"""
         <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
             <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span> (किंमत येथे आल्यास बाऊन्स होण्याची शक्यता आहे)<br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span> (मार्केट येथे आल्यास रेझिस्टन्स घेऊ शकते)<br>
+            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span><br>
+            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span><br>
         </div>
         """, unsafe_allow_html=True)
     else:
         st.info("FVG डेटा लोड होत आहे...")
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # 2. Cumulative Volume Delta (CVD) Real-Time Divergence Alert (Fixed for Bearish / Down Trend)
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    st.caption("Buyers vs Sellers Net Pressure आणि Price मधील फरकामुळे तयार होणारे Divergence सिग्नल.")
-
-    # सुधारित लॉजिक: डाऊन ट्रेंड किंवा बेअरिश मार्केटमध्ये सेलर्स प्रेशर अचूकपणे टिपण्यासाठी
     is_down_trend_market = price_change < 0
     cvd_val = -3500 if is_down_trend_market else np.random.randint(-2000, 2000)
     
-    # डायव्हर्जन्स किंवा स्ट्रॉंग सेलिंग प्रेशर तपासा
-    is_bullish_divergence = price_change < 0 and cvd_val > 0  # किंमत खाली, पण CVD वर (Hidden Bullish)
-    is_bearish_divergence = price_change > 0 and cvd_val < 0  # किंमत वर, पण CVD खाली (Fake Breakout Trap)
-    is_strong_bearish = price_change < 0 and cvd_val < 0      # डाऊन ट्रेंड + सेलर्स प्रेशर कन्फर्म
-
-    if is_bearish_divergence:
-        st.error("🚨 **BEARISH DIVERGENCE ALERT DETECTED:** किंमत (Price) वर जात आहे पण CVD (Net Buying Pressure) खाली जात आहे! स्मार्ट मनी ट्रॅप (Fake Breakout) सावधगिरी बाळगा.")
-    elif is_strong_bearish:
-        st.error("📉 **DOWN TREND SELLING PRESSURE:** मार्केट डाऊन ट्रेंडमध्ये असून CVD सेलर्सचे भारी प्रेशर (Aggressive Shorting) दर्शवत आहे. बेअरिश मोमेंटम सुरू आहे.")
-    elif is_bullish_divergence:
-        st.warning("⚠️ **BULLISH DIVERGENCE ALERT:** किंमत खाली आहे पण CVD पॉझिटिव्ह आहे (Bottom Accumulation सुरू असण्याची शक्यता).")
+    if price_change < 0 and cvd_val < 0:
+        st.error("📉 **DOWN TREND SELLING PRESSURE:** मार्केट डाऊन ट्रेंडमध्ये असून CVD सेलर्सचे भारी प्रेशर दर्शवत आहे.")
     else:
-        st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत. कोणताही फेक ब्रेकआउट ट्रॅप आढळलेला नाही.")
+        st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # 3. Smart Money "Change of Character (CHOCH) & BOS" Live Push Notification Table
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
-    st.caption("एकाच स्क्रीनवर Nifty, Bank Nifty, Gold आणि BTC चे लाईव्ह ब्रेकआउट्स आणि CHOCH सिग्नल्स दर्शवणारे टेबल.")
-
     scanner_data = {
         "Asset / Index": ["Nifty 50 (NSE)", "Bank Nifty (NSE)", "Gold (GC=F)", "Bitcoin (BTC/USDT)"],
         "Current Trend": ["Bearish 📉" if is_down_trend else "Bullish 📈", "Bearish 📉" if is_down_trend else "Bullish 📈", "Neutral ➡️", "Bearish 📉" if is_down_trend else "Bullish 📈"],
