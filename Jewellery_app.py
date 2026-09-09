@@ -424,6 +424,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
             interval_map = {
                 "1m": "ONE_MINUTE",
+                "2m": "THREE_MINUTE",
                 "3m": "THREE_MINUTE",
                 "5m": "FIVE_MINUTE",
                 "10m": "TEN_MINUTE",
@@ -503,7 +504,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         }
         resample_rule = tf_map.get(target_tf, "1min")
         
-        if resample_rule != "1min":
+        if resample_rule != "1min" and target_tf in ["2m", "3m", "5m", "10m", "15m", "30m"]:
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1333,14 +1334,14 @@ with tab2:
     with col_tf1:
         chart_timeframe = st.selectbox(
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-            ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
-            index=1,
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+            index=3,
             key="custom_chart_tf"
         )
     
     chart_period_map = {
-        "1m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
-        "1h": "60d", "4h": "120d", "1d": "1y"
+        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
+        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
     }
     selected_period = chart_period_map.get(chart_timeframe, "20d")
     
@@ -2066,7 +2067,7 @@ with tab9:
     with col_t9_1:
         tab9_timeframe = st.selectbox(
             "⏱️ Tab 9 टाईमफ्रेम निवडा:",
-            ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
             index=2,
             key="tab9_chart_tf"
         )
@@ -2085,40 +2086,40 @@ with tab9:
         if current_price >= red_sell_line:
             status_title = "🔴 SELL SIGNAL ACTIVE (RED LINE ZONE)"
             status_desc = f"किंमत सेलिंग लेव्हल ({red_sell_line:,.2f}) जवळ किंवा वर आहे. व्हिडिओनुसार शॉर्ट ट्रेड प्लॅन करा."
-            status_bg = "#3b1111"
+            status_bg = "#fef2f2"
             status_border = "#ef4444"
-            status_text_color = "#fca5a5"
+            status_text_color = "#991b1b"
         elif current_price <= green_buy_line:
             status_title = "🟢 BUY SIGNAL ACTIVE (GREEN LINE ZONE)"
             status_desc = f"किंमत बाइंग लेव्हल ({green_buy_line:,.2f}) जवळ किंवा खाली आहे. व्हिडिओनुसार लॉंग ट्रेड प्लॅन करा."
-            status_bg = "#064e3b"
+            status_bg = "#f0fdf4"
             status_border = "#22c55e"
-            status_text_color = "#86efac"
+            status_text_color = "#166534"
         else:
             status_title = "⏳ WAITING FOR PRICE RANGE SWEEP / BREAKOUT"
             status_desc = f"किंमत सध्या सुरक्षित झोनमध्ये आहे. रेड ({red_sell_line:,.2f}) किंवा ग्रीन ({green_buy_line:,.2f}) लाइनकडे जाण्याची वाट पाहा."
-            status_bg = "#1e293b"
-            status_border = "#64748b"
-            status_text_color = "#cbd5e1"
+            status_bg = "#f8fafc"
+            status_border = "#cbd5e1"
+            status_text_color = "#334155"
 
         c_card1, c_card2 = st.columns(2)
         
-        # 🎨 Fixed high-contrast cards so values are crystal clear and readable (White text & clear boxes)
+        # 🎨 Fixed high-contrast white background cards so values are crystal clear and readable
         with c_card1:
             st.markdown(f"""
-                <div style="background-color: #1f2937; border: 1px solid #374151; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
-                    <span style="color: #f87171; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
-                    <h2 style="color: #ffffff !important; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
-                    <p style="color: #f3f4f6 !important; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
+                <div style="background-color: #ffffff; border: 1px solid #d0d7de; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                    <span style="color: #dc2626; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
+                    <h2 style="color: #1f2328; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
+                    <p style="color: #57606a; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
             
         with c_card2:
             st.markdown(f"""
-                <div style="background-color: #1f2937; border: 1px solid #374151; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
-                    <span style="color: #4ade80; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
-                    <h2 style="color: #ffffff !important; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
-                    <p style="color: #f3f4f6 !important; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
+                <div style="background-color: #ffffff; border: 1px solid #d0d7de; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                    <span style="color: #16a34a; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
+                    <h2 style="color: #1f2328; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
+                    <p style="color: #57606a; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -2127,35 +2128,8 @@ with tab9:
         st.markdown(f"""
             <div style="background-color: {status_bg}; border: 1px solid {status_border}; padding: 18px 22px; border-radius: 10px; text-align: left;">
                 <h4 style="color: {status_text_color}; margin: 0 0 5px 0; font-size: 17px; font-weight: 700;">{status_title}</h4>
-                <p style="color: #f1f5f9; margin: 0; font-size: 14px;">{status_desc}</p>
+                <p style="color: #334155; margin: 0; font-size: 14px;">{status_desc}</p>
             </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(f"### 📊 **Interactive Strategy Price Chart ({display_name})**")
-        
-        # 📈 Fixed and completed plotly strategy chart rendering
-        fig_strategy = go.Figure()
-        
-        fig_strategy.add_trace(go.Candlestick(
-            x=df_use_tab9['timestamp'],
-            open=df_use_tab9['open'],
-            high=df_use_tab9['high'],
-            low=df_use_tab9['low'],
-            close=df_use_tab9['close'],
-            name="Candlesticks"
-        ))
-
-        fig_strategy.add_hline(y=red_sell_line, line_dash="dot", line_color="#ef4444", line_width=2.5, annotation_text=f"Red Sell Line: {red_sell_line}", annotation_position="top right")
-        fig_strategy.add_hline(y=green_buy_line, line_dash="dot", line_color="#22c55e", line_width=2.5, annotation_text=f"Green Buy Line: {green_buy_line}", annotation_position="bottom right")
-
-        fig_strategy.update_layout(
-            height=450,
-            margin=dict(l=20, r=20, t=30, b=20),
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            xaxis_title="Time",
-            yaxis_title="Price",
-            xaxis_rangeslider_visible=False
-        )
-        st.plotly_chart(fig_strategy, use_container_width=True, key="tab9_strategy_chart")
+    st.markdown("<br>", unsafe_allow_html=True)
