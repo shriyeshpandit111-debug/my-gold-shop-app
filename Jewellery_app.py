@@ -419,13 +419,14 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     smart_api = st.session_state.get("smart_api_session", None)
 
-    if is_indian and smart_api and target_tf not in ["1h", "4h", "1d"]:
+    if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
         try:
             token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
             interval_map = {
                 "1m": "ONE_MINUTE",
                 "3m": "THREE_MINUTE",
                 "5m": "FIVE_MINUTE",
+                "10m": "TEN_MINUTE",
                 "15m": "FIFTEEN_MINUTE",
                 "30m": "THIRTY_MINUTE",
             }
@@ -459,7 +460,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         source_interval, period = (
             ("1m", custom_period)
             if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
-            else ("1h" if target_tf in ["1h", "4h"] else "1d", "max" if "y" in custom_period else custom_period)
+            else ("1h" if target_tf in ["1h", "2h", "4h"] else "1d", "max" if "y" in custom_period else custom_period)
         )
         data = yf.download(
             tickers=ticker_symbol,
@@ -498,11 +499,11 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         tf_map = {
             "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min",
             "10m": "10min", "15m": "15min", "30m": "30min",
-            "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D"
+            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d"
         }
         resample_rule = tf_map.get(target_tf, "1min")
         
-        if resample_rule != "1min" and target_tf not in ["1h", "4h", "1d"]:
+        if resample_rule != "1min" and target_tf in ["10m", "15m", "30m"]:
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1016,7 +1017,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
 
     st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
     
-    # Custom names state initialization for Tab 2 features
     if "name_ob" not in st.session_state:
         st.session_state["name_ob"] = "Order Blocks (OB)"
     if "name_liq" not in st.session_state:
@@ -1333,14 +1333,13 @@ with tab2:
     with col_tf1:
         chart_timeframe = st.selectbox(
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-            ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+            ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
             index=1,
             key="custom_chart_tf"
         )
     
-    # 20 days historical period mapping for Tab 2 chart data
     chart_period_map = {
-        "1m": "20d", "5m": "20d", "15m": "20d", "30m": "30d", 
+        "1m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
         "1h": "60d", "4h": "120d", "1d": "1y"
     }
     selected_period = chart_period_map.get(chart_timeframe, "20d")
@@ -2062,10 +2061,23 @@ with tab9:
         </div>
     """, unsafe_allow_html=True)
 
-    if df_ltf is not None and not df_ltf.empty:
-        lookback_p = min(len(df_ltf), 10)
-        recent_high = df_ltf['high'].iloc[-lookback_p:].max()
-        recent_low = df_ltf['low'].iloc[-lookback_p:].min()
+    # ⏱️ Tab 9 Timeframe Selector
+    col_t9_1, col_t9_2 = st.columns([2, 5])
+    with col_t9_1:
+        tab9_timeframe = st.selectbox(
+            "⏱️ Tab 9 टाईमफ्रेम निवडा:",
+            ["1m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
+            index=2,
+            key="tab9_chart_tf"
+        )
+    
+    df_tab9 = fetch_and_resample_data(ticker, tab9_timeframe, is_indian_market, custom_period="10d")
+    df_use_tab9 = df_tab9 if df_tab9 is not None and not df_tab9.empty else df_ltf
+
+    if df_use_tab9 is not None and not df_use_tab9.empty:
+        lookback_p = min(len(df_use_tab9), 10)
+        recent_high = df_use_tab9['high'].iloc[-lookback_p:].max()
+        recent_low = df_use_tab9['low'].iloc[-lookback_p:].min()
         
         red_sell_line = round(recent_high * 0.999, 2)
         green_buy_line = round(recent_low * 1.001, 2)
@@ -2073,7 +2085,7 @@ with tab9:
         if current_price >= red_sell_line:
             status_title = "🔴 SELL SIGNAL ACTIVE (RED LINE ZONE)"
             status_desc = f"किंमत सेलिंग लेव्हल ({red_sell_line:,.2f}) जवळ किंवा वर आहे. व्हिडिओनुसार शॉर्ट ट्रेड प्लॅन करा."
-            status_bg = "#450a0a"
+            status_bg = "#3b1111"
             status_border = "#ef4444"
             status_text_color = "#fca5a5"
         elif current_price <= green_buy_line:
@@ -2091,21 +2103,22 @@ with tab9:
 
         c_card1, c_card2 = st.columns(2)
         
+        # 🎨 Fixed high-contrast cards so values are crystal clear and readable
         with c_card1:
             st.markdown(f"""
-                <div style="background-color: #18181b; border: 1px solid #27272a; border-left: 5px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                    <span style="color: #ef4444; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
+                <div style="background-color: #27272a; border: 1px solid #3f3f46; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
+                    <span style="color: #f87171; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
                     <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
-                    <p style="color: #a1a1aa; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
+                    <p style="color: #d4d4d8; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
             
         with c_card2:
             st.markdown(f"""
-                <div style="background-color: #18181b; border: 1px solid #27272a; border-left: 5px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                    <span style="color: #22c55e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
+                <div style="background-color: #27272a; border: 1px solid #3f3f46; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);">
+                    <span style="color: #4ade80; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
                     <h2 style="color: #ffffff; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
-                    <p style="color: #a1a1aa; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
+                    <p style="color: #d4d4d8; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -2121,12 +2134,13 @@ with tab9:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(f"### 📊 **Interactive Strategy Price Chart ({display_name})**")
         
+        # 📈 Fixed and completed plotly strategy chart rendering
         fig_strategy = go.Figure()
         
         fig_strategy.add_trace(go.Candlestick(
-            x=df_ltf['timestamp'],
-            open=df_ltf['open'], high=df_ltf['high'],
-            low=df_ltf['low'], close=df_ltf['close'],
+            x=df_use_tab9['timestamp'],
+            open=df_use_tab9['open'], high=df_use_tab9['high'],
+            low=df_use_tab9['low'], close=df_use_tab9['close'],
             name='Candles'
         ))
         
@@ -2139,7 +2153,7 @@ with tab9:
             annotation_position="top right",
             annotation_font_color="#ef4444"
         )
-        
+
         fig_strategy.add_hline(
             y=green_buy_line, 
             line_dash="dash", 
@@ -2149,18 +2163,15 @@ with tab9:
             annotation_position="bottom right",
             annotation_font_color="#22c55e"
         )
-        
+
         fig_strategy.update_layout(
-            height=480,
-            margin=dict(l=10, r=10, t=30, b=10),
+            height=450,
+            margin=dict(l=20, r=20, t=30, b=20),
             paper_bgcolor="#0e1117",
             plot_bgcolor="#0e1117",
             font=dict(color="#ffffff"),
-            xaxis=dict(gridcolor="#1f2937", showgrid=True),
-            yaxis=dict(gridcolor="#1f2937", showgrid=True),
-            showlegend=False
+            xaxis=dict(gridcolor="#1f2937"),
+            yaxis=dict(gridcolor="#1f2937")
         )
-        st.plotly_chart(fig_strategy, use_container_width=True, key="modern_youtube_strategy_chart")
 
-    else:
-        st.info("डेटा लोड होत आहे... कृपया थोडा वेळ प्रतीक्षा करा.")
+        st.plotly_chart(fig_strategy, use_container_width=True, key="tab9_strategy_chart_complete")
