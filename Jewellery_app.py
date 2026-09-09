@@ -458,11 +458,16 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             pass
 
     try:
-        source_interval, period = (
-            ("1m", custom_period)
-            if target_tf in ["1m", "2m", "3m", "5m", "10m", "15m", "30m"]
-            else ("1h" if target_tf in ["1h", "2h", "4h"] else "1d", "max" if "y" in custom_period else custom_period)
-        )
+        # Fixed Source Interval Selection for higher timeframes like 1h, 2h, 4h, 1d
+        if target_tf in ["1h", "2h"]:
+            source_interval, period = "1h", custom_period if custom_period != "7d" else "60d"
+        elif target_tf == "4h":
+            source_interval, period = "1h", custom_period if custom_period != "7d" else "90d"
+        elif target_tf == "1d":
+            source_interval, period = "1d", "max" if "y" in custom_period else custom_period
+        else:
+            source_interval, period = "1m", custom_period
+
         data = yf.download(
             tickers=ticker_symbol,
             period=period,
@@ -504,7 +509,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         }
         resample_rule = tf_map.get(target_tf, "1min")
         
-        if resample_rule != "1min" and target_tf in ["2m", "3m", "5m", "10m", "15m", "30m"]:
+        if resample_rule != source_interval:
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1305,8 +1310,8 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+# 🌟 TAB NAVIGATION (Tab 9 successfully removed)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
     "🔮 3:00-3:20 Gap Predictor",
@@ -1314,8 +1319,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📉 Premium Decay (StockMojo)",
     "💎 Institutional SMC & Order Flow",
     "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner",
-    "🎯 YouTube Price Range Strategy"
+    "🚀 FVG, CVD & CHOCH Scanner"
 ])
 
 with tab1:
@@ -2051,85 +2055,3 @@ with tab8:
         "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
     }
     st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
-
-with tab9:
-    st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 25px; border-radius: 12px; border: 1px solid #334155; margin-bottom: 25px;'>
-            <h2 style='color: #38bdf8; margin: 0; font-size: 26px;'>🎯 YouTube Price Range Strategy Lab ({display_name})</h2>
-            <p style='color: #94a3b8; font-size: 15px; margin-top: 8px; margin-bottom: 0;'>
-                व्हिडिओमधील रणनीतीनुसार <b>Red Line (Selling)</b> आणि <b>Green Line (Buying)</b> लेव्हल्स स्वयंचलितरीत्या मोजून रिअल-टाइम सिग्नल देणारे प्रगत मॉडर्न डॅशबोर्ड.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # ⏱️ Tab 9 Timeframe Selector
-    col_t9_1, col_t9_2 = st.columns([2, 5])
-    with col_t9_1:
-        tab9_timeframe = st.selectbox(
-            "⏱️ Tab 9 टाईमफ्रेम निवडा:",
-            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h", "1d"],
-            index=2,
-            key="tab9_chart_tf"
-        )
-    
-    df_tab9 = fetch_and_resample_data(ticker, tab9_timeframe, is_indian_market, custom_period="10d")
-    df_use_tab9 = df_tab9 if df_tab9 is not None and not df_tab9.empty else df_ltf
-
-    if df_use_tab9 is not None and not df_use_tab9.empty:
-        lookback_p = min(len(df_use_tab9), 10)
-        recent_high = df_use_tab9['high'].iloc[-lookback_p:].max()
-        recent_low = df_use_tab9['low'].iloc[-lookback_p:].min()
-        
-        red_sell_line = round(recent_high * 0.999, 2)
-        green_buy_line = round(recent_low * 1.001, 2)
-        
-        if current_price >= red_sell_line:
-            status_title = "🔴 SELL SIGNAL ACTIVE (RED LINE ZONE)"
-            status_desc = f"किंमत सेलिंग लेव्हल ({red_sell_line:,.2f}) जवळ किंवा वर आहे. व्हिडिओनुसार शॉर्ट ट्रेड प्लॅन करा."
-            status_bg = "#fef2f2"
-            status_border = "#ef4444"
-            status_text_color = "#991b1b"
-        elif current_price <= green_buy_line:
-            status_title = "🟢 BUY SIGNAL ACTIVE (GREEN LINE ZONE)"
-            status_desc = f"किंमत बाइंग लेव्हल ({green_buy_line:,.2f}) जवळ किंवा खाली आहे. व्हिडिओनुसार लॉंग ट्रेड प्लॅन करा."
-            status_bg = "#f0fdf4"
-            status_border = "#22c55e"
-            status_text_color = "#166534"
-        else:
-            status_title = "⏳ WAITING FOR PRICE RANGE SWEEP / BREAKOUT"
-            status_desc = f"किंमत सध्या सुरक्षित झोनमध्ये आहे. रेड ({red_sell_line:,.2f}) किंवा ग्रीन ({green_buy_line:,.2f}) लाइनकडे जाण्याची वाट पाहा."
-            status_bg = "#f8fafc"
-            status_border = "#cbd5e1"
-            status_text_color = "#334155"
-
-        c_card1, c_card2 = st.columns(2)
-        
-        # 🎨 Fixed high-contrast white background cards so values are crystal clear and readable
-        with c_card1:
-            st.markdown(f"""
-                <div style="background-color: #ffffff; border: 1px solid #d0d7de; border-left: 6px solid #ef4444; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                    <span style="color: #dc2626; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🔴 Selling Threshold</span>
-                    <h2 style="color: #1f2328; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{red_sell_line:,.2f}</h2>
-                    <p style="color: #57606a; font-size: 13px; margin: 0;">मार्क केलेल्या लिक्विडिटी स्विंग हायवरून काढलेली अचूक रेड लाइन.</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-        with c_card2:
-            st.markdown(f"""
-                <div style="background-color: #ffffff; border: 1px solid #d0d7de; border-left: 6px solid #22c55e; padding: 22px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                    <span style="color: #16a34a; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">🟢 Buying Threshold</span>
-                    <h2 style="color: #1f2328; margin: 8px 0 4px 0; font-size: 32px; font-weight: 800;">{green_buy_line:,.2f}</h2>
-                    <p style="color: #57606a; font-size: 13px; margin: 0;">स्विंग ब्रेकडाऊन आणि सपोर्ट झोनवरून मोजलेली अचूक ग्रीन लाइन.</p>
-                </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown(f"""
-            <div style="background-color: {status_bg}; border: 1px solid {status_border}; padding: 18px 22px; border-radius: 10px; text-align: left;">
-                <h4 style="color: {status_text_color}; margin: 0 0 5px 0; font-size: 17px; font-weight: 700;">{status_title}</h4>
-                <p style="color: #334155; margin: 0; font-size: 14px;">{status_desc}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
