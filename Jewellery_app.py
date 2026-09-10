@@ -1016,11 +1016,13 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
-def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
+def render_tradingview_lightweight_chart(df, asset_title):
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
         return
 
+    st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
+    
     if "name_ob" not in st.session_state:
         st.session_state["name_ob"] = "Order Blocks (OB)"
     if "name_liq" not in st.session_state:
@@ -1034,20 +1036,32 @@ def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
     if "name_yt" not in st.session_state:
         st.session_state["name_yt"] = "🎯 YouTube Strategy Lines"
 
+    with st.expander("✏️ Customize Feature Names (वैशिष्ट्यांचे नाव बदला)", expanded=False):
+        c_n1, c_n2, c_n3 = st.columns(3)
+        with c_n1:
+            st.session_state["name_ob"] = st.text_input("OB Name", value=st.session_state["name_ob"])
+            st.session_state["name_liq"] = st.text_input("Liquidity Name", value=st.session_state["name_liq"])
+        with c_n2:
+            st.session_state["name_fvg"] = st.text_input("FVG Name", value=st.session_state["name_fvg"])
+            st.session_state["name_choch"] = st.text_input("CHOCH Name", value=st.session_state["name_choch"])
+        with c_n3:
+            st.session_state["name_vwap"] = st.text_input("VWAP Name", value=st.session_state["name_vwap"])
+            st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
+
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     
     with col_t1:
-        show_ob = st.checkbox(st.session_state["name_ob"], value=True, key=f"toggle_ob_{tf_key_suffix}")
+        show_ob = st.checkbox(st.session_state["name_ob"], value=True, key="toggle_ob")
     with col_t2:
-        show_liq = st.checkbox(st.session_state["name_liq"], value=True, key=f"toggle_liq_{tf_key_suffix}")
+        show_liq = st.checkbox(st.session_state["name_liq"], value=True, key="toggle_liq")
     with col_t3:
-        show_fvg = st.checkbox(st.session_state["name_fvg"], value=True, key=f"toggle_fvg_{tf_key_suffix}")
+        show_fvg = st.checkbox(st.session_state["name_fvg"], value=True, key="toggle_fvg")
     with col_t4:
-        show_choch = st.checkbox(st.session_state["name_choch"], value=True, key=f"toggle_choch_{tf_key_suffix}")
+        show_choch = st.checkbox(st.session_state["name_choch"], value=True, key="toggle_choch")
     with col_t5:
-        show_vwap = st.checkbox(st.session_state["name_vwap"], value=True, key=f"toggle_vwap_{tf_key_suffix}")
+        show_vwap = st.checkbox(st.session_state["name_vwap"], value=True, key="toggle_vwap")
     with col_t6:
-        show_yt_range = st.checkbox(st.session_state["name_yt"], value=True, key=f"toggle_yt_{tf_key_suffix}")
+        show_yt_range = st.checkbox(st.session_state["name_yt"], value=True, key="toggle_yt_range")
 
     tv_candles = []
     tv_vwap = []
@@ -1156,7 +1170,7 @@ def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
         <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; font-family: sans-serif; }}
-            #chart-container_{tf_key_suffix} {{ width: 100%; height: 380px; }}
+            #chart-container {{ width: 100%; height: 500px; }}
             .legend {{
                 position: absolute;
                 top: 10px;
@@ -1180,12 +1194,12 @@ def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
             {"<span style='color: #22c55e;'>🎯 YT Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
             {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
         </div>
-        <div id="chart-container_{tf_key_suffix}"></div>
+        <div id="chart-container"></div>
         <script>
-            const container_{tf_key_suffix} = document.getElementById('chart-container_{tf_key_suffix}');
-            const chart_{tf_key_suffix} = LightweightCharts.createChart(container_{tf_key_suffix}, {{
-                width: container_{tf_key_suffix}.clientWidth,
-                height: 380,
+            const container = document.getElementById('chart-container');
+            const chart = LightweightCharts.createChart(container, {{
+                width: container.clientWidth,
+                height: 500,
                 layout: {{
                     backgroundColor: '#0e1117',
                     textColor: '#d1d4dc',
@@ -1207,7 +1221,7 @@ def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
                 }},
             }});
 
-            const candlestickSeries = chart_{tf_key_suffix}.addCandlestickSeries({{
+            const candlestickSeries = chart.addCandlestickSeries({{
                 upColor: '#22c55e',
                 downColor: '#ef4444',
                 borderDownColor: '#ef4444',
@@ -1229,13 +1243,13 @@ def render_tradingview_lightweight_chart(df, asset_title, tf_key_suffix=""):
             {yt_strategy_lines_js}
 
             window.addEventListener('resize', () => {{
-                chart_{tf_key_suffix}.applyOptions({{ width: container_{tf_key_suffix}.clientWidth }});
+                chart.applyOptions({{ width: container.clientWidth }});
             }});
         </script>
     </body>
     </html>
     """
-    components.html(html_code, height=400, scrolling=False)
+    components.html(html_code, height=520, scrolling=False)
 
 
 # --- TradingView Widget function for other assets ---
@@ -1296,8 +1310,8 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Tab 9 Added Successfully)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+# 🌟 TAB NAVIGATION (Tab 9 successfully removed)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
     "🔮 3:00-3:20 Gap Predictor",
@@ -1305,8 +1319,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📉 Premium Decay (StockMojo)",
     "💎 Institutional SMC & Order Flow",
     "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner",
-    "🔲 Multi-Chart View (2x2 Grid)"
+    "🚀 FVG, CVD & CHOCH Scanner"
 ])
 
 with tab1:
@@ -1337,7 +1350,7 @@ with tab2:
     selected_period = chart_period_map.get(chart_timeframe, "20d")
     
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
-    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name, tf_key_suffix="tab2")
+    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
     st.markdown("### 🌎 Global Asset Live Charts")
@@ -2042,40 +2055,3 @@ with tab8:
         "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
     }
     st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
-
-with tab9:
-    st.markdown("## 🔲 **Multi-Chart View (2x2 Grid View)**")
-    st.caption("एकाच स्क्रीनवर Nifty 50, Bank Nifty, Bitcoin, Gold आणि Silver चे चार्ट्स टाइमफ्रेम आणि टॅब नं. २ मधील सर्व वैशिष्ट्यांसह (OB, BSL/SSL, FVG, CHOCH, VWAP, YouTube Lines).")
-    st.markdown("---")
-
-    assets_config = [
-        {"title": "Nifty 50 (NSE)", "ticker": "^NSEI", "is_indian": True, "key": "grid_nifty"},
-        {"title": "Bank Nifty (NSE)", "ticker": "^NSEBANK", "is_indian": True, "key": "grid_banknifty"},
-        {"title": "Bitcoin (BTC/USDT)", "ticker": "BTC-USD", "is_indian": False, "key": "grid_btc"},
-        {"title": "Gold (GC=F)", "ticker": "GC=F", "is_indian": False, "key": "grid_gold"},
-        {"title": "Silver (SI=F)", "ticker": "SI=F", "is_indian": False, "key": "grid_silver"}
-    ]
-
-    for i in range(0, len(assets_config), 2):
-        row_cols = st.columns(2)
-        for j in range(2):
-            if i + j < len(assets_config):
-                cfg = assets_config[i + j]
-                with row_cols[j]:
-                    st.markdown(f"### 📊 {cfg['title']}")
-                    chosen_tf = st.selectbox(
-                        f"⏱️ Timeframe ({cfg['title']})",
-                        ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
-                        index=3,
-                        key=f"tf_{cfg['key']}"
-                    )
-                    
-                    p_map = {
-                        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
-                        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
-                    }
-                    per = p_map.get(chosen_tf, "20d")
-                    
-                    df_grid_item = fetch_and_resample_data(cfg["ticker"], chosen_tf, cfg["is_indian"], custom_period=per)
-                    render_tradingview_lightweight_chart(df_grid_item, cfg["title"], tf_key_suffix=cfg["key"])
-                    st.markdown("---")
