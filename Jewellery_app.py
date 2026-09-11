@@ -458,15 +458,19 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             pass
 
     try:
-        # Fixed Source Interval Selection for higher timeframes like 1h, 2h, 4h, 1d
+        # Improved Source Interval Selection for dynamic periods and YFinance limits
         if target_tf in ["1h", "2h"]:
             source_interval, period = "1h", custom_period if custom_period != "7d" else "60d"
         elif target_tf == "4h":
             source_interval, period = "1h", custom_period if custom_period != "7d" else "90d"
         elif target_tf == "1d":
             source_interval, period = "1d", "max" if "y" in custom_period else custom_period
-        else:
-            source_interval, period = "1m", custom_period
+        elif target_tf in ["15m", "30m"]:
+            source_interval, period = "15m", custom_period
+        elif target_tf in ["5m", "10m"]:
+            source_interval, period = "5m", custom_period
+        else: # 1m, 2m, 3m
+            source_interval, period = "1m", "7d" if custom_period == "1mo" else custom_period
 
         data = yf.download(
             tickers=ticker_symbol,
@@ -1063,6 +1067,9 @@ def render_tradingview_lightweight_chart(df, asset_title):
     with col_t6:
         show_yt_range = st.checkbox(st.session_state["name_yt"], value=True, key="toggle_yt_range")
 
+    st.markdown("##### 🔤 **Chart Labels Settings (चार्टवरील नावे)**")
+    show_labels = st.checkbox("Show Feature Names on Axis (अक्षावरील लेबल्सची नावे दाखवा)", value=False, key="toggle_labels_name")
+
     tv_candles = []
     tv_vwap = []
     markers = []
@@ -1135,32 +1142,41 @@ def render_tradingview_lightweight_chart(df, asset_title):
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
     vwap_json = json.dumps(tv_vwap)
 
+    # Dynamic Titles Based on Toggle
+    title_bsl = "💧 BSL (Liquidity)" if show_labels else ""
+    title_ssl = "💧 SSL (Liquidity)" if show_labels else ""
+    title_ob_bull = "🟢 Bullish OB" if show_labels else ""
+    title_ob_bear = "🔴 Bearish OB" if show_labels else ""
+    title_fvg = "⚡ Bullish FVG" if show_labels else ""
+    title_yt_sell = f"🎯 {st.session_state['name_yt']} Sell" if show_labels else ""
+    title_yt_buy = f"🎯 {st.session_state['name_yt']} Buy" if show_labels else ""
+
     bsl_line_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }});
-    candlestickSeries.createPriceLine({{ price: {ssl_price}, color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 SSL (Liquidity)' }});
+    candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '{title_bsl}' }});
+    candlestickSeries.createPriceLine({{ price: {ssl_price}, color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '{title_ssl}' }});
     """ if show_liq else ""
 
     ob_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bullish_ob}, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🟢 Bullish OB' }});
-    candlestickSeries.createPriceLine({{ price: {bearish_ob}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 Bearish OB' }});
+    candlestickSeries.createPriceLine({{ price: {bullish_ob}, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '{title_ob_bull}' }});
+    candlestickSeries.createPriceLine({{ price: {bearish_ob}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '{title_ob_bear}' }});
     """ if show_ob else ""
 
     fvg_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
+    candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '{title_fvg}' }});
     """ if show_fvg else ""
 
     vwap_series_js = f"""
     const vwapSeries = chart.addLineSeries({{
         color: '#2962FF',
         lineWidth: 2,
-        title: 'VWAP',
+        title: '{ "VWAP" if show_labels else "" }',
     }});
     vwapSeries.setData({vwap_json});
     """ if show_vwap else ""
 
     yt_strategy_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
-    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '{title_yt_sell}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '{title_yt_buy}' }});
     """ if show_yt_range else ""
 
     html_code = f"""
@@ -1310,7 +1326,7 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Tab 9 successfully removed)
+# 🌟 TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
@@ -1332,7 +1348,7 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-    st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
+    st.caption("मागील ३० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
@@ -1343,11 +1359,12 @@ with tab2:
             key="custom_chart_tf"
         )
     
+    # 🌟 १ महिन्याचा डेटा डिफॉल्ट ठेवला आहे
     chart_period_map = {
-        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
-        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
+        "1m": "1mo", "2m": "1mo", "3m": "1mo", "5m": "1mo", "10m": "1mo", "15m": "1mo", "30m": "1mo", 
+        "1h": "2mo", "2h": "3mo", "4h": "6mo", "1d": "1y"
     }
-    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    selected_period = chart_period_map.get(chart_timeframe, "1mo")
     
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
@@ -1455,7 +1472,7 @@ with tab2:
         st.plotly_chart(fig_tot_oi, use_container_width=True, key="mojo_tot_oi_trend")
 
     else:
-        st.info("ℹ️ OI डेटा गोळा होत आहे... १० सेकंद थांबा, टिक डेटा आल्यावर चार्ट्स अपडेट होतील.")
+        st.info("ℹ️ OI डेटा गोळा होतInfo आहे... १० सेकंद थांबा, टिक डेटा आल्यावर चार्ट्स अपडेट होतील.")
 
 with tab3:
     st.markdown(
