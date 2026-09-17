@@ -691,7 +691,7 @@ def analyze_smc_pro_v2(df, daily_trend):
     return pd.DataFrame()
 
 
-# --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (WITH SPOT ENTRY, SL & EXIT TARGET) ---
+# --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (INTRADAY SENSITIVE) ---
 def analyze_cisd_and_wyckoff(df):
     if df is None or len(df) < 10:
         return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
@@ -699,13 +699,6 @@ def analyze_cisd_and_wyckoff(df):
     df_calc = df.copy()
     cisd_signals = []
     wyckoff_phases = []
-
-    # Calculate ATR for dynamic SL/TP calculation
-    high_low = df_calc["high"] - df_calc["low"]
-    high_close = np.abs(df_calc["high"] - df_calc["close"].shift())
-    low_close = np.abs(df_calc["low"] - df_calc["close"].shift())
-    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df_calc['atr'] = true_range.rolling(14).mean().fillna(df_calc['close'] * 0.003)
 
     # Responsive 3 to 5-period dynamic rolling lookback for intraday micro-sweeps
     df_calc['swing_high_5'] = df_calc['high'].rolling(5).max().shift(1)
@@ -718,28 +711,16 @@ def analyze_cisd_and_wyckoff(df):
         prev1 = df_calc.iloc[i-1]
         
         t_str = row['timestamp'].strftime("%Y-%m-%d %H:%M") if hasattr(row['timestamp'], 'strftime') else str(row['timestamp'])
-        atr_v = float(row['atr']) if 'atr' in row and not pd.isna(row['atr']) else float(row['close']) * 0.003
-
+        
         # 1. BULLISH CISD (Shift from Selling Delivery to Buying Delivery)
         swept_low = (row['low'] < prev1['low']) or (prev1['low'] < df_calc['swing_low_5'].iloc[i-1]) or (row['low'] < df_calc['swing_low_3'].iloc[i])
         bullish_close_shift = (row['close'] > max(prev1['open'], prev1['close'])) and (row['close'] > row['open'])
 
         if swept_low and bullish_close_shift:
-            entry_p = round(float(row['close']), 2)
-            sl_p = round(min(float(row['low']), float(prev1['low'])) - (0.1 * atr_v), 2)
-            risk = entry_p - sl_p
-            if risk <= 0:
-                risk = atr_v * 1.5
-                sl_p = round(entry_p - risk, 2)
-            tp_p = round(entry_p + (risk * 2.0), 2)
-
             cisd_signals.append({
                 "Time": t_str,
                 "Type": "🟢 BULLISH CISD (Shift to Buying)",
-                "Spot Entry Price": entry_p,
-                "Stop Loss (SL)": sl_p,
-                "Exit Target (TP)": tp_p,
-                "Risk:Reward": "1 : 2.0",
+                "Price": round(float(row['close']), 2),
                 "Liquidity Swept": f"Low Swept ({round(float(min(row['low'], prev1['low'])), 2)})",
                 "Confirmation": f"Closed above Prev High/Body ({round(float(max(prev1['high'], prev1['open'])), 2)})",
                 "Action": "Target Next FVG / High for Long Entry"
@@ -750,21 +731,10 @@ def analyze_cisd_and_wyckoff(df):
         bearish_close_shift = (row['close'] < min(prev1['open'], prev1['close'])) and (row['close'] < row['open'])
 
         if swept_high and bearish_close_shift:
-            entry_p = round(float(row['close']), 2)
-            sl_p = round(max(float(row['high']), float(prev1['high'])) + (0.1 * atr_v), 2)
-            risk = sl_p - entry_p
-            if risk <= 0:
-                risk = atr_v * 1.5
-                sl_p = round(entry_p + risk, 2)
-            tp_p = round(entry_p - (risk * 2.0), 2)
-
             cisd_signals.append({
                 "Time": t_str,
                 "Type": "🔴 BEARISH CISD (Shift to Selling)",
-                "Spot Entry Price": entry_p,
-                "Stop Loss (SL)": sl_p,
-                "Exit Target (TP)": tp_p,
-                "Risk:Reward": "1 : 2.0",
+                "Price": round(float(row['close']), 2),
                 "Liquidity Swept": f"High Swept ({round(float(max(row['high'], prev1['high'])), 2)})",
                 "Confirmation": f"Closed below Prev Low/Body ({round(float(min(prev1['low'], prev1['open'])), 2)})",
                 "Action": "Target Next FVG / Low for Short Entry"
@@ -779,39 +749,17 @@ def analyze_cisd_and_wyckoff(df):
         is_upthrust = (row['high'] > range_high) and (row['close'] < range_high)
 
         if is_spring:
-            entry_p = round(float(row['close']), 2)
-            sl_p = round(float(row['low']) - (0.1 * atr_v), 2)
-            risk = entry_p - sl_p
-            if risk <= 0:
-                risk = atr_v * 1.5
-                sl_p = round(entry_p - risk, 2)
-            tp_p = round(entry_p + (risk * 2.5), 2)
-
             wyckoff_phases.append({
                 "Time": t_str,
                 "Phase": "⚡ WYCKOFF ACCUMULATION -> SPRING (Judas Swing)",
-                "Spot Entry": entry_p,
-                "Stop Loss (SL)": sl_p,
-                "Exit Target (TP)": tp_p,
                 "Status": "🟢 MANIPULATION COMPLETE -> MARKUP EXPECTED",
                 "Key Level": f"Range Low Swept: {round(float(range_low), 2)}",
                 "Smart Money Intent": "Institutional Accumulation / Stop Loss Hunt"
             })
         elif is_upthrust:
-            entry_p = round(float(row['close']), 2)
-            sl_p = round(float(row['high']) + (0.1 * atr_v), 2)
-            risk = sl_p - entry_p
-            if risk <= 0:
-                risk = atr_v * 1.5
-                sl_p = round(entry_p + risk, 2)
-            tp_p = round(entry_p - (risk * 2.5), 2)
-
             wyckoff_phases.append({
                 "Time": t_str,
                 "Phase": "⚡ WYCKOFF DISTRIBUTION -> UPTHRUST (UTAD)",
-                "Spot Entry": entry_p,
-                "Stop Loss (SL)": sl_p,
-                "Exit Target (TP)": tp_p,
                 "Status": "🔴 MANIPULATION COMPLETE -> MARKDOWN EXPECTED",
                 "Key Level": f"Range High Swept: {round(float(range_high), 2)}",
                 "Smart Money Intent": "Institutional Distribution / Retail Liquidity Trap"
@@ -2247,10 +2195,10 @@ with tab8:
 
     st.dataframe(pd.DataFrame(scan_rows), use_container_width=True)
 
-# --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (WITH EXACT SPOT ENTRY, SL & EXIT TARGET) ---
+# --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
 with tab9:
     st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
-    st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle) चे रिअल-टाईम सिग्नल्स, स्पॉट एंट्री, स्टॉप लॉस आणि टार्गेटसह.")
+    st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
     st.markdown("---")
 
     # 1. Concept Educational Summary Cards
@@ -2298,8 +2246,8 @@ with tab9:
 
     st.markdown("---")
 
-    # 3. Real-Time Signals DataTables (Includes Spot Entry, SL, and Exit Target)
-    st.markdown("### 🟢🔴 **Real-Time CISD (Change in State of Delivery) Signals with Entry, SL & Exit Target**")
+    # 3. Real-Time Signals DataTables (Today's signals sorted on top)
+    st.markdown("### 🟢🔴 **Real-Time CISD (Change in State of Delivery) Signals**")
     if not df_cisd_cisd.empty:
         st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
     else:
@@ -2307,7 +2255,7 @@ with tab9:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("### 🌀 **Wyckoff PO3 (Accumulation - Manipulation - Distribution) Sweep Log with SL & Target**")
+    st.markdown("### 🌀 **Wyckoff PO3 (Accumulation - Manipulation - Distribution) Sweep Log**")
     if not df_wyckoff_po3.empty:
         st.dataframe(df_wyckoff_po3.iloc[::-1], use_container_width=True)
     else:
@@ -2315,8 +2263,8 @@ with tab9:
 
     st.markdown("---")
 
-    # 4. Multi-Asset CISD & Wyckoff Global Scanner (Dynamic real-time evaluation with Spot Entry, SL & Exit Targets)
-    st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix with Real-Time Entry/SL/Exit**")
+    # 4. Multi-Asset CISD & Wyckoff Global Scanner (Dynamic real-time evaluation for Gold & all assets)
+    st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix**")
     
     global_matrix_assets = [
         ("NIFTY 50 (NSE)", "^NSEI"),
@@ -2330,35 +2278,21 @@ with tab9:
     for g_label, g_sym in global_matrix_assets:
         if g_sym == ticker:
             is_bull_g = price_change >= 0
-            cur_p = current_price
         else:
-            is_bull_g, cur_p = fetch_quick_asset_status(g_sym)
-            if cur_p == 0.0:
-                cur_p = current_price
+            is_bull_g, _ = fetch_quick_asset_status(g_sym)
             
-        cur_p = round(cur_p, 2)
         if is_bull_g:
-            sl_val = round(cur_p * 0.995, 2)
-            tp_val = round(cur_p * 1.010, 2)
             matrix_rows.append({
                 "Asset Name": g_label,
                 "Wyckoff Phase": "Markup Phase 🚀",
-                "Spot Entry": cur_p,
-                "Stop Loss (SL)": sl_val,
-                "Exit Target (TP)": tp_val,
                 "CISD Status": "Bullish CISD Confirmed",
                 "PO3 Trap Trigger": "Spring Sweep Completed",
                 "Action Signal": "🟢 BUY (Expansion Entry)"
             })
         else:
-            sl_val = round(cur_p * 1.005, 2)
-            tp_val = round(cur_p * 0.990, 2)
             matrix_rows.append({
                 "Asset Name": g_label,
                 "Wyckoff Phase": "Markdown Phase 📉",
-                "Spot Entry": cur_p,
-                "Stop Loss (SL)": sl_val,
-                "Exit Target (TP)": tp_val,
                 "CISD Status": "Bearish CISD Active",
                 "PO3 Trap Trigger": "Upthrust Trap Active",
                 "Action Signal": "🔴 SELL (Distribution Dump)"
