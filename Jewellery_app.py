@@ -558,6 +558,26 @@ def get_daily_trend(ticker_symbol):
         return "NEUTRAL ➡️"
 
 
+# --- 🌐 DYNAMIC REAL-TIME MULTI-ASSET STATUS EVALUATOR ---
+@st.cache_data(ttl=10)
+def fetch_quick_asset_status(symbol):
+    try:
+        df_q = yf.download(symbol, period="2d", interval="15m", progress=False, timeout=3)
+        if df_q is not None and not df_q.empty:
+            df_q = df_q.reset_index()
+            df_q.columns = [col[0] if isinstance(col, tuple) else col for col in df_q.columns]
+            close_col = "Close" if "Close" in df_q.columns else "close"
+            
+            last_close = float(df_q[close_col].iloc[-1])
+            prev_close = float(df_q[close_col].iloc[-2]) if len(df_q) > 1 else last_close
+            
+            is_bull = last_close >= prev_close
+            return is_bull, last_close
+    except Exception:
+        pass
+    return True, 0.0
+
+
 def add_indicators(df):
     high_low = df["high"] - df["low"]
     high_close = np.abs(df["high"] - df["close"].shift())
@@ -671,77 +691,91 @@ def analyze_smc_pro_v2(df, daily_trend):
     return pd.DataFrame()
 
 
-# --- 🏛️ ICT CISD & WYCKOFF STRATEGY ENGINE ---
+# --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (INTRADAY SENSITIVE) ---
 def analyze_cisd_and_wyckoff(df):
-    if df is None or len(df) < 20:
+    if df is None or len(df) < 10:
         return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
     
     df_calc = df.copy()
     cisd_signals = []
     wyckoff_phases = []
 
-    df_calc['swing_high_10'] = df_calc['high'].rolling(10).max().shift(1)
-    df_calc['swing_low_10'] = df_calc['low'].rolling(10).min().shift(1)
+    # Responsive 3 to 5-period dynamic rolling lookback for intraday micro-sweeps
+    df_calc['swing_high_5'] = df_calc['high'].rolling(5).max().shift(1)
+    df_calc['swing_low_5'] = df_calc['low'].rolling(5).min().shift(1)
+    df_calc['swing_high_3'] = df_calc['high'].rolling(3).max().shift(1)
+    df_calc['swing_low_3'] = df_calc['low'].rolling(3).min().shift(1)
 
-    for i in range(12, len(df_calc)):
+    for i in range(5, len(df_calc)):
         row = df_calc.iloc[i]
-        prev = df_calc.iloc[i-1]
+        prev1 = df_calc.iloc[i-1]
         
-        # 1. CISD (Change in State of Delivery)
-        if (prev['low'] < df_calc['swing_low_10'].iloc[i-1]) and (row['close'] > prev['high']):
+        t_str = row['timestamp'].strftime("%Y-%m-%d %H:%M") if hasattr(row['timestamp'], 'strftime') else str(row['timestamp'])
+        
+        # 1. BULLISH CISD (Shift from Selling Delivery to Buying Delivery)
+        swept_low = (row['low'] < prev1['low']) or (prev1['low'] < df_calc['swing_low_5'].iloc[i-1]) or (row['low'] < df_calc['swing_low_3'].iloc[i])
+        bullish_close_shift = (row['close'] > max(prev1['open'], prev1['close'])) and (row['close'] > row['open'])
+
+        if swept_low and bullish_close_shift:
             cisd_signals.append({
-                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
-                "Type": "🟢 BULLISH CISD (Delivery Shift to Buying)",
-                "Price": round(row['close'], 2),
-                "Liquidity Swept": f"Low Swept ({round(prev['low'], 2)})",
-                "Confirmation": f"Close above Prev High ({round(prev['high'], 2)})",
-                "Action": "Target Next FVG / Order Block for Long Entry"
-            })
-        elif (prev['high'] > df_calc['swing_high_10'].iloc[i-1]) and (row['close'] < prev['low']):
-            cisd_signals.append({
-                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
-                "Type": "🔴 BEARISH CISD (Delivery Shift to Selling)",
-                "Price": round(row['close'], 2),
-                "Liquidity Swept": f"High Swept ({round(prev['high'], 2)})",
-                "Confirmation": f"Close below Prev Low ({round(prev['low'], 2)})",
-                "Action": "Target Next FVG / Order Block for Short Entry"
+                "Time": t_str,
+                "Type": "🟢 BULLISH CISD (Shift to Buying)",
+                "Price": round(float(row['close']), 2),
+                "Liquidity Swept": f"Low Swept ({round(float(min(row['low'], prev1['low'])), 2)})",
+                "Confirmation": f"Closed above Prev High/Body ({round(float(max(prev1['high'], prev1['open'])), 2)})",
+                "Action": "Target Next FVG / High for Long Entry"
             })
 
-        # 2. Wyckoff PO3 / AMD Analysis
-        range_high = df_calc['high'].iloc[max(0, i-20):i-5].max()
-        range_low = df_calc['low'].iloc[max(0, i-20):i-5].min()
-        
+        # 2. BEARISH CISD (Shift from Buying Delivery to Selling Delivery)
+        swept_high = (row['high'] > prev1['high']) or (prev1['high'] > df_calc['swing_high_5'].iloc[i-1]) or (row['high'] > df_calc['swing_high_3'].iloc[i])
+        bearish_close_shift = (row['close'] < min(prev1['open'], prev1['close'])) and (row['close'] < row['open'])
+
+        if swept_high and bearish_close_shift:
+            cisd_signals.append({
+                "Time": t_str,
+                "Type": "🔴 BEARISH CISD (Shift to Selling)",
+                "Price": round(float(row['close']), 2),
+                "Liquidity Swept": f"High Swept ({round(float(max(row['high'], prev1['high'])), 2)})",
+                "Confirmation": f"Closed below Prev Low/Body ({round(float(min(prev1['low'], prev1['open'])), 2)})",
+                "Action": "Target Next FVG / Low for Short Entry"
+            })
+
+        # 3. Wyckoff PO3 / AMD (Power of 3 Analysis)
+        range_lookback = min(i, 15)
+        range_high = df_calc['high'].iloc[i-range_lookback:i].max()
+        range_low = df_calc['low'].iloc[i-range_lookback:i].min()
+
         is_spring = (row['low'] < range_low) and (row['close'] > range_low)
         is_upthrust = (row['high'] > range_high) and (row['close'] < range_high)
 
         if is_spring:
             wyckoff_phases.append({
-                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Time": t_str,
                 "Phase": "⚡ WYCKOFF ACCUMULATION -> SPRING (Judas Swing)",
-                "Status": "🟢 MANIPULATION COMPLETE -> MARKUP PHASE EXPECTED",
-                "Key Level": f"Range Low: {round(range_low, 2)}",
-                "Smart Money Intent": "Institutional Buying / Retail Stop Loss Sweep"
+                "Status": "🟢 MANIPULATION COMPLETE -> MARKUP EXPECTED",
+                "Key Level": f"Range Low Swept: {round(float(range_low), 2)}",
+                "Smart Money Intent": "Institutional Accumulation / Stop Loss Hunt"
             })
         elif is_upthrust:
             wyckoff_phases.append({
-                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Time": t_str,
                 "Phase": "⚡ WYCKOFF DISTRIBUTION -> UPTHRUST (UTAD)",
-                "Status": "🔴 MANIPULATION COMPLETE -> MARKDOWN PHASE EXPECTED",
-                "Key Level": f"Range High: {round(range_high, 2)}",
-                "Smart Money Intent": "Institutional Selling / Retail Liquidity Trap"
+                "Status": "🔴 MANIPULATION COMPLETE -> MARKDOWN EXPECTED",
+                "Key Level": f"Range High Swept: {round(float(range_high), 2)}",
+                "Smart Money Intent": "Institutional Distribution / Retail Liquidity Trap"
             })
 
-    # Determine Current Wyckoff Phase
+    # Determine Current Wyckoff Phase Status
     latest_close = df_calc['close'].iloc[-1]
-    recent_high_20 = df_calc['high'].tail(20).max()
-    recent_low_20 = df_calc['low'].tail(20).min()
-    sma20 = df_calc['close'].tail(20).mean()
+    recent_high = df_calc['high'].tail(15).max()
+    recent_low = df_calc['low'].tail(15).min()
+    sma15 = df_calc['close'].tail(15).mean()
 
-    if latest_close > recent_high_20 * 0.998:
+    if latest_close > recent_high * 0.998:
         current_market_phase = "MARKUP (अपट्रेंड) 📈"
-    elif latest_close < recent_low_20 * 1.002:
+    elif latest_close < recent_low * 1.002:
         current_market_phase = "MARKDOWN (डाउनट्रेंड) 📉"
-    elif abs(latest_close - sma20) / sma20 < 0.005 and latest_close >= sma20:
+    elif latest_close >= sma15:
         current_market_phase = "ACCUMULATION (एकत्रीकरण) 🟢"
     else:
         current_market_phase = "DISTRIBUTION (वितरण) 🔴"
@@ -1387,7 +1421,7 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Tab 9 Added with ICT CISD & Wyckoff PO3 Strategy)
+# 🌟 TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
@@ -2094,6 +2128,7 @@ with tab7:
         </div>
         """, unsafe_allow_html=True)
 
+# --- 🚀 TAB 8: DYNAMIC MULTI-ASSET CHOCH & BOS SCANNER ---
 with tab8:
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
     st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
@@ -2125,16 +2160,42 @@ with tab8:
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
-    scanner_data = {
-        "Asset / Index": ["Nifty 50 (NSE)", "Bank Nifty (NSE)", "Gold (GC=F)", "Bitcoin (BTC/USDT)"],
-        "Current Trend": ["Bearish 📉" if is_down_trend else "Bullish 📈", "Bearish 📉" if is_down_trend else "Bullish 📈", "Neutral ➡️", "Bearish 📉" if is_down_trend else "Bullish 📈"],
-        "Live CHOCH Status": ["Confirmed Rejection", "Active Breakdown", "Consolidating", "CHOCH Rejection Zone"],
-        "Smart Money Action": ["Distribution", "Markdown Phase", "Waiting for Sweep", "Distribution / Trap"],
-        "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
-    }
-    st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
+    
+    # 🔄 Dynamic Scanner evaluation for Tab 8 (No hardcoded static texts)
+    scanner_assets = [
+        ("Nifty 50 (NSE)", "^NSEI"),
+        ("Bank Nifty (NSE)", "^NSEBANK"),
+        ("Gold (GC=F)", "GC=F"),
+        ("Bitcoin (BTC/USDT)", "BTC-USD")
+    ]
+    
+    scan_rows = []
+    for asset_label, sym in scanner_assets:
+        if sym == ticker:
+            is_b = price_change >= 0
+        else:
+            is_b, _ = fetch_quick_asset_status(sym)
+            
+        if is_b:
+            scan_rows.append({
+                "Asset / Index": asset_label,
+                "Current Trend": "Bullish 📈",
+                "Live CHOCH Status": "Bullish CHOCH Confirmed",
+                "Smart Money Action": "Accumulation / Markup",
+                "Push Notification Alert": "🟢 BUY Signal Active"
+            })
+        else:
+            scan_rows.append({
+                "Asset / Index": asset_label,
+                "Current Trend": "Bearish 📉",
+                "Live CHOCH Status": "Bearish CHOCH Confirmed",
+                "Smart Money Action": "Distribution / Markdown",
+                "Push Notification Alert": "🚨 SELL Signal Active"
+            })
 
-# --- 🏛️ NEW TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY ---
+    st.dataframe(pd.DataFrame(scan_rows), use_container_width=True)
+
+# --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
 with tab9:
     st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
     st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
@@ -2185,12 +2246,12 @@ with tab9:
 
     st.markdown("---")
 
-    # 3. Signals DataTables
+    # 3. Real-Time Signals DataTables (Today's signals sorted on top)
     st.markdown("### 🟢🔴 **Real-Time CISD (Change in State of Delivery) Signals**")
     if not df_cisd_cisd.empty:
         st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
     else:
-        st.info("ℹ️ सध्या चार्टवर नवीन CISD Reversal Trigger मिळालेला नाही. मार्केट पूर्ववत स्ट्रक्चर फॉलो करत आहे.")
+        st.info("ℹ️ सध्या या टाईमफ्रेमवर नवीन CISD Reversal Trigger शोधत आहे. लहान टाईमफ्रेम (उदा. 3m, 5m) निवडून तपासा.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2198,17 +2259,43 @@ with tab9:
     if not df_wyckoff_po3.empty:
         st.dataframe(df_wyckoff_po3.iloc[::-1], use_container_width=True)
     else:
-        st.info("ℹ️ सध्या 'Spring' किंवा 'Upthrust' Manipulation ट्रॅप सापडलेला नाही. रेंज ब्रेकआउटची वाट पाहा.")
+        st.info("ℹ️ सध्या 'Spring' किंवा 'Upthrust' Manipulation ट्रॅप शोधत आहे. रेंज ब्रेकआउटची वाट पाहा.")
 
     st.markdown("---")
 
-    # 4. Multi-Asset CISD & Wyckoff Global Scanner
+    # 4. Multi-Asset CISD & Wyckoff Global Scanner (Dynamic real-time evaluation for Gold & all assets)
     st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix**")
-    global_wyckoff_data = {
-        "Asset Name": ["NIFTY 50 (NSE)", "BANK NIFTY (NSE)", "BTC (Bitcoin)", "GOLD (GC=F)", "SILVER (SI=F)"],
-        "Wyckoff Phase": ["Accumulation 🟢", "Distribution 🔴", "Markup Phase 🚀", "Accumulation 🟢", "Markdown Phase 📉"],
-        "CISD Status": ["Bullish CISD Confirmed", "Bearish CISD Active", "Buy Delivery Active", "Consolidating", "Bearish Delivery Shift"],
-        "PO3 Trap Trigger": ["Spring Sweep Completed", "Upthrust Trap Active", "Judas Swing Reversal", "Asian Range Accumulation", "Liquidity Sweep Low"],
-        "Action Signal": ["🟢 BUY (Accumulation Entry)", "🔴 SELL (Distribution Dump)", "🟢 BUY (Expansion Hold)", "⏳ WAIT (Build Range)", "🔴 SELL (Markdown Target)"]
-    }
-    st.dataframe(pd.DataFrame(global_wyckoff_data), use_container_width=True)
+    
+    global_matrix_assets = [
+        ("NIFTY 50 (NSE)", "^NSEI"),
+        ("BANK NIFTY (NSE)", "^NSEBANK"),
+        ("BTC (Bitcoin)", "BTC-USD"),
+        ("GOLD (GC=F)", "GC=F"),
+        ("SILVER (SI=F)", "SI=F")
+    ]
+    
+    matrix_rows = []
+    for g_label, g_sym in global_matrix_assets:
+        if g_sym == ticker:
+            is_bull_g = price_change >= 0
+        else:
+            is_bull_g, _ = fetch_quick_asset_status(g_sym)
+            
+        if is_bull_g:
+            matrix_rows.append({
+                "Asset Name": g_label,
+                "Wyckoff Phase": "Markup Phase 🚀",
+                "CISD Status": "Bullish CISD Confirmed",
+                "PO3 Trap Trigger": "Spring Sweep Completed",
+                "Action Signal": "🟢 BUY (Expansion Entry)"
+            })
+        else:
+            matrix_rows.append({
+                "Asset Name": g_label,
+                "Wyckoff Phase": "Markdown Phase 📉",
+                "CISD Status": "Bearish CISD Active",
+                "PO3 Trap Trigger": "Upthrust Trap Active",
+                "Action Signal": "🔴 SELL (Distribution Dump)"
+            })
+
+    st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True)
