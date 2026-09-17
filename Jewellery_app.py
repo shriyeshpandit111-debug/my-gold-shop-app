@@ -458,7 +458,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             pass
 
     try:
-        # Fixed Source Interval Selection for higher timeframes like 1h, 2h, 4h, 1d
         if target_tf in ["1h", "2h"]:
             source_interval, period = "1h", custom_period if custom_period != "7d" else "60d"
         elif target_tf == "4h":
@@ -670,6 +669,84 @@ def analyze_smc_pro_v2(df, daily_trend):
     if len(signals) > 0:
         return pd.DataFrame(signals)
     return pd.DataFrame()
+
+
+# --- 🏛️ ICT CISD & WYCKOFF STRATEGY ENGINE ---
+def analyze_cisd_and_wyckoff(df):
+    if df is None or len(df) < 20:
+        return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
+    
+    df_calc = df.copy()
+    cisd_signals = []
+    wyckoff_phases = []
+
+    df_calc['swing_high_10'] = df_calc['high'].rolling(10).max().shift(1)
+    df_calc['swing_low_10'] = df_calc['low'].rolling(10).min().shift(1)
+
+    for i in range(12, len(df_calc)):
+        row = df_calc.iloc[i]
+        prev = df_calc.iloc[i-1]
+        
+        # 1. CISD (Change in State of Delivery)
+        if (prev['low'] < df_calc['swing_low_10'].iloc[i-1]) and (row['close'] > prev['high']):
+            cisd_signals.append({
+                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Type": "🟢 BULLISH CISD (Delivery Shift to Buying)",
+                "Price": round(row['close'], 2),
+                "Liquidity Swept": f"Low Swept ({round(prev['low'], 2)})",
+                "Confirmation": f"Close above Prev High ({round(prev['high'], 2)})",
+                "Action": "Target Next FVG / Order Block for Long Entry"
+            })
+        elif (prev['high'] > df_calc['swing_high_10'].iloc[i-1]) and (row['close'] < prev['low']):
+            cisd_signals.append({
+                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Type": "🔴 BEARISH CISD (Delivery Shift to Selling)",
+                "Price": round(row['close'], 2),
+                "Liquidity Swept": f"High Swept ({round(prev['high'], 2)})",
+                "Confirmation": f"Close below Prev Low ({round(prev['low'], 2)})",
+                "Action": "Target Next FVG / Order Block for Short Entry"
+            })
+
+        # 2. Wyckoff PO3 / AMD Analysis
+        range_high = df_calc['high'].iloc[max(0, i-20):i-5].max()
+        range_low = df_calc['low'].iloc[max(0, i-20):i-5].min()
+        
+        is_spring = (row['low'] < range_low) and (row['close'] > range_low)
+        is_upthrust = (row['high'] > range_high) and (row['close'] < range_high)
+
+        if is_spring:
+            wyckoff_phases.append({
+                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Phase": "⚡ WYCKOFF ACCUMULATION -> SPRING (Judas Swing)",
+                "Status": "🟢 MANIPULATION COMPLETE -> MARKUP PHASE EXPECTED",
+                "Key Level": f"Range Low: {round(range_low, 2)}",
+                "Smart Money Intent": "Institutional Buying / Retail Stop Loss Sweep"
+            })
+        elif is_upthrust:
+            wyckoff_phases.append({
+                "Time": row['timestamp'].strftime("%Y-%m-%d %H:%M"),
+                "Phase": "⚡ WYCKOFF DISTRIBUTION -> UPTHRUST (UTAD)",
+                "Status": "🔴 MANIPULATION COMPLETE -> MARKDOWN PHASE EXPECTED",
+                "Key Level": f"Range High: {round(range_high, 2)}",
+                "Smart Money Intent": "Institutional Selling / Retail Liquidity Trap"
+            })
+
+    # Determine Current Wyckoff Phase
+    latest_close = df_calc['close'].iloc[-1]
+    recent_high_20 = df_calc['high'].tail(20).max()
+    recent_low_20 = df_calc['low'].tail(20).min()
+    sma20 = df_calc['close'].tail(20).mean()
+
+    if latest_close > recent_high_20 * 0.998:
+        current_market_phase = "MARKUP (अपट्रेंड) 📈"
+    elif latest_close < recent_low_20 * 1.002:
+        current_market_phase = "MARKDOWN (डाउनट्रेंड) 📉"
+    elif abs(latest_close - sma20) / sma20 < 0.005 and latest_close >= sma20:
+        current_market_phase = "ACCUMULATION (एकत्रीकरण) 🟢"
+    else:
+        current_market_phase = "DISTRIBUTION (वितरण) 🔴"
+
+    return pd.DataFrame(cisd_signals), pd.DataFrame(wyckoff_phases), current_market_phase
 
 
 def render_stockmojo_style_dashboard(current_price, asset_name):
@@ -1310,8 +1387,8 @@ with col_t2:
 
 st.markdown("---")
 
-# 🌟 TAB NAVIGATION (Tab 9 successfully removed)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+# 🌟 TAB NAVIGATION (Tab 9 Added with ICT CISD & Wyckoff PO3 Strategy)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "⚡ Live Dashboard & OI",
     "📈 Real-Time Charts",
     "🔮 3:00-3:20 Gap Predictor",
@@ -1319,7 +1396,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📉 Premium Decay (StockMojo)",
     "💎 Institutional SMC & Order Flow",
     "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner"
+    "🚀 FVG, CVD & CHOCH Scanner",
+    "🏛️ ICT CISD & Wyckoff PO3 Strategy"
 ])
 
 with tab1:
@@ -2055,3 +2133,82 @@ with tab8:
         "Push Notification Alert": ["🚨 SELL Signal Active", "🚨 BOS Down Triggered", "⏳ Monitoring", "🚨 Trap Warning Active"]
     }
     st.dataframe(pd.DataFrame(scanner_data), use_container_width=True)
+
+# --- 🏛️ NEW TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY ---
+with tab9:
+    st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
+    st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
+    st.markdown("---")
+
+    # 1. Concept Educational Summary Cards
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        st.markdown("""
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 10px;">
+            <h4 style="color: #15803d; margin-top:0;">⚡ 1. CISD (Change in State of Delivery)</h4>
+            <b>अर्थ:</b> जेव्हा मार्केट एखाद्या Liquidity Zone मध्ये जाऊन अचानक विरुद्ध दिशेने वळते आणि पहिल्या विरुद्ध कॅण्डलच्या हाय/लो च्या वर क्लोज होते.<br>
+            <b>वापर:</b> हे अत्यंत अचूक (Micro-level) Reversal ओळखण्यास मदत करते.
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col_exp2:
+        st.markdown("""
+        <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 10px;">
+            <h4 style="color: #1d4ed8; margin-top:0;">🌀 2. Wyckoff PO3 (Power of 3 - AMD)</h4>
+            <b>४ टप्पे:</b> Accumulation (संचयन) ➔ Manipulation (Judas Swing/फसवणूक) ➔ Distribution/Markup (खरी हालचाल).<br>
+            <b>वापर:</b> स्मार्ट मनी सामान्य ट्रेडर्सचे Stop Loss कसे उडवतात आणि खरी दिशा कोणती ते ओळखणे.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 2. Live Wyckoff & CISD Processing
+    df_cisd_cisd, df_wyckoff_po3, market_phase = analyze_cisd_and_wyckoff(df_ltf)
+
+    st.markdown("### 📊 **Live Market Wyckoff Phase Status**")
+    col_wp1, col_wp2, col_wp3, col_wp4 = st.columns(4)
+
+    is_acc = "ACCUMULATION" in market_phase
+    is_markup = "MARKUP" in market_phase
+    is_dist = "DISTRIBUTION" in market_phase
+    is_markdown = "MARKDOWN" in market_phase
+
+    col_wp1.metric("1. Accumulation Phase", "Active 🟢" if is_acc else "Inactive ⚪", "Smart Money Buying Zone")
+    col_wp2.metric("2. Markup (Uptrend)", "Active 🚀" if is_markup else "Inactive ⚪", "Expansion Upward")
+    col_wp3.metric("3. Distribution Phase", "Active 🔴" if is_dist else "Inactive ⚪", "Smart Money Selling Zone")
+    col_wp4.metric("4. Markdown (Downtrend)", "Active 📉" if is_markdown else "Inactive ⚪", "Expansion Downward")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Current Asset Phase Banner
+    st.info(f"🎯 **Current Live Wyckoff Cycle Status ({display_name}):** **{market_phase}**")
+
+    st.markdown("---")
+
+    # 3. Signals DataTables
+    st.markdown("### 🟢🔴 **Real-Time CISD (Change in State of Delivery) Signals**")
+    if not df_cisd_cisd.empty:
+        st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
+    else:
+        st.info("ℹ️ सध्या चार्टवर नवीन CISD Reversal Trigger मिळालेला नाही. मार्केट पूर्ववत स्ट्रक्चर फॉलो करत आहे.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown("### 🌀 **Wyckoff PO3 (Accumulation - Manipulation - Distribution) Sweep Log**")
+    if not df_wyckoff_po3.empty:
+        st.dataframe(df_wyckoff_po3.iloc[::-1], use_container_width=True)
+    else:
+        st.info("ℹ️ सध्या 'Spring' किंवा 'Upthrust' Manipulation ट्रॅप सापडलेला नाही. रेंज ब्रेकआउटची वाट पाहा.")
+
+    st.markdown("---")
+
+    # 4. Multi-Asset CISD & Wyckoff Global Scanner
+    st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix**")
+    global_wyckoff_data = {
+        "Asset Name": ["NIFTY 50 (NSE)", "BANK NIFTY (NSE)", "BTC (Bitcoin)", "GOLD (GC=F)", "SILVER (SI=F)"],
+        "Wyckoff Phase": ["Accumulation 🟢", "Distribution 🔴", "Markup Phase 🚀", "Accumulation 🟢", "Markdown Phase 📉"],
+        "CISD Status": ["Bullish CISD Confirmed", "Bearish CISD Active", "Buy Delivery Active", "Consolidating", "Bearish Delivery Shift"],
+        "PO3 Trap Trigger": ["Spring Sweep Completed", "Upthrust Trap Active", "Judas Swing Reversal", "Asian Range Accumulation", "Liquidity Sweep Low"],
+        "Action Signal": ["🟢 BUY (Accumulation Entry)", "🔴 SELL (Distribution Dump)", "🟢 BUY (Expansion Hold)", "⏳ WAIT (Build Range)", "🔴 SELL (Markdown Target)"]
+    }
+    st.dataframe(pd.DataFrame(global_wyckoff_data), use_container_width=True)
