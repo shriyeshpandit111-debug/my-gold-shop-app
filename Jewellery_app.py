@@ -1,18 +1,330 @@
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict, deque
 import json
 import threading
 import time
+import requests
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pyotp
 from SmartApi import SmartConnect
+try:
+    from SmartApi.smartWebSocketV2 import SmartWebSocketV2
+except Exception:
+    SmartWebSocketV2 = None
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
+
+# --- REAL-TIME TAB 6 ORDER-FLOW ENGINE STATE ---
+# These module-level objects are deliberately separate from Streamlit session_state.
+# Streamlit reruns do not recreate them, so closed-candle values remain fixed while
+# the WebSocket workers continue receiving live ticks in the background.
+_ORDERFLOW_LOCK = threading.RLock()
+_BINANCE_ORDERFLOW = {
+    "symbol": None,
+    "connected": False,
+    "last_error": "",
+    "trades": defaultdict(deque),
+    "last_trade_ts": {},
+}
+_ANGEL_ORDERFLOW = {
+    "key": None,
+    "connected": False,
+    "last_error": "",
+    "ticks": defaultdict(deque),
+    "last_tick_ts": {},
+}
+_ORDERFLOW_WORKERS_STARTED = set()
+
+
+def _tf_minutes(tf):
+    return {
+        "1m": 1, "2m": 2, "3m": 3, "5m": 5, "10m": 10,
+        "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240,
+        "1d": 1440,
+    }.get(tf, 1)
+
+
+def _binance_candle_start_ms(ts_ms, tf):
+    mins = _tf_minutes(tf)
+    bucket_ms = mins * 60 * 1000
+    return int(ts_ms // bucket_ms) * bucket_ms
+
+
+def _angel_candle_start_ms(ts_ms, tf):
+    mins = _tf_minutes(tf)
+    bucket_ms = mins * 60 * 1000
+    # Angel exchange timestamps are epoch milliseconds.
+    return int(ts_ms // bucket_ms) * bucket_ms
+
+
+def _prune_deque(q, max_items=20000):
+    while len(q) > max_items:
+        q.popleft()
+
+
+def _start_binance_orderflow(symbol):
+    """Start one real Binance aggTrade worker per symbol.
+
+    Binance aggTrade gives price, quantity and the `m` flag. `m=True` means
+    the buyer is the maker, therefore the aggressing/taking side is SELL.
+    `m=False` means the aggressing/taking side is BUY. This is used for
+    executed-volume delta (not order-book depth).
+    """
+    symbol = symbol.upper().replace("=X", "").replace("/", "")
+    if not symbol or not symbol.isalnum():
+        return
+    worker_key = f"binance:{symbol}"
+    with _ORDERFLOW_LOCK:
+        if worker_key in _ORDERFLOW_WORKERS_STARTED:
+            _BINANCE_ORDERFLOW["symbol"] = symbol
+            return
+        _ORDERFLOW_WORKERS_STARTED.add(worker_key)
+        _BINANCE_ORDERFLOW["symbol"] = symbol
+        _BINANCE_ORDERFLOW["trades"][symbol] = deque(maxlen=30000)
+
+    def run():
+        url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@aggTrade"
+
+        def on_open(ws):
+            with _ORDERFLOW_LOCK:
+                _BINANCE_ORDERFLOW["connected"] = True
+                _BINANCE_ORDERFLOW["last_error"] = ""
+
+        def on_message(ws, message):
+            try:
+                data = json.loads(message)
+                if data.get("e") != "aggTrade":
+                    return
+                ts_ms = int(data.get("T") or data.get("E"))
+                qty = float(data.get("q", 0.0))
+                if qty <= 0:
+                    return
+                is_buyer_maker = bool(data.get("m", False))
+                buy = qty if not is_buyer_maker else 0.0
+                sell = qty if is_buyer_maker else 0.0
+                with _ORDERFLOW_LOCK:
+                    q = _BINANCE_ORDERFLOW["trades"][symbol]
+                    q.append({"ts": ts_ms, "buy": buy, "sell": sell, "qty": qty})
+                    _BINANCE_ORDERFLOW["last_trade_ts"][symbol] = ts_ms
+                    _BINANCE_ORDERFLOW["connected"] = True
+            except Exception as exc:
+                with _ORDERFLOW_LOCK:
+                    _BINANCE_ORDERFLOW["last_error"] = str(exc)
+
+        def on_error(ws, error):
+            with _ORDERFLOW_LOCK:
+                _BINANCE_ORDERFLOW["connected"] = False
+                _BINANCE_ORDERFLOW["last_error"] = str(error)
+
+        def on_close(ws, close_status_code, close_msg):
+            with _ORDERFLOW_LOCK:
+                _BINANCE_ORDERFLOW["connected"] = False
+
+        while True:
+            try:
+                ws = websocket.WebSocketApp(
+                    url, on_open=on_open, on_message=on_message,
+                    on_error=on_error, on_close=on_close
+                )
+                # websocket-client handles Binance ping/pong frames.
+                ws.run_forever(ping_interval=15, ping_timeout=10)
+            except Exception as exc:
+                with _ORDERFLOW_LOCK:
+                    _BINANCE_ORDERFLOW["connected"] = False
+                    _BINANCE_ORDERFLOW["last_error"] = str(exc)
+            time.sleep(2)
+
+    threading.Thread(target=run, daemon=True, name=f"BinanceDelta-{symbol}").start()
+
+
+def _start_angel_orderflow(smart_api, client_code, api_key, exchange_type, token):
+    """Start Angel One SmartAPI WebSocket 2.0 for live buy/sell quantities.
+
+    SmartAPI WebSocket 2.0 exposes total_buy_quantity, total_sell_quantity and
+    best-five depth. These are live order-book quantities, so on Indian markets
+    Tab 6 labels the value as Bid/Ask Depth Delta rather than pretending it is
+    trade-execution delta.
+    """
+    if smart_api is None or SmartWebSocketV2 is None or not token:
+        return
+    key = f"angel:{client_code}:{exchange_type}:{token}"
+    with _ORDERFLOW_LOCK:
+        if key in _ORDERFLOW_WORKERS_STARTED:
+            return
+        _ORDERFLOW_WORKERS_STARTED.add(key)
+        _ANGEL_ORDERFLOW["key"] = key
+        _ANGEL_ORDERFLOW["ticks"][key] = deque(maxlen=10000)
+
+    try:
+        feed_token = smart_api.getfeedToken()
+        auth_token = getattr(smart_api, "access_token", None)
+        if isinstance(auth_token, str) and auth_token.startswith("Bearer "):
+            auth_token = auth_token.replace("Bearer ", "", 1)
+        if not auth_token:
+            auth_token = getattr(smart_api, "authToken", None)
+        if not feed_token or not auth_token:
+            with _ORDERFLOW_LOCK:
+                _ANGEL_ORDERFLOW["last_error"] = "Angel One feed token/auth token unavailable"
+            return
+
+        def run():
+            while True:
+                try:
+                    sws = SmartWebSocketV2(
+                        auth_token, api_key, client_code, feed_token,
+                        max_retry_attempt=5, retry_strategy=1, retry_delay=2,
+                        retry_multiplier=2, retry_duration=30
+                    )
+
+                    def on_open(wsapp):
+                        try:
+                            sws.subscribe(
+                                f"tab6_{token}",
+                                3,
+                                [{"exchangeType": int(exchange_type), "tokens": [str(token)]}],
+                            )
+                            with _ORDERFLOW_LOCK:
+                                _ANGEL_ORDERFLOW["connected"] = True
+                                _ANGEL_ORDERFLOW["last_error"] = ""
+                        except Exception as exc:
+                            with _ORDERFLOW_LOCK:
+                                _ANGEL_ORDERFLOW["last_error"] = str(exc)
+
+                    def on_data(wsapp, message):
+                        try:
+                            if not isinstance(message, dict):
+                                return
+                            mode = message.get("subscription_mode")
+                            if mode not in (2, 3, "QUOTE", "SNAP_QUOTE"):
+                                return
+                            ltp_raw = message.get("last_traded_price", 0)
+                            ltp = float(ltp_raw)
+                            # SmartAPI sends paise for normal instruments.
+                            ltp = ltp / 100.0 if abs(ltp) > 100000 else ltp
+                            buy = float(message.get("total_buy_quantity", 0.0))
+                            sell = float(message.get("total_sell_quantity", 0.0))
+                            ts = int(message.get("exchange_timestamp") or int(time.time() * 1000))
+                            with _ORDERFLOW_LOCK:
+                                _ANGEL_ORDERFLOW["ticks"][key].append({
+                                    "ts": ts, "buy": buy, "sell": sell, "ltp": ltp,
+                                    "bid_depth": message.get("best_5_buy_data", []),
+                                    "ask_depth": message.get("best_5_sell_data", []),
+                                })
+                                _ANGEL_ORDERFLOW["last_tick_ts"][key] = ts
+                                _ANGEL_ORDERFLOW["connected"] = True
+                        except Exception as exc:
+                            with _ORDERFLOW_LOCK:
+                                _ANGEL_ORDERFLOW["last_error"] = str(exc)
+
+                    def on_error(wsapp, error):
+                        with _ORDERFLOW_LOCK:
+                            _ANGEL_ORDERFLOW["connected"] = False
+                            _ANGEL_ORDERFLOW["last_error"] = str(error)
+
+                    def on_close(wsapp):
+                        with _ORDERFLOW_LOCK:
+                            _ANGEL_ORDERFLOW["connected"] = False
+
+                    sws.on_open = on_open
+                    sws.on_data = on_data
+                    sws.on_error = on_error
+                    sws.on_close = on_close
+                    sws.connect()
+                except Exception as exc:
+                    with _ORDERFLOW_LOCK:
+                        _ANGEL_ORDERFLOW["connected"] = False
+                        _ANGEL_ORDERFLOW["last_error"] = str(exc)
+                time.sleep(3)
+
+        threading.Thread(target=run, daemon=True, name=f"AngelDelta-{token}").start()
+    except Exception as exc:
+        with _ORDERFLOW_LOCK:
+            _ANGEL_ORDERFLOW["last_error"] = str(exc)
+
+
+def _binance_delta_for_candles(symbol, timestamps, tf):
+    """Aggregate actual Binance executed buy/sell quantities into candle buckets."""
+    with _ORDERFLOW_LOCK:
+        rows = list(_BINANCE_ORDERFLOW["trades"].get(symbol, []))
+    out = {}
+    for ts in timestamps:
+        try:
+            ts_obj = pd.Timestamp(ts)
+            if ts_obj.tzinfo is None:
+                ts_obj = ts_obj.tz_localize("Asia/Kolkata")
+            ts_ms = int(ts_obj.timestamp() * 1000)
+        except Exception:
+            continue
+        start = _binance_candle_start_ms(ts_ms, tf)
+        end = start + _tf_minutes(tf) * 60 * 1000
+        buy = sell = 0.0
+        for tr in rows:
+            if start <= tr["ts"] < end:
+                buy += tr["buy"]
+                sell += tr["sell"]
+        out[str(ts)] = (buy, sell, buy - sell)
+    return out
+
+
+def _angel_delta_for_candles(key, timestamps, tf):
+    """Use live Angel One total buy/sell quantities as order-book depth delta."""
+    with _ORDERFLOW_LOCK:
+        rows = list(_ANGEL_ORDERFLOW["ticks"].get(key, []))
+    out = {}
+    for ts in timestamps:
+        try:
+            ts_obj = pd.Timestamp(ts)
+            if ts_obj.tzinfo is None:
+                ts_obj = ts_obj.tz_localize("Asia/Kolkata")
+            ts_ms = int(ts_obj.timestamp() * 1000)
+        except Exception:
+            continue
+        start = _angel_candle_start_ms(ts_ms, tf)
+        end = start + _tf_minutes(tf) * 60 * 1000
+        bucket = [r for r in rows if start <= r["ts"] < end]
+        if bucket:
+            # Use the latest live snapshot inside the candle; it is an actual
+            # Angel One bid/ask depth snapshot rather than a random estimate.
+            latest = bucket[-1]
+            buy = float(latest.get("buy", 0.0))
+            sell = float(latest.get("sell", 0.0))
+            out[str(ts)] = (buy, sell, buy - sell)
+        else:
+            out[str(ts)] = (0.0, 0.0, 0.0)
+    return out
+
+
+def _resolve_angel_token(display_name, ticker_symbol):
+    """Resolve NSE token from the Angel One scrip master for Tab 6."""
+    name = str(display_name).upper()
+    if "NIFTY 50" in name:
+        return "99926000", 1
+    if "BANK NIFTY" in name:
+        return "99926009", 1
+    sym = str(ticker_symbol).upper().replace(".NS", "")
+    try:
+        r = requests.get(
+            "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",
+            timeout=8,
+        )
+        if r.ok:
+            data = r.json()
+            for item in data:
+                if (
+                    str(item.get("exch_seg", "")).upper() == "NSE"
+                    and str(item.get("symbol", "")).upper().split("-")[0] == sym
+                ):
+                    return str(item.get("token")), 1
+    except Exception:
+        pass
+    return None, 1
+
 
 # पानाची रचना सेट करा
 st.set_page_config(
@@ -1839,96 +2151,61 @@ with tab6:
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
 
-            # TAB 6 ONLY:
-            # Closed candle delta bars remain fixed across every Streamlit auto-refresh.
-            # Only the currently forming candle is recalculated on each refresh.
-            if "tab6_delta_history" not in st.session_state:
-                st.session_state["tab6_delta_history"] = {}
-            if "tab6_active_candle" not in st.session_state:
-                st.session_state["tab6_active_candle"] = None
-            if "tab6_active_values" not in st.session_state:
-                st.session_state["tab6_active_values"] = None
-
-            latest_timestamp = df_of["timestamp"].iloc[-1]
-            latest_candle_key = str(latest_timestamp)
-
-            # When a new candle appears, freeze the final values of the candle
-            # that was active during the previous refresh.
-            previous_active_key = st.session_state["tab6_active_candle"]
-            previous_active_values = st.session_state["tab6_active_values"]
-
-            if (
-                previous_active_key is not None
-                and previous_active_key != latest_candle_key
-                and previous_active_values is not None
-            ):
-                st.session_state["tab6_delta_history"][previous_active_key] = {
-                    "buy_vol": previous_active_values["buy_vol"],
-                    "sell_vol": previous_active_values["sell_vol"],
-                    "delta": previous_active_values["delta"],
-                }
+            # --- REAL LIVE DELTA: TAB 6 ONLY ---
+            # Binance: executed aggressor volume from aggTrade WebSocket.
+            # Angel One: live total bid/ask depth from SmartAPI WebSocket 2.0.
+            # No random values are used here.
+            candle_timestamps = list(df_of['timestamp'])
 
             buy_vols = []
             sell_vols = []
             deltas = []
 
-            current_values = None
+            if is_btc_market:
+                binance_symbol = "BTCUSDT"
+                _start_binance_orderflow(binance_symbol)
+                live_map = _binance_delta_for_candles(
+                    binance_symbol, candle_timestamps, timeframe
+                )
+                for ts in candle_timestamps:
+                    b, s, d = live_map.get(str(ts), (0.0, 0.0, 0.0))
+                    buy_vols.append(b)
+                    sell_vols.append(s)
+                    deltas.append(d)
+                orderflow_source = "Binance aggTrade WebSocket — Executed Aggressor Delta"
 
-            for idx, row in df_of.iterrows():
-                is_current_candle = row["timestamp"] == latest_timestamp
-                candle_key = str(row["timestamp"])
-                is_bullish = row["close"] >= row["open"]
-                tot_vol = row["volume"]
-
-                if is_current_candle:
-                    # Current candle is live: intentionally recalculate its delta.
-                    if is_bullish:
-                        b_ratio = np.random.uniform(0.55, 0.72)
-                    else:
-                        b_ratio = np.random.uniform(0.28, 0.45)
-
-                    b_vol = int(tot_vol * b_ratio)
-                    s_vol = int(tot_vol - b_vol)
-                    d_val = b_vol - s_vol
-
-                    current_values = {
-                        "buy_vol": b_vol,
-                        "sell_vol": s_vol,
-                        "delta": d_val,
-                    }
-
-                elif candle_key in st.session_state["tab6_delta_history"]:
-                    # Closed candle: always use its frozen value.
-                    saved = st.session_state["tab6_delta_history"][candle_key]
-                    b_vol = saved["buy_vol"]
-                    s_vol = saved["sell_vol"]
-                    d_val = saved["delta"]
-
+            elif is_indian_market:
+                token, exchange_type = _resolve_angel_token(display_name, ticker)
+                smart_api = st.session_state.get("smart_api_session")
+                if smart_api is not None and token:
+                    _start_angel_orderflow(
+                        smart_api, angel_client_code, angel_api_key,
+                        exchange_type, token
+                    )
+                    angel_key = f"angel:{angel_client_code}:{exchange_type}:{token}"
+                    live_map = _angel_delta_for_candles(
+                        angel_key, candle_timestamps, timeframe
+                    )
                 else:
-                    # First time this closed candle is seen: calculate once and freeze.
-                    if is_bullish:
-                        b_ratio = np.random.uniform(0.55, 0.72)
-                    else:
-                        b_ratio = np.random.uniform(0.28, 0.45)
+                    live_map = {}
 
-                    b_vol = int(tot_vol * b_ratio)
-                    s_vol = int(tot_vol - b_vol)
-                    d_val = b_vol - s_vol
+                for ts in candle_timestamps:
+                    b, s, d = live_map.get(str(ts), (0.0, 0.0, 0.0))
+                    buy_vols.append(b)
+                    sell_vols.append(s)
+                    deltas.append(d)
+                orderflow_source = "Angel One SmartAPI WebSocket 2.0 — Live Bid/Ask Depth Delta"
 
-                    st.session_state["tab6_delta_history"][candle_key] = {
-                        "buy_vol": b_vol,
-                        "sell_vol": s_vol,
-                        "delta": d_val,
-                    }
-
-                buy_vols.append(b_vol)
-                sell_vols.append(s_vol)
-                deltas.append(d_val)
-
-            # Remember the live candle's latest value so it becomes the
-            # fixed value when the next candle starts.
-            st.session_state["tab6_active_candle"] = latest_candle_key
-            st.session_state["tab6_active_values"] = current_values
+            else:
+                # True FX (EURUSD=X etc.) is not a Binance market. Do not
+                # substitute crypto/stablecoin data and label it as forex.
+                buy_vols = [0.0] * len(candle_timestamps)
+                sell_vols = [0.0] * len(candle_timestamps)
+                deltas = [0.0] * len(candle_timestamps)
+                orderflow_source = (
+                    "True Forex selected — Binance does not provide EUR/USD-style FX order-flow. "
+                    "Select a Binance-supported crypto symbol for live Binance Delta."
+                )
 
             df_of['buy_vol'] = buy_vols
             df_of['sell_vol'] = sell_vols
@@ -1957,18 +2234,37 @@ with tab6:
     with col_of2:
         st.markdown("##### 🔍 Live Footprint Insights")
         if df_ltf is not None and not df_ltf.empty:
-            last_buy = int(df_of['buy_vol'].iloc[-1])
-            last_sell = int(df_of['sell_vol'].iloc[-1])
-            last_delta = int(df_of['delta'].iloc[-1])
+            last_buy = float(df_of['buy_vol'].iloc[-1])
+            last_sell = float(df_of['sell_vol'].iloc[-1])
+            last_delta = float(df_of['delta'].iloc[-1])
 
-            st.metric("Buyer Volume (Ask)", f"{last_buy:,}")
-            st.metric("Seller Volume (Bid)", f"{last_sell:,}")
-            st.metric("Net Delta Imbalance", f"{last_delta:,}", delta_color="normal")
+            if is_btc_market:
+                st.metric("Aggressive Buy Volume (Binance)", f"{last_buy:,.4f}")
+                st.metric("Aggressive Sell Volume (Binance)", f"{last_sell:,.4f}")
+                st.metric("Executed Trade Delta", f"{last_delta:,.4f}", delta_color="normal")
+                with _ORDERFLOW_LOCK:
+                    bin_conn = bool(_BINANCE_ORDERFLOW.get("connected"))
+                st.caption("🟢 Binance WebSocket LIVE" if bin_conn else "🔴 Binance WebSocket reconnecting…")
+            elif is_indian_market:
+                st.metric("Live Ask/Buy Depth", f"{last_buy:,.0f}")
+                st.metric("Live Bid/Sell Depth", f"{last_sell:,.0f}")
+                st.metric("Bid/Ask Depth Delta", f"{last_delta:,.0f}", delta_color="normal")
+                with _ORDERFLOW_LOCK:
+                    angel_conn = bool(_ANGEL_ORDERFLOW.get("connected"))
+                st.caption("🟢 Angel One SmartAPI WebSocket 2.0 LIVE" if angel_conn else "🔴 Angel One WebSocket reconnecting…")
+            else:
+                st.metric("Buy Volume", "N/A")
+                st.metric("Sell Volume", "N/A")
+                st.metric("Delta", "N/A")
+
+            st.caption(f"Source: {orderflow_source}")
 
             if last_delta > 0:
-                st.success("🟢 Aggressive Buying Detected (Institutional Absorption)")
+                st.success("🟢 Positive live order-flow delta")
+            elif last_delta < 0:
+                st.error("🔴 Negative live order-flow delta")
             else:
-                st.error("🔴 Aggressive Selling Detected (Institutional Distribution)")
+                st.info("⚪ No live order-flow delta received yet")
 
     st.markdown("---")
 
