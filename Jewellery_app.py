@@ -464,6 +464,18 @@ class BinanceBTCStream:
             "open":"first", "high":"max", "low":"min", "close":"last",
             "volume":"sum", "buy_vol":"sum", "sell_vol":"sum", "delta":"sum"
         }).dropna(subset=["open","high","low","close"]).reset_index()
+
+        # Binance timestamps arrive in UTC.  The dashboard is intended to
+        # display all chart candle times in Indian Standard Time (IST).
+        # Convert only after resampling so the Binance candle boundaries stay
+        # aligned to their original UTC exchange buckets, then expose the
+        # resulting local wall-clock time to Plotly as a naive timestamp.
+        out["timestamp"] = (
+            pd.to_datetime(out["timestamp"], utc=True)
+            .dt.tz_convert("Asia/Kolkata")
+            .dt.tz_localize(None)
+        )
+
         return out.tail(limit).reset_index(drop=True), state
 
 @st.cache_resource(show_spinner=False)
@@ -1735,9 +1747,8 @@ elif is_indian_market:
 else:
     current_price = base_price
 
-# Shared price-change value used by Tabs 6-9.
-# It must be defined outside Tab 6 so switching to GOLD/SILVER/BTC
-# cannot leave Tabs 7-9 with an undefined variable on a Streamlit rerun.
+# Shared price change used by Tabs 7-9 and Tab 6.
+# Keep it defined before any tab code so BTC, Gold and Silver cannot raise NameError.
 if df_ltf is not None and len(df_ltf) >= 2:
     try:
         price_change = float(df_ltf["close"].iloc[-1]) - float(df_ltf["close"].iloc[-2])
@@ -2078,7 +2089,9 @@ with tab4:
         btc_ws = st.session_state.get("btc_ws_data", {})
         current_btc_price = float(btc_stream_state.get("last_price") or current_price) if is_btc_market else current_price
         btc_change = float(btc_ws.get("change", 0) or 0)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Keep live signal timestamps in Indian Standard Time as well.
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
         live_sig_type = "🔴 PERFECT SELL (CHOCH CONFIRMED)"
         inst_act = "Binance Direct WS: Institutional Order Block Tap"
@@ -2181,7 +2194,7 @@ with tab6:
         source="Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance"
         st.info(f"{display_name} साठी {source} market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
     else:
-        st.info(f"{display_name} साठी Yahoo Finance live/market-data source वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
+        st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
 
     st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
@@ -2193,10 +2206,45 @@ with tab6:
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
             df_of=build_market_flow_columns(df_ltf).tail(30).copy()
+            # Keep the Delta panel visually consistent across refreshes. Plotly's
+            # default autoscaling can make the same Delta series look very different
+            # when the latest candles have a smaller/larger absolute Delta.
+            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
+            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
+            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
+            # A stable reference floor gives a chart appearance close to the original
+            # footprint view while still allowing larger real deltas to expand naturally.
+            delta_axis_top = max(200.0, max_abs_delta * 1.25)
+            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
+
             fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
             fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
-            fig_footprint.add_trace(go.Bar(x=df_of["timestamp"],y=df_of["delta"],marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],name="Flow Delta"),row=2,col=1)
-            fig_footprint.update_layout(height=520,margin=dict(l=10,r=10,t=10,b=10),showlegend=False)
+            fig_footprint.add_trace(
+                go.Bar(
+                    x=df_of["timestamp"],
+                    y=df_of["delta"],
+                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
+                    name="Flow Delta",
+                    hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
+                ),
+                row=2,col=1,
+            )
+            fig_footprint.update_yaxes(
+                range=[delta_axis_bottom, delta_axis_top],
+                zeroline=True,
+                zerolinewidth=1,
+                showgrid=True,
+                tickformat=",.0f",
+                row=2,
+                col=1,
+            )
+            fig_footprint.update_layout(
+                height=520,
+                margin=dict(l=10,r=10,t=10,b=10),
+                showlegend=False,
+                hovermode="x unified",
+                bargap=0.12,
+            )
             st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
             last=df_of.iloc[-1]
             c1,c2,c3,c4=st.columns(4)
@@ -2349,9 +2397,9 @@ with tab6:
                         x=vp["volume"],
                         y=vp["price"],
                         orientation="h",
-                        width=bin_width * 0.98,
+                        width=bin_width * 0.90,
                         marker=dict(
-                            line=dict(width=0.25)
+                            line=dict(width=0.4)
                         ),
                         hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
                         name="Volume Profile"
@@ -2375,8 +2423,8 @@ with tab6:
                     y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
                     fig_vp.update_layout(
                         title="Horizontal Volume Profile",
-                        height=560,
-                        margin=dict(l=85, r=45, t=50, b=55),
+                        height=500,
+                        margin=dict(l=75, r=35, t=50, b=50),
                         xaxis_title="Volume",
                         yaxis_title="Price Level",
                         yaxis=dict(
@@ -2387,8 +2435,8 @@ with tab6:
                             zeroline=False,
                             fixedrange=False
                         ),
-                        xaxis=dict(showgrid=True, zeroline=False, rangemode="tozero"),
-                        bargap=0.0,
+                        xaxis=dict(showgrid=True, zeroline=False),
+                        bargap=0.02,
                         hovermode="closest",
                         showlegend=False
                     )
