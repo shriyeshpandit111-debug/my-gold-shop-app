@@ -2243,85 +2243,150 @@ with tab6:
 
     st.markdown("---")
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
-    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. POC हा सर्वाधिक volume असलेला price bin आहे; VAH/VAL हे volume distribution मधून मोजले जातात.")
+    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. प्रत्येक candle चा volume त्याच्या High-Low price range मध्ये वितरित केला जातो, त्यामुळे profile मध्ये सलग आणि स्पष्ट horizontal bars दिसतात.")
     if df_ltf is not None and not df_ltf.empty:
-        df_vp_data=build_market_flow_columns(df_ltf).copy()
-        df_vp_data=df_vp_data.dropna(subset=["close"]).tail(120)
-        vol=pd.to_numeric(df_vp_data["volume"],errors="coerce").fillna(0).clip(lower=0)
-        prices=pd.to_numeric(df_vp_data["close"],errors="coerce")
-        if len(df_vp_data)>=3 and float(vol.sum())>0 and prices.nunique()>1:
-            # Use a fixed number of numeric price bins so the horizontal profile has
-            # evenly spaced, clearly visible bars instead of categorical y labels.
-            pmin=float(prices.min()); pmax=float(prices.max())
-            bin_count=min(24,max(10,int(np.sqrt(len(df_vp_data))*2)))
-            edges=np.linspace(pmin,pmax,bin_count+1)
-            # Avoid zero-width bins for very small price ranges.
-            if np.allclose(edges[0],edges[-1]):
-                edges=np.linspace(pmin-0.5,pmax+0.5,bin_count+1)
-            mids=(edges[:-1]+edges[1:])/2.0
-            idx=np.digitize(prices.to_numpy(dtype=float),edges[1:-1],right=False)
-            profile=np.zeros(len(mids),dtype=float)
-            np.add.at(profile,idx,vol.to_numpy(dtype=float))
-            vp=pd.DataFrame({"price":mids,"volume":profile})
-            vp=vp[vp["volume"]>0].copy()
+        df_vp_data = build_market_flow_columns(df_ltf).copy()
+        df_vp_data = df_vp_data.dropna(subset=["open", "high", "low", "close", "volume"]).tail(120)
 
-            if not vp.empty:
-                total=float(vp["volume"].sum())
-                poc_idx=int(vp["volume"].idxmax())
-                poc_price=float(vp.loc[poc_idx,"price"])
+        if len(df_vp_data) >= 3:
+            o = pd.to_numeric(df_vp_data["open"], errors="coerce").to_numpy(dtype=float)
+            h = pd.to_numeric(df_vp_data["high"], errors="coerce").to_numpy(dtype=float)
+            l = pd.to_numeric(df_vp_data["low"], errors="coerce").to_numpy(dtype=float)
+            c = pd.to_numeric(df_vp_data["close"], errors="coerce").to_numpy(dtype=float)
+            v = pd.to_numeric(df_vp_data["volume"], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
 
-                # 70% value-area calculation: expand from POC toward the larger
-                # neighbouring volume until the target volume is covered.
-                ordered=vp.reset_index(drop=True)
-                poc_pos=int(ordered["volume"].idxmax())
-                target=total*0.70
-                covered=float(ordered.loc[poc_pos,"volume"])
-                lo=hi=poc_pos
-                while covered < target and (lo>0 or hi<len(ordered)-1):
-                    left_vol=float(ordered.loc[lo-1,"volume"]) if lo>0 else -1.0
-                    right_vol=float(ordered.loc[hi+1,"volume"]) if hi<len(ordered)-1 else -1.0
-                    if right_vol >= left_vol and hi<len(ordered)-1:
-                        hi += 1; covered += max(0.0,right_vol)
-                    elif lo>0:
-                        lo -= 1; covered += max(0.0,left_vol)
+            valid = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c) & np.isfinite(v) & (v >= 0)
+            o, h, l, c, v = o[valid], h[valid], l[valid], c[valid], v[valid]
+
+            if len(c) >= 3 and float(v.sum()) > 0:
+                pmin = float(np.nanmin(l))
+                pmax = float(np.nanmax(h))
+
+                # Use enough bins to make the profile visually continuous while
+                # avoiding hundreds of very thin bars.
+                bin_count = int(min(40, max(20, round(np.sqrt(len(c)) * 3))))
+                if not np.isfinite(pmin) or not np.isfinite(pmax) or pmax <= pmin:
+                    center = float(c[-1])
+                    span = max(abs(center) * 0.002, 1.0)
+                    pmin, pmax = center - span, center + span
+
+                edges = np.linspace(pmin, pmax, bin_count + 1)
+                mids = (edges[:-1] + edges[1:]) / 2.0
+                profile = np.zeros(bin_count, dtype=float)
+
+                # Distribute each candle's volume across the price bins touched
+                # by its High-Low range. This produces a true range-based
+                # horizontal volume profile instead of concentrating all volume
+                # at the candle close.
+                for hi, lo, vol_value in zip(h, l, v):
+                    if vol_value <= 0 or not np.isfinite(hi) or not np.isfinite(lo):
+                        continue
+                    if hi < lo:
+                        hi, lo = lo, hi
+                    if hi == lo:
+                        pos = int(np.clip(np.searchsorted(edges, hi, side="right") - 1, 0, bin_count - 1))
+                        profile[pos] += vol_value
                     else:
-                        break
-                val_price=float(ordered.loc[lo,"price"])
-                vah_price=float(ordered.loc[hi,"price"])
+                        touched = np.where((edges[:-1] <= hi) & (edges[1:] >= lo))[0]
+                        if len(touched):
+                            widths = np.minimum(edges[touched + 1], hi) - np.maximum(edges[touched], lo)
+                            widths = np.clip(widths, 0, None)
+                            width_sum = float(widths.sum())
+                            if width_sum > 0:
+                                profile[touched] += vol_value * (widths / width_sum)
 
-                col_vp1,col_vp2,col_vp3=st.columns(3)
-                col_vp1.metric("Value Area High (VAH)",f"{vah_price:,.2f}")
-                col_vp2.metric("Point of Control (POC - Peak Vol)",f"{poc_price:,.2f}")
-                col_vp3.metric("Value Area Low (VAL)",f"{val_price:,.2f}")
+                vp = pd.DataFrame({"price": mids, "volume": profile})
 
-                bin_width=float(np.median(np.diff(edges))) if len(edges)>1 else max(abs(pmax-pmin)/20.0,0.01)
-                fig_vp=go.Figure()
-                fig_vp.add_trace(go.Bar(
-                    x=vp["volume"],
-                    y=vp["price"],
-                    orientation="h",
-                    width=bin_width*0.82,
-                    hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
-                    name="Volume Profile"
-                ))
-                fig_vp.add_hline(y=poc_price,line_width=3,line_dash="solid",annotation_text="POC",annotation_position="top right")
-                fig_vp.add_hline(y=vah_price,line_width=1,line_dash="dash",annotation_text="VAH",annotation_position="top left")
-                fig_vp.add_hline(y=val_price,line_width=1,line_dash="dash",annotation_text="VAL",annotation_position="bottom left")
-                fig_vp.update_layout(
-                    title="Horizontal Volume Profile",
-                    height=430,
-                    margin=dict(l=65,r=25,t=45,b=45),
-                    xaxis_title="Volume",
-                    yaxis_title="Price Level",
-                    yaxis=dict(type="linear",tickformat=",.2f",showgrid=True),
-                    bargap=0.08,
-                    hovermode="closest",
-                    showlegend=False
-                )
-                st.plotly_chart(fig_vp,use_container_width=True,key="vp_horizontal_chart_fixed")
-                st.caption(f"Profile source: selected asset OHLCV volume | {len(ordered)} active price bins | Value Area = 70% of profile volume")
+                if float(vp["volume"].sum()) > 0:
+                    total = float(vp["volume"].sum())
+                    poc_pos = int(vp["volume"].to_numpy().argmax())
+                    poc_price = float(vp.iloc[poc_pos]["price"])
+
+                    # 70% value area, expanding from POC toward the larger
+                    # neighbouring volume.
+                    target = total * 0.70
+                    covered = float(vp.iloc[poc_pos]["volume"])
+                    lo_pos = hi_pos = poc_pos
+                    while covered < target and (lo_pos > 0 or hi_pos < len(vp) - 1):
+                        left_vol = float(vp.iloc[lo_pos - 1]["volume"]) if lo_pos > 0 else -1.0
+                        right_vol = float(vp.iloc[hi_pos + 1]["volume"]) if hi_pos < len(vp) - 1 else -1.0
+                        if right_vol >= left_vol and hi_pos < len(vp) - 1:
+                            hi_pos += 1
+                            covered += max(0.0, right_vol)
+                        elif lo_pos > 0:
+                            lo_pos -= 1
+                            covered += max(0.0, left_vol)
+                        else:
+                            break
+
+                    val_price = float(vp.iloc[lo_pos]["price"])
+                    vah_price = float(vp.iloc[hi_pos]["price"])
+
+                    col_vp1, col_vp2, col_vp3 = st.columns(3)
+                    col_vp1.metric("Value Area High (VAH)", f"{vah_price:,.2f}")
+                    col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price:,.2f}")
+                    col_vp3.metric("Value Area Low (VAL)", f"{val_price:,.2f}")
+
+                    bin_width = float(edges[1] - edges[0])
+                    fig_vp = go.Figure()
+                    fig_vp.add_trace(go.Bar(
+                        x=vp["volume"],
+                        y=vp["price"],
+                        orientation="h",
+                        width=bin_width * 0.90,
+                        marker=dict(
+                            line=dict(width=0.4)
+                        ),
+                        hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
+                        name="Volume Profile"
+                    ))
+
+                    fig_vp.add_hline(
+                        y=poc_price, line_width=3, line_dash="solid",
+                        annotation_text="POC", annotation_position="top right"
+                    )
+                    fig_vp.add_hline(
+                        y=vah_price, line_width=1.5, line_dash="dash",
+                        annotation_text="VAH", annotation_position="top right"
+                    )
+                    fig_vp.add_hline(
+                        y=val_price, line_width=1.5, line_dash="dash",
+                        annotation_text="VAL", annotation_position="bottom right"
+                    )
+
+                    # Keep every price bin visible and use a compact linear
+                    # scale so the horizontal profile does not look broken.
+                    y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
+                    fig_vp.update_layout(
+                        title="Horizontal Volume Profile",
+                        height=500,
+                        margin=dict(l=75, r=35, t=50, b=50),
+                        xaxis_title="Volume",
+                        yaxis_title="Price Level",
+                        yaxis=dict(
+                            type="linear",
+                            range=[pmin - y_pad, pmax + y_pad],
+                            tickformat=",.2f",
+                            showgrid=True,
+                            zeroline=False,
+                            fixedrange=False
+                        ),
+                        xaxis=dict(showgrid=True, zeroline=False),
+                        bargap=0.02,
+                        hovermode="closest",
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed_v2")
+                    st.caption(
+                        f"Profile source: selected asset OHLCV volume | {bin_count} price bins | "
+                        f"Range-based volume distribution | Value Area = 70% of profile volume"
+                    )
+                else:
+                    st.info("Volume Profile उपलब्ध नाही कारण source volume distribution शून्य आहे.")
+            else:
+                st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
         else:
-            st.info("Volume Profile उपलब्ध नाही कारण source volume/price data पुरेसा नाही.")
+            st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
 
     st.markdown("---")
     st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
