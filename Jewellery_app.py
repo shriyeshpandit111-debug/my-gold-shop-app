@@ -1733,6 +1733,84 @@ def binance_signal_from_df(df):
         return {"side":"SELL", "price":float(r["close"]), "sl":float(r["close"]+1.5*atr), "tp":float(r["close"]-3*atr), "reason":"EMA20<EMA50 + MACD histogram negative + negative real trade delta + 5-bar breakdown"}, "SELL"
     return None, "NO SIGNAL"
 
+
+
+def prepare_market_analytics(df, source_label="Market OHLCV"):
+    """Create common analytics for BTC and non-BTC assets.
+
+    For BTC, real buy/sell/delta columns already come from Binance executed trades.
+    For other assets, delta/buy/sell are explicitly OHLCV-derived proxies because
+    the selected Yahoo/Angel data source does not expose executed trade side.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    x = df.copy()
+    for c in ["open", "high", "low", "close", "volume"]:
+        if c in x.columns:
+            x[c] = pd.to_numeric(x[c], errors="coerce")
+    x = x.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    if x.empty:
+        return x
+    if "volume" not in x.columns:
+        x["volume"] = 0.0
+    x["volume"] = x["volume"].fillna(0.0)
+
+    # Keep real Binance flow intact; otherwise use a clearly labelled candle-flow proxy.
+    if not {"buy_vol", "sell_vol", "delta"}.issubset(x.columns):
+        direction = np.sign(x["close"] - x["open"])
+        x["buy_vol"] = np.where(direction > 0, x["volume"], 0.0)
+        x["sell_vol"] = np.where(direction < 0, x["volume"], 0.0)
+        # When volume is zero (common for index feeds), use signed price change only
+        # as a visual flow proxy, never as exchange-executed volume.
+        x["delta"] = x["buy_vol"] - x["sell_vol"]
+        x["flow_is_proxy"] = True
+    else:
+        x["flow_is_proxy"] = False
+
+    x["ema20"] = x["close"].ewm(span=20, adjust=False).mean()
+    x["ema50"] = x["close"].ewm(span=50, adjust=False).mean()
+    d = x["close"].diff()
+    gain = d.clip(lower=0).rolling(14).mean()
+    loss = (-d.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    x["rsi"] = 100 - (100 / (1 + rs))
+    ema12 = x["close"].ewm(span=12, adjust=False).mean()
+    ema26 = x["close"].ewm(span=26, adjust=False).mean()
+    x["macd"] = ema12 - ema26
+    x["macd_signal"] = x["macd"].ewm(span=9, adjust=False).mean()
+    x["macd_hist"] = x["macd"] - x["macd_signal"]
+    tr = pd.concat([
+        x["high"] - x["low"],
+        (x["high"] - x["close"].shift()).abs(),
+        (x["low"] - x["close"].shift()).abs(),
+    ], axis=1).max(axis=1)
+    x["atr"] = tr.rolling(14).mean()
+    vol_cum = x["volume"].replace(0, np.nan).cumsum()
+    x["vwap"] = ((x["close"] * x["volume"]).cumsum() / vol_cum).ffill().fillna(x["close"])
+    x["cvd"] = x["delta"].cumsum()
+    x["source_label"] = source_label
+    return x
+
+
+def market_signal_from_df(df):
+    x = prepare_market_analytics(df)
+    if x is None or len(x) < 30:
+        return None, "Insufficient market history"
+    r = x.iloc[-1]
+    prev_high = x["high"].iloc[-6:-1].max()
+    prev_low = x["low"].iloc[-6:-1].min()
+    bullish_break = r["close"] > prev_high
+    bearish_break = r["close"] < prev_low
+    buy = r["close"] > r["ema20"] > r["ema50"] and r["macd_hist"] > 0 and r["delta"] >= 0 and bullish_break
+    sell = r["close"] < r["ema20"] < r["ema50"] and r["macd_hist"] < 0 and r["delta"] <= 0 and bearish_break
+    if buy:
+        atr = float(r["atr"]) if pd.notna(r["atr"]) and r["atr"] > 0 else float(r["close"] * 0.005)
+        return {"side":"BUY", "price":float(r["close"]), "sl":float(r["close"]-1.5*atr), "tp":float(r["close"]+3*atr), "reason":"EMA20>EMA50 + MACD positive + positive flow + 5-bar breakout"}, "BUY"
+    if sell:
+        atr = float(r["atr"]) if pd.notna(r["atr"]) and r["atr"] > 0 else float(r["close"] * 0.005)
+        return {"side":"SELL", "price":float(r["close"]), "sl":float(r["close"]+1.5*atr), "tp":float(r["close"]-3*atr), "reason":"EMA20<EMA50 + MACD negative + negative flow + 5-bar breakdown"}, "SELL"
+    return None, "NO SIGNAL"
+
 # 🌟 TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "⚡ Live Dashboard & OI",
@@ -2031,7 +2109,7 @@ with tab3:
     )
 
 with tab4:
-    st.subheader(f"🎯 Live Binance SMC Signals on {timeframe} ({display_name})")
+    st.subheader(f"🎯 Live SMC Signals on {timeframe} ({display_name})")
     if is_btc_market:
         st.success("🟢 Binance Spot WebSocket: aggTrade + bookTicker LIVE")
         x = add_binance_indicators(df_ltf)
@@ -2043,11 +2121,9 @@ with tab4:
             c2.metric("Live Trade Delta", f"{r['delta']:,.4f}")
             c3.metric("RSI(14)", f"{r['rsi']:.2f}" if pd.notna(r['rsi']) else "-")
             c4.metric("Binance WS", "CONNECTED" if btc_stream_state.get("connected") else "RECONNECTING")
-            if not btc_stream_state.get("connected") and btc_stream_state.get("last_error"):
-                st.caption(f"Binance connection diagnostic: {btc_stream_state.get('last_error')}")
             if sig:
                 st.success(f"{sig['side']} signal — Entry {sig['price']:,.2f} | SL {sig['sl']:,.2f} | TP {sig['tp']:,.2f}")
-                st.caption("Rule-based signal calculated from Binance candles and executed-trade delta; not a profitability guarantee.")
+                st.caption("Rule-based signal from Binance candles + executed-trade delta; not a profitability guarantee.")
                 st.dataframe(pd.DataFrame([sig]), use_container_width=True)
             else:
                 st.info(f"No confirmed signal on the selected timeframe. Current status: {status}")
@@ -2055,13 +2131,24 @@ with tab4:
         else:
             st.warning("Waiting for Binance market data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
     else:
-        if df_ltf is not None and not df_ltf.empty:
-            df_ltf = add_indicators(df_ltf)
-            signals_df = analyze_smc_pro_v2(df_ltf, daily_trend)
-            if not signals_df.empty:
-                st.dataframe(signals_df.iloc[::-1], use_container_width=True)
+        x = prepare_market_analytics(df_ltf, "Angel One / Yahoo Finance OHLCV")
+        if x is not None and not x.empty:
+            sig, status = market_signal_from_df(df_ltf)
+            r=x.iloc[-1]
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric(display_name, f"{current_price:,.2f}")
+            c2.metric("Flow / Delta Proxy", f"{r['delta']:,.2f}")
+            c3.metric("RSI(14)", f"{r['rsi']:.2f}" if pd.notna(r['rsi']) else "-")
+            c4.metric("Data Source", "Angel One" if is_indian_market and st.session_state.get("smart_api_session") else "Yahoo Finance")
+            if sig:
+                st.success(f"{sig['side']} signal — Entry {sig['price']:,.2f} | SL {sig['sl']:,.2f} | TP {sig['tp']:,.2f}")
             else:
-                st.info("सध्या कोणताही सिग्नल मिळालेला नाही.")
+                st.info(f"No confirmed signal on the selected timeframe. Current status: {status}")
+            st.caption("For Indian/Gold assets, Flow/Delta is an OHLCV candle proxy; it is not Binance executed-trade data.")
+            st.dataframe(x[["timestamp","open","high","low","close","volume","delta","ema20","ema50","rsi","macd_hist"]].tail(30).iloc[::-1], use_container_width=True)
+        else:
+            st.warning(f"{display_name} market data is unavailable for the selected timeframe.")
+
 with tab5:
     if is_indian_market:
         render_stockmojo_premium_decay_tab(current_price)
@@ -2069,166 +2156,155 @@ with tab5:
         st.info("ℹ️ Available for Indian Market Indices.")
 
 with tab6:
-    st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
-    if not is_btc_market:
-        st.info("This real-time Binance order-flow implementation is enabled when BTC (Bitcoin) is selected.")
-    else:
-        st.success("🟢 Direct Binance WebSocket LIVE — @aggTrade + @bookTicker")
+    st.markdown(f"## 💎 **Institutional SMC & Order Flow ({display_name})")
+    if is_btc_market:
+        st.success("🟢 Binance Spot WebSocket LIVE — @aggTrade + @bookTicker")
         st.caption("Delta = aggressive buy volume − aggressive sell volume from Binance executed trades. Closed candles are immutable; only the current candle changes.")
         st.caption(f"Market-data endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | WebSocket trades received: {btc_stream_state.get('trade_count', 0)}")
         x = add_binance_indicators(df_ltf)
-        if x is not None and not x.empty:
-            foot = x.tail(30).copy()
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72,0.28])
-            fig.add_trace(go.Candlestick(x=foot["timestamp"], open=foot["open"], high=foot["high"], low=foot["low"], close=foot["close"], name="BTC/USDT"), row=1,col=1)
-            fig.add_trace(go.Bar(x=foot["timestamp"], y=foot["delta"], marker_color=["#22c55e" if v>=0 else "#ef4444" for v in foot["delta"]], name="Real Trade Delta"), row=2,col=1)
-            fig.update_layout(height=520, margin=dict(l=10,r=10,t=10,b=10), showlegend=False)
-            st.plotly_chart(fig, use_container_width=True, key="binance_real_footprint")
-            last=x.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Aggressive Buy Vol", f"{last['buy_vol']:,.4f}")
-            c2.metric("Aggressive Sell Vol", f"{last['sell_vol']:,.4f}")
-            c3.metric("Net Delta", f"{last['delta']:,.4f}")
-            c4.metric("Live Price", f"{current_price:,.2f}")
+        source_note = "Real Binance executed-trade flow"
+    else:
+        x = prepare_market_analytics(df_ltf, "Angel One / Yahoo Finance OHLCV")
+        source_name = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") else "Yahoo Finance"
+        st.info(f"{display_name} निवडले आहे. या asset साठी {source_name} OHLCV data वापरला जात आहे; Binance order-book/trade-tape फक्त BTC साठी उपलब्ध आहे.")
+        source_note = "OHLCV candle-flow proxy (not exchange executed-trade flow)"
+
+    if x is not None and not x.empty:
+        foot=x.tail(30).copy()
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72,0.28])
+        fig.add_trace(go.Candlestick(x=foot["timestamp"], open=foot["open"], high=foot["high"], low=foot["low"], close=foot["close"], name=display_name), row=1,col=1)
+        fig.add_trace(go.Bar(x=foot["timestamp"], y=foot["delta"], marker_color=["#22c55e" if v>=0 else "#ef4444" for v in foot["delta"]], name="Flow Delta"), row=2,col=1)
+        fig.update_layout(height=520, margin=dict(l=10,r=10,t=10,b=10), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True, key="market_flow_chart")
+        last=x.iloc[-1]
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric("Buy Flow", f"{last['buy_vol']:,.4f}")
+        c2.metric("Sell Flow", f"{last['sell_vol']:,.4f}")
+        c3.metric("Net Delta", f"{last['delta']:,.4f}")
+        c4.metric("Live Price", f"{current_price:,.2f}")
+        st.caption(f"Flow source: {source_note}")
+
+        if is_btc_market:
             st.markdown("### Live Best Bid / Ask")
-            bid=float(btc_stream_state.get("best_bid") or 0.0)
-            bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
-            ask=float(btc_stream_state.get("best_ask") or 0.0)
-            ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
+            bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
+            ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
             o1,o2,o3,o4=st.columns(4)
             o1.metric("Best Bid", f"{bid:,.2f}" if bid > 0 else "Waiting…")
             o2.metric("Bid Qty", f"{bid_qty:,.6f}" if bid_qty > 0 else "Waiting…")
             o3.metric("Best Ask", f"{ask:,.2f}" if ask > 0 else "Waiting…")
             o4.metric("Ask Qty", f"{ask_qty:,.6f}" if ask_qty > 0 else "Waiting…")
             if bid > 0 and ask > 0:
-                st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
-            else:
-                st.warning("Best Bid/Ask अजून आलेले नाहीत. Binance bookTicker snapshot/WebSocket reconnect चालू आहे.")
+                st.caption(f"Live spread: {ask-bid:,.2f} USDT | Binance @bookTicker")
             st.markdown("### Real Binance trade tape")
-            trades = list(binance_btc.recent_trades)
+            trades=list(binance_btc.recent_trades)
             if trades:
-                tape=pd.DataFrame(trades[-50:])[['time','price','qty','side']].iloc[::-1]
-                st.dataframe(tape, use_container_width=True)
-            st.markdown("### Real Binance Volume Profile")
-            vp=foot.groupby(pd.cut(foot["close"], bins=min(12,len(foot))), observed=False)["volume"].sum().reset_index()
-            vp["price"] = vp["close"].apply(lambda z: float(z.mid) if hasattr(z,"mid") else np.nan)
-            if not vp.empty:
-                poc=float(vp.loc[vp["volume"].idxmax(),"price"])
-                st.metric("POC", f"{poc:,.2f}")
+                tape=pd.DataFrame(trades[-50:])[["time","price","qty","side"]].iloc[::-1]
+                st.dataframe(tape,use_container_width=True)
         else:
-            st.warning("Waiting for Binance aggTrade data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
-with tab7:
-    st.markdown(f"## 🚀 **Advanced Binance Market Scanner ({display_name})**")
-    if is_btc_market:
-        st.success("🟢 All BTC market calculations in this tab use the Binance-derived live candle/trade dataset.")
-        x=add_binance_indicators(df_ltf)
-        if x is not None and len(x)>=30:
-            rows=[]
-            for tf in ["1m","3m","5m","15m","1h"]:
-                d,_=binance_btc.snapshot(tf, limit=200)
-                if d is None or len(d)<30: continue
-                z=add_binance_indicators(d).iloc[-1]
-                rows.append({"Timeframe":tf,"Price":round(float(z["close"]),2),"RSI":round(float(z["rsi"]),2),"MACD":"Bullish" if z["macd_hist"]>0 else "Bearish","EMA":"Bullish" if z["ema20"]>z["ema50"] else "Bearish","Delta":"Buy" if z["delta"]>0 else "Sell"})
-            st.dataframe(pd.DataFrame(rows),use_container_width=True)
-            r=x.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("VWAP",f"{r['vwap']:,.2f}")
-            c2.metric("EMA20",f"{r['ema20']:,.2f}")
-            c3.metric("EMA50",f"{r['ema50']:,.2f}")
-            c4.metric("CVD",f"{r['cvd']:,.4f}")
-            st.markdown("### Live liquidity / BOS checks")
-            try:
-                # Use the previous completed candles as the reference, while the latest
-                # candle is allowed to be live. This avoids NaN/empty-slice failures.
-                ref=x.iloc[:-1].tail(10)
-                if len(ref) >= 3:
-                    prev_high=float(ref["high"].max())
-                    prev_low=float(ref["low"].min())
-                    close_now=float(r["close"])
-                    high_now=float(r["high"])
-                    low_now=float(r["low"])
-                    bos="Bullish BOS" if close_now > prev_high else ("Bearish BOS" if close_now < prev_low else "No BOS")
-                    sweep=("Buy-side liquidity sweep" if high_now > prev_high and close_now < prev_high
-                           else ("Sell-side liquidity sweep" if low_now < prev_low and close_now > prev_low
-                                 else "No confirmed sweep"))
-                else:
-                    prev_high=prev_low=float("nan")
-                    bos="Waiting for reference candles"
-                    sweep="Waiting for reference candles"
-            except Exception as exc:
-                prev_high=prev_low=float("nan")
-                bos="BOS calculation unavailable"
-                sweep="Liquidity calculation unavailable"
-                st.caption(f"Liquidity diagnostic: {exc}")
+            st.markdown("### Market OHLCV Data")
+            st.dataframe(foot[["timestamp","open","high","low","close","volume","buy_vol","sell_vol","delta"]].iloc[::-1],use_container_width=True)
 
-            l1,l2,l3,l4=st.columns(4)
-            l1.metric("BOS", bos)
-            l2.metric("Liquidity Sweep", sweep)
-            l3.metric("Last Trade Side", btc_stream_state.get("last_trade_side") or "-")
-            l4.metric("WS Trades", f"{int(btc_stream_state.get('trade_count') or 0):,}")
-            if pd.notna(prev_high) and pd.notna(prev_low):
-                st.caption(f"Reference liquidity: High {prev_high:,.2f} | Low {prev_low:,.2f} | Current close {float(r['close']):,.2f}")
-
-            st.markdown("### Risk calculator")
-            capital=st.number_input("Capital",min_value=1.0,value=100000.0,step=1000.0,key="btc_risk_capital")
-            risk_pct=st.slider("Risk %",0.25,5.0,1.0,0.25,key="btc_risk_pct")
-            atr=float(r["atr"]) if pd.notna(r["atr"]) and float(r["atr"])>0 else max(float(r["close"])*0.005, 1e-9)
-            risk_amount=float(capital)*float(risk_pct)/100.0
-            qty=risk_amount/(1.5*atr)
-            rc1,rc2=st.columns(2)
-            rc1.metric("Risk Amount",f"{risk_amount:,.2f}")
-            rc2.metric("Indicative BTC Quantity",f"{qty:.6f}")
-            st.info("Options IV/VIX are not fabricated here; Binance Spot BTC trade data does not provide them.")
-        else: st.warning("Waiting for sufficient Binance history..." if not btc_stream_state.get("last_error") else f"Binance history unavailable: {btc_stream_state.get('last_error')}")
+        st.markdown("### Volume Profile / POC")
+        if float(foot["close"].max()) != float(foot["close"].min()):
+            vp=foot.groupby(pd.cut(foot["close"], bins=min(12,len(foot))), observed=False)["volume"].sum().reset_index()
+            vp["price"]=vp["close"].apply(lambda z: float(z.mid) if hasattr(z,"mid") else np.nan)
+            if not vp.empty and vp["volume"].max()>0:
+                poc=float(vp.loc[vp["volume"].idxmax(),"price"])
+                st.metric("POC",f"{poc:,.2f}")
+            else:
+                st.info("Volume profile उपलब्ध नाही कारण source volume zero/empty आहे.")
     else:
-        st.info("Select BTC (Bitcoin) to enable the Binance real-time scanner.")
+        st.warning(f"{display_name} market data is unavailable for the selected timeframe.")
+
+with tab7:
+    st.markdown(f"## 🚀 **Advanced Market Scanner & Alerts ({display_name})")
+    if is_btc_market:
+        st.success("🟢 BTC scanner uses Binance-derived live candle + executed-trade data.")
+        tf_source = lambda tf: binance_btc.snapshot(tf, limit=200)[0]
+    else:
+        source_name = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") else "Yahoo Finance"
+        st.info(f"{display_name} scanner uses {source_name} market data. Binance-only fields are not used for this asset.")
+        def tf_source(tf):
+            period = "7d" if tf in ["1m","2m","3m","5m","15m","30m"] else "60d"
+            return fetch_and_resample_data(ticker, tf, is_indian_market, custom_period=period)
+
+    rows=[]
+    for tf in ["1m","3m","5m","15m","1h"]:
+        try:
+            d=tf_source(tf)
+            if d is None or len(d)<20: continue
+            z=prepare_market_analytics(d).iloc[-1]
+            rows.append({"Timeframe":tf,"Price":round(float(z["close"]),2),"RSI":round(float(z["rsi"]),2) if pd.notna(z["rsi"]) else None,"MACD":"Bullish" if z["macd_hist"]>0 else "Bearish","EMA":"Bullish" if z["ema20"]>z["ema50"] else "Bearish","Flow":"Buy" if z["delta"]>0 else "Sell"})
+        except Exception:
+            continue
+    if rows:
+        st.dataframe(pd.DataFrame(rows),use_container_width=True)
+    x=prepare_market_analytics(df_ltf)
+    if x is not None and len(x)>=15:
+        r=x.iloc[-1]
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric("VWAP",f"{r['vwap']:,.2f}"); c2.metric("EMA20",f"{r['ema20']:,.2f}"); c3.metric("EMA50",f"{r['ema50']:,.2f}"); c4.metric("CVD / Flow",f"{r['cvd']:,.4f}")
+        ref=x.iloc[:-1].tail(10)
+        if len(ref)>=3:
+            prev_high=float(ref["high"].max()); prev_low=float(ref["low"].min()); close_now=float(r["close"])
+            bos="Bullish BOS" if close_now>prev_high else ("Bearish BOS" if close_now<prev_low else "No BOS")
+            sweep=("Buy-side liquidity sweep" if float(r["high"])>prev_high and close_now<prev_high else ("Sell-side liquidity sweep" if float(r["low"])<prev_low and close_now>prev_low else "No confirmed sweep"))
+        else:
+            bos="Waiting for reference candles"; sweep="Waiting for reference candles"; prev_high=prev_low=float("nan")
+        l1,l2,l3,l4=st.columns(4)
+        l1.metric("BOS",bos); l2.metric("Liquidity Sweep",sweep); l3.metric("Last Flow Side", "BUY" if r["delta"]>0 else "SELL"); l4.metric("Data Bars",f"{len(x):,}")
+        if pd.notna(prev_high): st.caption(f"Reference liquidity: High {prev_high:,.2f} | Low {prev_low:,.2f} | Current close {close_now:,.2f}")
 
 with tab8:
-    st.markdown(f"## 🚀 **Binance FVG, CVD & CHOCH Scanner ({display_name})**")
-    if is_btc_market:
-        x=add_binance_indicators(df_ltf)
-        if x is not None and len(x)>=10:
-            r=x.iloc[-1]
-            st.success("🟢 CVD and price-flow data are derived from Binance executed trades.")
-            fvg_bull=None; fvg_bear=None
-            if len(x)>=3:
-                a=x.iloc[-3]; b=x.iloc[-2]; c=x.iloc[-1]
-                if c["low"]>a["high"]: fvg_bull=(float(a["high"]),float(c["low"]))
-                if c["high"]<a["low"]: fvg_bear=(float(c["high"]),float(a["low"]))
-            st.write({"Bullish FVG":fvg_bull,"Bearish FVG":fvg_bear})
-            st.metric("Real CVD",f"{r['cvd']:,.4f}")
-            st.metric("Current Candle Delta",f"{r['delta']:,.4f}")
-            prev_high=x["high"].iloc[-6:-1].max(); prev_low=x["low"].iloc[-6:-1].min()
-            choch="Bullish CHOCH" if r["close"]>prev_high and r["delta"]>0 else ("Bearish CHOCH" if r["close"]<prev_low and r["delta"]<0 else "No confirmed CHOCH")
-            st.subheader(choch)
-            st.dataframe(x[["timestamp","close","buy_vol","sell_vol","delta","cvd"]].tail(50).iloc[::-1],use_container_width=True)
-        else: st.warning("Waiting for Binance trade/candle data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
-    else: st.info("Select BTC (Bitcoin) to enable Binance order-flow analytics.")
+    st.markdown(f"## 🚀 **FVG, CVD & CHOCH Scanner ({display_name})")
+    x=prepare_market_analytics(df_ltf)
+    if x is not None and len(x)>=10:
+        if is_btc_market:
+            st.success("🟢 CVD is derived from Binance executed trades.")
+        else:
+            st.info("CVD/Delta येथे OHLCV candle-flow proxy आहे; Binance executed-trade data फक्त BTC साठी आहे.")
+        fvg_bull=None; fvg_bear=None
+        if len(x)>=3:
+            a=x.iloc[-3]; c=x.iloc[-1]
+            if c["low"]>a["high"]: fvg_bull=(float(a["high"]),float(c["low"]))
+            if c["high"]<a["low"]: fvg_bear=(float(c["high"]),float(a["low"]))
+        st.write({"Bullish FVG":fvg_bull,"Bearish FVG":fvg_bear})
+        r=x.iloc[-1]
+        st.metric("CVD / Flow",f"{r['cvd']:,.4f}"); st.metric("Current Candle Delta",f"{r['delta']:,.4f}")
+        prev_high=x["high"].iloc[-6:-1].max(); prev_low=x["low"].iloc[-6:-1].min()
+        choch="Bullish CHOCH" if r["close"]>prev_high and r["delta"]>0 else ("Bearish CHOCH" if r["close"]<prev_low and r["delta"]<0 else "No confirmed CHOCH")
+        st.subheader(choch)
+        st.dataframe(x[["timestamp","close","volume","buy_vol","sell_vol","delta","cvd"]].tail(50).iloc[::-1],use_container_width=True)
+    else:
+        st.warning(f"{display_name} market data is unavailable for FVG/CVD/CHOCH analysis.")
 
 with tab9:
-    st.markdown(f"## 🏛️ **Binance CISD & Wyckoff PO3 Analytics ({display_name})**")
-    if is_btc_market:
-        x=add_binance_indicators(df_ltf)
-        if x is not None and len(x)>=20:
-            cisd=[]; wyck=[]
-            for i in range(5,len(x)):
-                row=x.iloc[i]; prev=x.iloc[i-1]
-                swing_low=x["low"].iloc[i-5:i].min(); swing_high=x["high"].iloc[i-5:i].max()
-                if row["low"]<swing_low and row["close"]>prev["high"] and row["delta"]>0:
-                    cisd.append({"Time":row["timestamp"],"Type":"Bullish CISD","Price":row["close"],"Delta":row["delta"]})
-                elif row["high"]>swing_high and row["close"]<prev["low"] and row["delta"]<0:
-                    cisd.append({"Time":row["timestamp"],"Type":"Bearish CISD","Price":row["close"],"Delta":row["delta"]})
-                if row["low"]<swing_low and row["close"]>swing_low and row["delta"]>0:
-                    wyck.append({"Time":row["timestamp"],"Phase":"Spring / Accumulation candidate","Price":row["close"],"Delta":row["delta"]})
-                elif row["high"]>swing_high and row["close"]<swing_high and row["delta"]<0:
-                    wyck.append({"Time":row["timestamp"],"Phase":"Upthrust / Distribution candidate","Price":row["close"],"Delta":row["delta"]})
-            recent=x.tail(15)
-            phase="MARKUP" if recent["close"].iloc[-1]>recent["high"].max()*0.997 else ("MARKDOWN" if recent["close"].iloc[-1]<recent["low"].min()*1.003 else ("ACCUMULATION" if recent["delta"].mean()>0 else "DISTRIBUTION"))
-            st.metric("Current Binance-derived Phase",phase)
-            st.subheader("CISD")
-            st.dataframe(pd.DataFrame(cisd[::-1]).head(30) if cisd else pd.DataFrame(columns=["Time","Type","Price","Delta"]),use_container_width=True)
-            st.subheader("Wyckoff PO3 candidates")
-            st.dataframe(pd.DataFrame(wyck[::-1]).head(30) if wyck else pd.DataFrame(columns=["Time","Phase","Price","Delta"]),use_container_width=True)
-            st.caption("These are rule-based analytical labels from Binance OHLC + executed-trade delta, not exchange-provided 'institutional' labels.")
-        else: st.warning("Waiting for sufficient Binance history...")
-    else: st.info("Select BTC (Bitcoin) to enable Binance real-time CISD/Wyckoff analytics.")
+    st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics ({display_name})")
+    x=prepare_market_analytics(df_ltf)
+    if x is not None and len(x)>=20:
+        cisd=[]; wyck=[]
+        for i in range(5,len(x)):
+            row=x.iloc[i]; prev=x.iloc[i-1]
+            swing_low=x["low"].iloc[i-5:i].min(); swing_high=x["high"].iloc[i-5:i].max()
+            if row["low"]<swing_low and row["close"]>prev["high"] and row["delta"]>0:
+                cisd.append({"Time":row["timestamp"],"Type":"Bullish CISD","Price":row["close"],"Delta":row["delta"]})
+            elif row["high"]>swing_high and row["close"]<prev["low"] and row["delta"]<0:
+                cisd.append({"Time":row["timestamp"],"Type":"Bearish CISD","Price":row["close"],"Delta":row["delta"]})
+            if row["low"]<swing_low and row["close"]>swing_low and row["delta"]>0:
+                wyck.append({"Time":row["timestamp"],"Phase":"Spring / Accumulation candidate","Price":row["close"],"Delta":row["delta"]})
+            elif row["high"]>swing_high and row["close"]<swing_high and row["delta"]<0:
+                wyck.append({"Time":row["timestamp"],"Phase":"Upthrust / Distribution candidate","Price":row["close"],"Delta":row["delta"]})
+        recent=x.tail(15)
+        phase="MARKUP" if recent["close"].iloc[-1]>recent["high"].max()*0.997 else ("MARKDOWN" if recent["close"].iloc[-1]<recent["low"].min()*1.003 else ("ACCUMULATION" if recent["delta"].mean()>0 else "DISTRIBUTION"))
+        st.metric("Current Derived Phase",phase)
+        st.subheader("CISD")
+        st.dataframe(pd.DataFrame(cisd[::-1]).head(30) if cisd else pd.DataFrame(columns=["Time","Type","Price","Delta"]),use_container_width=True)
+        st.subheader("Wyckoff PO3 candidates")
+        st.dataframe(pd.DataFrame(wyck[::-1]).head(30) if wyck else pd.DataFrame(columns=["Time","Phase","Price","Delta"]),use_container_width=True)
+        if is_btc_market:
+            st.caption("Rule-based labels from Binance OHLC + executed-trade delta.")
+        else:
+            st.caption("Rule-based labels from the selected asset's OHLCV data; Delta is an OHLCV proxy, not exchange-executed order flow.")
+    else:
+        st.warning(f"{display_name} market data is unavailable for CISD/Wyckoff analysis.")
+
