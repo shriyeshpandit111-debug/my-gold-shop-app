@@ -2216,10 +2216,6 @@ with tab6:
         o3.metric("Best Ask",f"{ask:,.2f}" if ask>0 else "Waiting…")
         o4.metric("Ask Qty",f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
         if bid>0 and ask>0: st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
-        st.markdown("### Real Binance trade tape")
-        trades=list(binance_btc.recent_trades)
-        if trades:
-            st.dataframe(pd.DataFrame(trades[-50:])[["time","price","qty","side"]].iloc[::-1],use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
@@ -2247,26 +2243,85 @@ with tab6:
 
     st.markdown("---")
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
-    st.caption("किंमतींनुसार सर्वात जास्त ट्रेडिंग झालेल्या पॉईंट ऑफ कंट्रोल (POC) लेव्हल्स.")
+    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. POC हा सर्वाधिक volume असलेला price bin आहे; VAH/VAL हे volume distribution मधून मोजले जातात.")
     if df_ltf is not None and not df_ltf.empty:
         df_vp_data=build_market_flow_columns(df_ltf).copy()
-        vol=df_vp_data["volume"].fillna(0).clip(lower=0)
-        if float(vol.sum())>0 and df_vp_data["close"].nunique()>1:
-            price_bins=pd.cut(df_vp_data["close"],bins=min(12,max(2,df_vp_data["close"].nunique())))
-            vol_profile=df_vp_data.assign(_vol=vol).groupby(price_bins,observed=False)["_vol"].sum().reset_index()
-            vol_profile["mid_price"]=vol_profile["close"].apply(lambda z:round(z.mid,2) if hasattr(z,"mid") else np.nan)
-            vol_profile=vol_profile.dropna(subset=["mid_price"])
-            if not vol_profile.empty:
-                poc_price=float(vol_profile.loc[vol_profile["_vol"].idxmax(),"mid_price"]); vah_price=round(poc_price*1.004,2); val_price=round(poc_price*0.996,2)
+        df_vp_data=df_vp_data.dropna(subset=["close"]).tail(120)
+        vol=pd.to_numeric(df_vp_data["volume"],errors="coerce").fillna(0).clip(lower=0)
+        prices=pd.to_numeric(df_vp_data["close"],errors="coerce")
+        if len(df_vp_data)>=3 and float(vol.sum())>0 and prices.nunique()>1:
+            # Use a fixed number of numeric price bins so the horizontal profile has
+            # evenly spaced, clearly visible bars instead of categorical y labels.
+            pmin=float(prices.min()); pmax=float(prices.max())
+            bin_count=min(24,max(10,int(np.sqrt(len(df_vp_data))*2)))
+            edges=np.linspace(pmin,pmax,bin_count+1)
+            # Avoid zero-width bins for very small price ranges.
+            if np.allclose(edges[0],edges[-1]):
+                edges=np.linspace(pmin-0.5,pmax+0.5,bin_count+1)
+            mids=(edges[:-1]+edges[1:])/2.0
+            idx=np.digitize(prices.to_numpy(dtype=float),edges[1:-1],right=False)
+            profile=np.zeros(len(mids),dtype=float)
+            np.add.at(profile,idx,vol.to_numpy(dtype=float))
+            vp=pd.DataFrame({"price":mids,"volume":profile})
+            vp=vp[vp["volume"]>0].copy()
+
+            if not vp.empty:
+                total=float(vp["volume"].sum())
+                poc_idx=int(vp["volume"].idxmax())
+                poc_price=float(vp.loc[poc_idx,"price"])
+
+                # 70% value-area calculation: expand from POC toward the larger
+                # neighbouring volume until the target volume is covered.
+                ordered=vp.reset_index(drop=True)
+                poc_pos=int(ordered["volume"].idxmax())
+                target=total*0.70
+                covered=float(ordered.loc[poc_pos,"volume"])
+                lo=hi=poc_pos
+                while covered < target and (lo>0 or hi<len(ordered)-1):
+                    left_vol=float(ordered.loc[lo-1,"volume"]) if lo>0 else -1.0
+                    right_vol=float(ordered.loc[hi+1,"volume"]) if hi<len(ordered)-1 else -1.0
+                    if right_vol >= left_vol and hi<len(ordered)-1:
+                        hi += 1; covered += max(0.0,right_vol)
+                    elif lo>0:
+                        lo -= 1; covered += max(0.0,left_vol)
+                    else:
+                        break
+                val_price=float(ordered.loc[lo,"price"])
+                vah_price=float(ordered.loc[hi,"price"])
+
                 col_vp1,col_vp2,col_vp3=st.columns(3)
-                col_vp1.metric("Value Area High (VAH)",f"{vah_price}")
-                col_vp2.metric("Point of Control (POC - Peak Vol)",f"{poc_price}")
-                col_vp3.metric("Value Area Low (VAL)",f"{val_price}")
-                fig_vp=go.Figure(go.Bar(x=vol_profile["_vol"],y=vol_profile["mid_price"].astype(str),orientation="h"))
-                fig_vp.update_layout(title="Horizontal Volume Profile",height=300,margin=dict(l=10,r=10,t=30,b=10),xaxis_title="Volume",yaxis_title="Price Level")
+                col_vp1.metric("Value Area High (VAH)",f"{vah_price:,.2f}")
+                col_vp2.metric("Point of Control (POC - Peak Vol)",f"{poc_price:,.2f}")
+                col_vp3.metric("Value Area Low (VAL)",f"{val_price:,.2f}")
+
+                bin_width=float(np.median(np.diff(edges))) if len(edges)>1 else max(abs(pmax-pmin)/20.0,0.01)
+                fig_vp=go.Figure()
+                fig_vp.add_trace(go.Bar(
+                    x=vp["volume"],
+                    y=vp["price"],
+                    orientation="h",
+                    width=bin_width*0.82,
+                    hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
+                    name="Volume Profile"
+                ))
+                fig_vp.add_hline(y=poc_price,line_width=3,line_dash="solid",annotation_text="POC",annotation_position="top right")
+                fig_vp.add_hline(y=vah_price,line_width=1,line_dash="dash",annotation_text="VAH",annotation_position="top left")
+                fig_vp.add_hline(y=val_price,line_width=1,line_dash="dash",annotation_text="VAL",annotation_position="bottom left")
+                fig_vp.update_layout(
+                    title="Horizontal Volume Profile",
+                    height=430,
+                    margin=dict(l=65,r=25,t=45,b=45),
+                    xaxis_title="Volume",
+                    yaxis_title="Price Level",
+                    yaxis=dict(type="linear",tickformat=",.2f",showgrid=True),
+                    bargap=0.08,
+                    hovermode="closest",
+                    showlegend=False
+                )
                 st.plotly_chart(fig_vp,use_container_width=True,key="vp_horizontal_chart_fixed")
+                st.caption(f"Profile source: selected asset OHLCV volume | {len(ordered)} active price bins | Value Area = 70% of profile volume")
         else:
-            st.info("Volume Profile उपलब्ध नाही कारण source volume zero/empty आहे.")
+            st.info("Volume Profile उपलब्ध नाही कारण source volume/price data पुरेसा नाही.")
 
     st.markdown("---")
     st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
@@ -2283,19 +2338,32 @@ with tab6:
 
     st.markdown("---")
     st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
-    st.caption("फ्युचर्स, ऑप्शन्स, क्रिप्टो आणि फॉरेक्स मार्केटमधील Big Players चे पोझिशन ट्रॅकर.")
-    price_change=float(df_ltf["close"].iloc[-1]-df_ltf["close"].iloc[-2]) if df_ltf is not None and len(df_ltf)>=2 else 0.0
+    st.caption("फ्युचर्स OI, Funding आणि Options Writing साठी derivatives/options feed आवश्यक असतो; ते Spot @aggTrade + @bookTicker मधून उपलब्ध होत नाहीत.")
+
     if is_btc_market:
-        st.info("BTC Spot @aggTrade + @bookTicker provides executed trades and best bid/ask, but not futures Open Interest or options writing. The OI section therefore remains a price-flow context and does not fabricate exchange OI values.")
-        oi_status="Spot OI: Not provided"; funding_rate="Not provided"; bias_text="Price/Delta context"; bias_desc="Use real Binance trade delta and best bid/ask above for spot order-flow context."
-    elif price_change<0:
-        oi_status="Increasing 📈"; funding_rate="N/A"; bias_text="Bearish price-flow context"; bias_desc="Price is lower than the previous candle; actual OI requires a derivatives source."
+        st.info("ℹ️ BTC Spot mode: Binance @aggTrade + @bookTicker मधून executed trades आणि best bid/ask मिळतात. Spot stream मध्ये Futures Open Interest, Funding Rate किंवा Options Writing data नसल्यामुळे येथे कोणताही बनावट OI value दाखवला जात नाही.")
+        oi_status="Not available — Spot"
+        funding_rate="Not available"
+        bias_text="Price / Delta context"
+        bias_desc="वरील real Binance Buy Flow, Sell Flow, Net Delta आणि Best Bid/Ask यावर spot order-flow context पाहा. Actual Futures OI साठी Binance Futures derivatives feed आवश्यक आहे."
     else:
-        oi_status="Increasing 📈"; funding_rate="N/A"; bias_text="Bullish price-flow context"; bias_desc="Price is higher than the previous candle; actual OI requires a derivatives source."
+        source = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") is not None else ("Yahoo Finance" if is_indian_market or is_gold_silver else "Selected market data")
+        oi_status="Not provided by source"
+        funding_rate="Not provided"
+        last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
+        price_change=float(df_ltf["close"].iloc[-1]-df_ltf["close"].iloc[-2]) if df_ltf is not None and len(df_ltf)>=2 else 0.0
+        if price_change>0 and last_delta>0:
+            bias_text="Price + Flow positive"
+        elif price_change<0 and last_delta<0:
+            bias_text="Price + Flow negative"
+        else:
+            bias_text="Mixed price / flow"
+        bias_desc=f"{display_name} साठी {source} source मध्ये Futures OI / Options Writing field उपलब्ध नसल्यामुळे OI वाढत आहे असा निष्कर्ष लावलेला नाही. येथे फक्त उपलब्ध price/flow context दाखवला आहे."
+
     col_oi1,col_oi2,col_oi3=st.columns(3)
     col_oi1.metric("Open Interest Dynamics",oi_status)
     col_oi2.metric("Funding / OI Source",funding_rate)
-    col_oi3.metric("Institutional Market Bias",bias_text)
+    col_oi3.metric("Market Flow Context",bias_text)
     st.info(bias_desc)
 
 with tab7:
