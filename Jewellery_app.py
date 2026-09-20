@@ -1730,6 +1730,23 @@ elif is_indian_market:
 else:
     current_price = base_price
 
+# ---------------------------------------------------------------------------
+# Shared live price-change context
+# ---------------------------------------------------------------------------
+# Tab 7/8/9 use this value.  The previous build calculated price_change only
+# inside the non-BTC OI branch, so BTC could reach Tab 7 with an undefined
+# variable and Streamlit stopped rendering every later tab.  Define it once
+# from the selected asset's actual OHLC data, before any tab uses it.
+try:
+    if df_ltf is not None and len(df_ltf) >= 2:
+        _pc_last = float(df_ltf["close"].iloc[-1])
+        _pc_prev = float(df_ltf["close"].iloc[-2])
+        price_change = _pc_last - _pc_prev
+    else:
+        price_change = 0.0
+except Exception:
+    price_change = 0.0
+
 col_t1, col_t2 = st.columns(2)
 with col_t1:
     st.metric(
@@ -2416,7 +2433,6 @@ with tab6:
         oi_status="Not provided by source"
         funding_rate="Not provided"
         last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
-        price_change=float(df_ltf["close"].iloc[-1]-df_ltf["close"].iloc[-2]) if df_ltf is not None and len(df_ltf)>=2 else 0.0
         if price_change>0 and last_delta>0:
             bias_text="Price + Flow positive"
         elif price_change<0 and last_delta<0:
@@ -2457,7 +2473,7 @@ with tab7:
     if is_down_trend:
         st.error("⚠️ **Confluence Filter Check:** मार्केट डाउनसाईडला चालले असल्याने मल्टि-टाईमफ्रेम मॅट्रिक्समध्ये Bearish सिग्नल दर्शवले आहेत.")
     else:
-        st.success("✅ **Confluence Filter Check:** किमान ४ टाईमफ्रेम्स एकाच दिशेने Bullish सिग्नल देत आहेत. ॲक्युरसी लेव्हल ९०% च्या वर आहे.")
+        st.success("ℹ️ **Confluence Filter Check:** सध्याच्या selected-asset price context नुसार सकारात्मक स्थिती दिसत आहे; हे 90% accuracy guarantee नाही.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
