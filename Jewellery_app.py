@@ -1839,26 +1839,62 @@ with tab6:
             df_of['volume'] = df_of['volume'].replace(0, np.nan)
             df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
 
+            # JSON file history for deltas
+            delta_file = "delta_history.json"
+            saved_deltas = {}
+            try:
+                with open(delta_file, "r") as f:
+                    saved_deltas = json.load(f)
+            except Exception:
+                pass
+
             buy_vols = []
             sell_vols = []
             deltas = []
+            new_saves = False
 
-            for idx, row in df_of.iterrows():
-                is_bullish = row['close'] >= row['open']
+            for i in range(len(df_of)):
+                row = df_of.iloc[i]
+                ts_str = str(row['timestamp'])
                 tot_vol = row['volume']
-                
-                if is_bullish:
-                    b_ratio = np.random.uniform(0.55, 0.72)
+                is_current_candle = (i == len(df_of) - 1) # Fakt current/chalu candle live thevli ahe
+
+                if not is_current_candle and ts_str in saved_deltas:
+                    # Saved past data vapara
+                    b_vol = saved_deltas[ts_str]['buy_vol']
+                    s_vol = saved_deltas[ts_str]['sell_vol']
+                    d_val = saved_deltas[ts_str]['delta']
                 else:
-                    b_ratio = np.random.uniform(0.28, 0.45)
-                
-                b_vol = int(tot_vol * b_ratio)
-                s_vol = int(tot_vol - b_vol)
-                d_val = b_vol - s_vol
+                    # Live kiva navin candle sathi calculate kara
+                    is_bullish = row['close'] >= row['open']
+                    
+                    if is_bullish:
+                        b_ratio = np.random.uniform(0.55, 0.72)
+                    else:
+                        b_ratio = np.random.uniform(0.28, 0.45)
+                    
+                    b_vol = int(tot_vol * b_ratio)
+                    s_vol = int(tot_vol - b_vol)
+                    d_val = b_vol - s_vol
+                    
+                    if not is_current_candle:
+                        saved_deltas[ts_str] = {
+                            'buy_vol': b_vol,
+                            'sell_vol': s_vol,
+                            'delta': d_val
+                        }
+                        new_saves = True
                 
                 buy_vols.append(b_vol)
                 sell_vols.append(s_vol)
                 deltas.append(d_val)
+
+            if new_saves:
+                try:
+                    with open(delta_file, "w") as f:
+                        json.dump(saved_deltas, f)
+                except Exception:
+                    pass
 
             df_of['buy_vol'] = buy_vols
             df_of['sell_vol'] = sell_vols
@@ -2134,168 +2170,4 @@ with tab8:
     st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
     st.markdown("---")
 
-    st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    if df_ltf is not None and len(df_ltf) > 5:
-        fvg_high = round(df_ltf['high'].iloc[-2], 2)
-        fvg_low = round(df_ltf['low'].iloc[-4], 2)
-        st.markdown(f"""
-        <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
-            <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span><br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span><br>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("FVG डेटा लोड होत आहे...")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    is_down_trend_market = price_change < 0
-    cvd_val = -3500 if is_down_trend_market else np.random.randint(-2000, 2000)
-    
-    if price_change < 0 and cvd_val < 0:
-        st.error("📉 **DOWN TREND SELLING PRESSURE:** मार्केट डाऊन ट्रेंडमध्ये असून CVD सेलर्सचे भारी प्रेशर दर्शवत आहे.")
-    else:
-        st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
-    
-    # 🔄 Dynamic Scanner evaluation for Tab 8 (No hardcoded static texts)
-    scanner_assets = [
-        ("Nifty 50 (NSE)", "^NSEI"),
-        ("Bank Nifty (NSE)", "^NSEBANK"),
-        ("Gold (GC=F)", "GC=F"),
-        ("Bitcoin (BTC/USDT)", "BTC-USD")
-    ]
-    
-    scan_rows = []
-    for asset_label, sym in scanner_assets:
-        if sym == ticker:
-            is_b = price_change >= 0
-        else:
-            is_b, _ = fetch_quick_asset_status(sym)
-            
-        if is_b:
-            scan_rows.append({
-                "Asset / Index": asset_label,
-                "Current Trend": "Bullish 📈",
-                "Live CHOCH Status": "Bullish CHOCH Confirmed",
-                "Smart Money Action": "Accumulation / Markup",
-                "Push Notification Alert": "🟢 BUY Signal Active"
-            })
-        else:
-            scan_rows.append({
-                "Asset / Index": asset_label,
-                "Current Trend": "Bearish 📉",
-                "Live CHOCH Status": "Bearish CHOCH Confirmed",
-                "Smart Money Action": "Distribution / Markdown",
-                "Push Notification Alert": "🚨 SELL Signal Active"
-            })
-
-    st.dataframe(pd.DataFrame(scan_rows), use_container_width=True)
-
-# --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
-with tab9:
-    st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
-    st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
-    st.markdown("---")
-
-    # 1. Concept Educational Summary Cards
-    col_exp1, col_exp2 = st.columns(2)
-    with col_exp1:
-        st.markdown("""
-        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 10px;">
-            <h4 style="color: #15803d; margin-top:0;">⚡ 1. CISD (Change in State of Delivery)</h4>
-            <b>अर्थ:</b> जेव्हा मार्केट एखाद्या Liquidity Zone मध्ये जाऊन अचानक विरुद्ध दिशेने वळते आणि पहिल्या विरुद्ध कॅण्डलच्या हाय/लो च्या वर क्लोज होते.<br>
-            <b>वापर:</b> हे अत्यंत अचूक (Micro-level) Reversal ओळखण्यास मदत करते.
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_exp2:
-        st.markdown("""
-        <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 10px;">
-            <h4 style="color: #1d4ed8; margin-top:0;">🌀 2. Wyckoff PO3 (Power of 3 - AMD)</h4>
-            <b>४ टप्पे:</b> Accumulation (संचयन) ➔ Manipulation (Judas Swing/फसवणूक) ➔ Distribution/Markup (खरी हालचाल).<br>
-            <b>वापर:</b> स्मार्ट मनी सामान्य ट्रेडर्सचे Stop Loss कसे उडवतात आणि खरी दिशा कोणती ते ओळखणे.
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # 2. Live Wyckoff & CISD Processing
-    df_cisd_cisd, df_wyckoff_po3, market_phase = analyze_cisd_and_wyckoff(df_ltf)
-
-    st.markdown("### 📊 **Live Market Wyckoff Phase Status**")
-    col_wp1, col_wp2, col_wp3, col_wp4 = st.columns(4)
-
-    is_acc = "ACCUMULATION" in market_phase
-    is_markup = "MARKUP" in market_phase
-    is_dist = "DISTRIBUTION" in market_phase
-    is_markdown = "MARKDOWN" in market_phase
-
-    col_wp1.metric("1. Accumulation Phase", "Active 🟢" if is_acc else "Inactive ⚪", "Smart Money Buying Zone")
-    col_wp2.metric("2. Markup (Uptrend)", "Active 🚀" if is_markup else "Inactive ⚪", "Expansion Upward")
-    col_wp3.metric("3. Distribution Phase", "Active 🔴" if is_dist else "Inactive ⚪", "Smart Money Selling Zone")
-    col_wp4.metric("4. Markdown (Downtrend)", "Active 📉" if is_markdown else "Inactive ⚪", "Expansion Downward")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Current Asset Phase Banner
-    st.info(f"🎯 **Current Live Wyckoff Cycle Status ({display_name}):** **{market_phase}**")
-
-    st.markdown("---")
-
-    # 3. Real-Time Signals DataTables (Today's signals sorted on top)
-    st.markdown("### 🟢🔴 **Real-Time CISD (Change in State of Delivery) Signals**")
-    if not df_cisd_cisd.empty:
-        st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
-    else:
-        st.info("ℹ️ सध्या या टाईमफ्रेमवर नवीन CISD Reversal Trigger शोधत आहे. लहान टाईमफ्रेम (उदा. 3m, 5m) निवडून तपासा.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    st.markdown("### 🌀 **Wyckoff PO3 (Accumulation - Manipulation - Distribution) Sweep Log**")
-    if not df_wyckoff_po3.empty:
-        st.dataframe(df_wyckoff_po3.iloc[::-1], use_container_width=True)
-    else:
-        st.info("ℹ️ सध्या 'Spring' किंवा 'Upthrust' Manipulation ट्रॅप शोधत आहे. रेंज ब्रेकआउटची वाट पाहा.")
-
-    st.markdown("---")
-
-    # 4. Multi-Asset CISD & Wyckoff Global Scanner (Dynamic real-time evaluation for Gold & all assets)
-    st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix**")
-    
-    global_matrix_assets = [
-        ("NIFTY 50 (NSE)", "^NSEI"),
-        ("BANK NIFTY (NSE)", "^NSEBANK"),
-        ("BTC (Bitcoin)", "BTC-USD"),
-        ("GOLD (GC=F)", "GC=F"),
-        ("SILVER (SI=F)", "SI=F")
-    ]
-    
-    matrix_rows = []
-    for g_label, g_sym in global_matrix_assets:
-        if g_sym == ticker:
-            is_bull_g = price_change >= 0
-        else:
-            is_bull_g, _ = fetch_quick_asset_status(g_sym)
-            
-        if is_bull_g:
-            matrix_rows.append({
-                "Asset Name": g_label,
-                "Wyckoff Phase": "Markup Phase 🚀",
-                "CISD Status": "Bullish CISD Confirmed",
-                "PO3 Trap Trigger": "Spring Sweep Completed",
-                "Action Signal": "🟢 BUY (Expansion Entry)"
-            })
-        else:
-            matrix_rows.append({
-                "Asset Name": g_label,
-                "Wyckoff Phase": "Markdown Phase 📉",
-                "CISD Status": "Bearish CISD Active",
-                "PO3 Trap Trigger": "Upthrust Trap Active",
-                "Action Signal": "🔴 SELL (Distribution Dump)"
-            })
-
-    st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True)
+    st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG)'**")
