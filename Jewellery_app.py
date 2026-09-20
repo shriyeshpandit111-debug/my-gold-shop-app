@@ -268,6 +268,95 @@ class BinanceBTCStream:
         with self.lock:
             self.last_error = f"Binance REST history failed. {last_error}"
 
+    def historical_chart(self, timeframe="5m", days=20, limit=1000):
+        """Fetch up to the requested historical window directly from Binance REST.
+        Used by Tab 2 so the chart is not limited to the live 1,000 x 1-minute
+        bootstrap candles held by the websocket engine.
+        """
+        tf_map = {
+            "1m": "1m", "2m": "1m", "3m": "3m", "5m": "5m",
+            "10m": "5m", "15m": "15m", "30m": "30m",
+            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d",
+        }
+        source_tf = tf_map.get(timeframe, "5m")
+        source_ms = {
+            "1m": 60_000, "3m": 180_000, "5m": 300_000,
+            "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
+            "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000,
+        }[source_tf]
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - int(days * 86_400_000)
+        rows_all = []
+        cursor = start_ms
+        last_error = ""
+
+        # Binance spot klines accept max 1000 rows per request, so page forward.
+        while cursor < end_ms and len(rows_all) < 100_000:
+            got = None
+            for base in self.REST_BASES:
+                try:
+                    params = urlencode({
+                        "symbol": self.symbol,
+                        "interval": source_tf,
+                        "startTime": cursor,
+                        "endTime": end_ms,
+                        "limit": int(limit),
+                    })
+                    url = f"{base}/api/v3/klines?{params}"
+                    req = Request(url, headers={
+                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Chart",
+                        "Accept": "application/json",
+                    })
+                    with urlopen(req, timeout=15) as resp:
+                        got = json.loads(resp.read().decode("utf-8"))
+                    self.rest_endpoint = base
+                    break
+                except Exception as exc:
+                    last_error = f"{base}: {exc}"
+
+            if not got:
+                break
+            rows_all.extend(got)
+            next_cursor = int(got[-1][0]) + source_ms
+            if next_cursor <= cursor:
+                break
+            cursor = next_cursor
+            if len(got) < int(limit):
+                break
+
+        if not rows_all:
+            return pd.DataFrame()
+
+        # De-duplicate pages and build a clean OHLCV dataframe.
+        rows_all = {int(r[0]): r for r in rows_all}.values()
+        rows_all = sorted(rows_all, key=lambda r: int(r[0]))
+        df = pd.DataFrame(rows_all, columns=[
+            "timestamp_ms", "open", "high", "low", "close", "volume",
+            "close_time", "quote_volume", "trades", "taker_buy_base",
+            "taker_buy_quote", "ignore"
+        ])
+        df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True)
+        for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["buy_vol"] = df["taker_buy_base"].fillna(0.0)
+        df["sell_vol"] = (df["volume"].fillna(0.0) - df["buy_vol"]).clip(lower=0.0)
+        df["delta"] = df["buy_vol"] - df["sell_vol"]
+        df = df[["timestamp", "open", "high", "low", "close", "volume", "buy_vol", "sell_vol", "delta"]].dropna()
+
+        # 2m/10m are not native Binance intervals; aggregate from 1m/5m.
+        if timeframe in {"2m", "10m"}:
+            rule = "2min" if timeframe == "2m" else "10min"
+            df = (df.set_index("timestamp")
+                    .resample(rule, origin="epoch", label="left", closed="left")
+                    .agg({
+                        "open": "first", "high": "max", "low": "min", "close": "last",
+                        "volume": "sum", "buy_vol": "sum", "sell_vol": "sum", "delta": "sum"
+                    })
+                    .dropna(subset=["open", "high", "low", "close"])
+                    .reset_index())
+
+        return df.tail(max(1, int(days * 1440 / max(1, source_ms / 60_000)) + 20)).reset_index(drop=True)
+
     def _load_book_ticker(self):
         """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
         The WebSocket then keeps these values live.
@@ -720,9 +809,16 @@ def build_market_flow_columns(df):
     return out
 
 
-def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d", prefer_binance=True):
-    if prefer_binance and str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
+def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
+    if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
+            # Tab 2 asks for a 20-day chart.  Use paginated Binance REST history
+            # instead of the websocket engine's 1,000-minute bootstrap window.
+            if custom_period in {"20d", "30d", "60d", "90d", "120d", "1y", "max"}:
+                days_map = {"20d": 20, "30d": 30, "60d": 60, "90d": 90, "120d": 120, "1y": 365, "max": 365}
+                df_btc = binance_btc.historical_chart(target_tf, days=days_map.get(custom_period, 20))
+                if df_btc is not None and not df_btc.empty:
+                    return build_market_flow_columns(df_btc)
             df_btc, _state = binance_btc.snapshot(target_tf, limit=1000)
             if df_btc is not None and not df_btc.empty:
                 return df_btc
@@ -1793,25 +1889,23 @@ with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
     st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
-    # Tab 2 is intentionally a DAILY 20-day historical chart for every selected asset.
-    # We bypass the live BTC 1-minute engine here so BTC also receives a true 20-day
-    # daily OHLC history from Yahoo Finance instead of only the locally buffered WS candles.
-    st.info("📅 या chart मध्ये निवडलेल्या market चे मागील 20 trading/calendar days चे Daily Candles दाखवले जातात.")
-    chart_timeframe = "1d"
-    selected_period = "20d"
-    df_chart = fetch_and_resample_data(
-        ticker,
-        chart_timeframe,
-        is_indian_market,
-        custom_period=selected_period,
-        prefer_binance=False,
-    )
-    if df_chart is None or df_chart.empty:
-        st.warning("मागील 20 दिवसांचा historical candle data उपलब्ध नाही. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.")
-    render_tradingview_lightweight_chart(
-        df_chart if df_chart is not None and not df_chart.empty else df_ltf,
-        display_name,
-    )
+    col_tf1, col_tf2 = st.columns([2, 5])
+    with col_tf1:
+        chart_timeframe = st.selectbox(
+            "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+            index=3,
+            key="custom_chart_tf"
+        )
+    
+    chart_period_map = {
+        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
+        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
+    }
+    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
+    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
     st.markdown("### 🌎 Global Asset Live Charts")
