@@ -720,8 +720,8 @@ def build_market_flow_columns(df):
     return out
 
 
-def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
-    if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
+def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d", prefer_binance=True):
+    if prefer_binance and str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
             df_btc, _state = binance_btc.snapshot(target_tf, limit=1000)
             if df_btc is not None and not df_btc.empty:
@@ -1793,23 +1793,25 @@ with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
     st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
-    col_tf1, col_tf2 = st.columns([2, 5])
-    with col_tf1:
-        chart_timeframe = st.selectbox(
-            "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
-            index=3,
-            key="custom_chart_tf"
-        )
-    
-    chart_period_map = {
-        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
-        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
-    }
-    selected_period = chart_period_map.get(chart_timeframe, "20d")
-    
-    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
-    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
+    # Tab 2 is intentionally a DAILY 20-day historical chart for every selected asset.
+    # We bypass the live BTC 1-minute engine here so BTC also receives a true 20-day
+    # daily OHLC history from Yahoo Finance instead of only the locally buffered WS candles.
+    st.info("📅 या chart मध्ये निवडलेल्या market चे मागील 20 trading/calendar days चे Daily Candles दाखवले जातात.")
+    chart_timeframe = "1d"
+    selected_period = "20d"
+    df_chart = fetch_and_resample_data(
+        ticker,
+        chart_timeframe,
+        is_indian_market,
+        custom_period=selected_period,
+        prefer_binance=False,
+    )
+    if df_chart is None or df_chart.empty:
+        st.warning("मागील 20 दिवसांचा historical candle data उपलब्ध नाही. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.")
+    render_tradingview_lightweight_chart(
+        df_chart if df_chart is not None and not df_chart.empty else df_ltf,
+        display_name,
+    )
 
     st.markdown("---")
     st.markdown("### 🌎 Global Asset Live Charts")
