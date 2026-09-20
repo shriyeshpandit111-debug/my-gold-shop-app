@@ -464,18 +464,6 @@ class BinanceBTCStream:
             "open":"first", "high":"max", "low":"min", "close":"last",
             "volume":"sum", "buy_vol":"sum", "sell_vol":"sum", "delta":"sum"
         }).dropna(subset=["open","high","low","close"]).reset_index()
-
-        # Binance timestamps arrive in UTC.  The dashboard is intended to
-        # display all chart candle times in Indian Standard Time (IST).
-        # Convert only after resampling so the Binance candle boundaries stay
-        # aligned to their original UTC exchange buckets, then expose the
-        # resulting local wall-clock time to Plotly as a naive timestamp.
-        out["timestamp"] = (
-            pd.to_datetime(out["timestamp"], utc=True)
-            .dt.tz_convert("Asia/Kolkata")
-            .dt.tz_localize(None)
-        )
-
         return out.tail(limit).reset_index(drop=True), state
 
 @st.cache_resource(show_spinner=False)
@@ -519,7 +507,7 @@ if market_type == "यादीमधून निवडा":
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
-    if asset_choice in ["GOLD (सोने)", "SILVER (चांदी)"]:
+    if asset_choice in ("GOLD (सोने)", "SILVER (चांदी)"):
         is_gold_silver = True
 
 elif market_type == "मॅन्युअली नाव टाईप करा":
@@ -532,7 +520,7 @@ elif market_type == "मॅन्युअली नाव टाईप कर�
         is_indian_market = True
     if "BTC" in ticker:
         is_btc_market = True
-    if ticker in ["GC=F", "SI=F"]:
+    if ticker in ("GC=F", "SI=F"):
         is_gold_silver = True
 else:
     forex_ticker = st.sidebar.text_input(
@@ -1747,22 +1735,16 @@ elif is_indian_market:
 else:
     current_price = base_price
 
-# ---------------------------------------------------------------------------
-# Shared market context for Tabs 6-9
-# ---------------------------------------------------------------------------
-# This MUST live outside any individual tab. Streamlit reruns the complete
-# script whenever a market/timeframe widget changes.
-try:
-    if df_ltf is not None and len(df_ltf) >= 2:
+# Shared price-change value used by Tabs 6-9.
+# It must be defined outside Tab 6 so switching to GOLD/SILVER/BTC
+# cannot leave Tabs 7-9 with an undefined variable on a Streamlit rerun.
+if df_ltf is not None and len(df_ltf) >= 2:
+    try:
         price_change = float(df_ltf["close"].iloc[-1]) - float(df_ltf["close"].iloc[-2])
-    else:
+    except Exception:
         price_change = 0.0
-except Exception:
+else:
     price_change = 0.0
-
-# Defensive top-level defaults prevent NameError on BTC / GOLD / SILVER reruns.
-is_gold_silver = bool(globals().get("is_gold_silver", False))
-price_change = float(globals().get("price_change", 0.0) or 0.0)
 
 col_t1, col_t2 = st.columns(2)
 with col_t1:
@@ -2096,9 +2078,7 @@ with tab4:
         btc_ws = st.session_state.get("btc_ws_data", {})
         current_btc_price = float(btc_stream_state.get("last_price") or current_price) if is_btc_market else current_price
         btc_change = float(btc_ws.get("change", 0) or 0)
-        # Keep live signal timestamps in Indian Standard Time as well.
-        IST = timezone(timedelta(hours=5, minutes=30))
-        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         live_sig_type = "🔴 PERFECT SELL (CHOCH CONFIRMED)"
         inst_act = "Binance Direct WS: Institutional Order Block Tap"
@@ -2201,7 +2181,7 @@ with tab6:
         source="Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance"
         st.info(f"{display_name} साठी {source} market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
     else:
-        st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
+        st.info(f"{display_name} साठी Yahoo Finance live/market-data source वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
 
     st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
@@ -2369,9 +2349,9 @@ with tab6:
                         x=vp["volume"],
                         y=vp["price"],
                         orientation="h",
-                        width=bin_width * 0.90,
+                        width=bin_width * 0.98,
                         marker=dict(
-                            line=dict(width=0.4)
+                            line=dict(width=0.25)
                         ),
                         hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
                         name="Volume Profile"
@@ -2395,8 +2375,8 @@ with tab6:
                     y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
                     fig_vp.update_layout(
                         title="Horizontal Volume Profile",
-                        height=500,
-                        margin=dict(l=75, r=35, t=50, b=50),
+                        height=560,
+                        margin=dict(l=85, r=45, t=50, b=55),
                         xaxis_title="Volume",
                         yaxis_title="Price Level",
                         yaxis=dict(
@@ -2407,8 +2387,8 @@ with tab6:
                             zeroline=False,
                             fixedrange=False
                         ),
-                        xaxis=dict(showgrid=True, zeroline=False),
-                        bargap=0.02,
+                        xaxis=dict(showgrid=True, zeroline=False, rangemode="tozero"),
+                        bargap=0.0,
                         hovermode="closest",
                         showlegend=False
                     )
@@ -2467,8 +2447,6 @@ with tab6:
     st.info(bias_desc)
 
 with tab7:
-    price_change = float(globals().get("price_change", 0.0) or 0.0)
-    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
     st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
@@ -2574,8 +2552,6 @@ with tab7:
 
 # --- 🚀 TAB 8: DYNAMIC MULTI-ASSET CHOCH & BOS SCANNER ---
 with tab8:
-    price_change = float(globals().get("price_change", 0.0) or 0.0)
-    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
     st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
     st.markdown("---")
@@ -2646,8 +2622,6 @@ with tab8:
 
 # --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
 with tab9:
-    price_change = float(globals().get("price_change", 0.0) or 0.0)
-    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
     st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
     st.markdown("---")
