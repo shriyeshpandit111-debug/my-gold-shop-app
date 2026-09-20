@@ -183,16 +183,33 @@ else:
 
 
 # --- 🌐 BINANCE BTC REAL-TIME MARKET DATA ENGINE ---
-# BTC mode uses Binance Spot public market-data streams only.
-# @aggTrade = executed trades (real-time), @bookTicker = best bid/ask.
-# Historical 1m candles are loaded once from Binance REST and then updated from live trades.
+# Public Binance Spot market data only.
+# Primary endpoints use Binance's market-data-only domains, which are intended
+# for public market data and avoid region/API-key issues on hosted servers.
+# @aggTrade = executed trades; @bookTicker = best bid/ask.
 
 class BinanceBTCStream:
+    REST_BASES = [
+        "https://data-api.binance.vision",
+        "https://api.binance.com",
+        "https://api1.binance.com",
+        "https://api2.binance.com",
+        "https://api3.binance.com",
+        "https://api4.binance.com",
+    ]
+    WS_BASES = [
+        "wss://data-stream.binance.vision:443",
+        "wss://stream.binance.com:443",
+        "wss://stream.binance.com:9443",
+    ]
+
     def __init__(self, symbol="BTCUSDT", history_limit=1000):
         self.symbol = symbol.upper()
         self.lock = threading.RLock()
         self.connected = False
         self.last_error = ""
+        self.endpoint = ""
+        self.rest_endpoint = ""
         self.last_trade_time = None
         self.last_update_time = None
         self.best_bid = 0.0
@@ -207,32 +224,48 @@ class BinanceBTCStream:
         self.candles_1m = {}
         self._stop = False
         self._load_history(history_limit)
-        self._thread = threading.Thread(target=self._run_ws, daemon=True)
+        self._thread = threading.Thread(target=self._run_ws, daemon=True, name="binance-btc-ws")
         self._thread.start()
 
     def _load_history(self, limit=1000):
-        try:
-            params = urlencode({"symbol": self.symbol, "interval": "1m", "limit": int(limit)})
-            url = f"https://api.binance.com/api/v3/klines?{params}"
-            req = Request(url, headers={"User-Agent": "SMC-PRO-Binance-Client/1.0"})
-            with urlopen(req, timeout=10) as resp:
-                rows = json.loads(resp.read().decode("utf-8"))
-            with self.lock:
-                for r in rows:
-                    ts = pd.Timestamp(r[0], unit="ms", tz="UTC")
-                    self.candles_1m[ts] = {
-                        "timestamp": ts,
-                        "open": float(r[1]), "high": float(r[2]),
-                        "low": float(r[3]), "close": float(r[4]),
-                        "volume": float(r[5]),
-                        "buy_vol": float(r[9]),
-                        "sell_vol": max(0.0, float(r[5]) - float(r[9])),
-                        "delta": float(r[9]) - max(0.0, float(r[5]) - float(r[9])),
-                        "closed": True,
-                    }
-                    self.last_price = float(r[4])
-        except Exception as exc:
-            self.last_error = f"Binance history: {exc}"
+        last_error = ""
+        params = urlencode({"symbol": self.symbol, "interval": "1m", "limit": int(limit)})
+        for base in self.REST_BASES:
+            try:
+                url = f"{base}/api/v3/klines?{params}"
+                req = Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
+                    "Accept": "application/json",
+                })
+                with urlopen(req, timeout=12) as resp:
+                    rows = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(rows, list) or not rows:
+                    raise RuntimeError(f"empty response from {base}")
+                with self.lock:
+                    self.candles_1m.clear()
+                    for r in rows:
+                        ts = pd.Timestamp(r[0], unit="ms", tz="UTC")
+                        volume = float(r[5])
+                        taker_buy = float(r[9])
+                        self.candles_1m[ts] = {
+                            "timestamp": ts,
+                            "open": float(r[1]), "high": float(r[2]),
+                            "low": float(r[3]), "close": float(r[4]),
+                            "volume": volume,
+                            "buy_vol": taker_buy,
+                            "sell_vol": max(0.0, volume - taker_buy),
+                            "delta": taker_buy - max(0.0, volume - taker_buy),
+                            "closed": True,
+                        }
+                        self.last_price = float(r[4])
+                    self.last_update_time = datetime.now(timezone.utc)
+                    self.rest_endpoint = base
+                    self.last_error = ""
+                return
+            except Exception as exc:
+                last_error = f"{base}: {exc}"
+        with self.lock:
+            self.last_error = f"Binance REST history failed. {last_error}"
 
     @staticmethod
     def _minute_bucket(ts):
@@ -244,7 +277,7 @@ class BinanceBTCStream:
             qty = float(data["q"])
             ts = pd.Timestamp(int(data["T"]), unit="ms", tz="UTC")
             bucket = self._minute_bucket(ts)
-            # Binance m=true means buyer is the maker, therefore the taker/aggressor is selling.
+            # Binance: m=true means the buyer is the maker, so the aggressive/taker side is SELL.
             aggressive_sell = bool(data.get("m", False))
             buy_qty = 0.0 if aggressive_sell else qty
             sell_qty = qty if aggressive_sell else 0.0
@@ -277,12 +310,13 @@ class BinanceBTCStream:
                     "side": self.last_trade_side,
                     "buy_qty": buy_qty, "sell_qty": sell_qty,
                 })
-                # Any candle older than the current bucket is closed and never recalculated.
+                # Once the trade stream moves to a new minute, prior buckets are frozen.
                 for key, old in self.candles_1m.items():
                     if key < bucket:
                         old["closed"] = True
         except Exception as exc:
-            self.last_error = f"aggTrade parse: {exc}"
+            with self.lock:
+                self.last_error = f"aggTrade parse: {exc}"
 
     def _on_book_ticker(self, data):
         try:
@@ -293,55 +327,84 @@ class BinanceBTCStream:
                 self.best_ask_qty = float(data["A"])
                 self.last_update_time = datetime.now(timezone.utc)
         except Exception as exc:
-            self.last_error = f"bookTicker parse: {exc}"
+            with self.lock:
+                self.last_error = f"bookTicker parse: {exc}"
 
     def _run_ws(self):
         stream = f"{self.symbol.lower()}@aggTrade/{self.symbol.lower()}@bookTicker"
-        url = f"wss://stream.binance.com:9443/stream?streams={stream}"
-
-        def on_message(ws, message):
-            try:
-                payload = json.loads(message)
-                data = payload.get("data", payload)
-                event = data.get("e")
-                if event == "aggTrade":
-                    self._on_agg_trade(data)
-                elif event == "bookTicker":
-                    self._on_book_ticker(data)
-            except Exception as exc:
-                self.last_error = f"WS message: {exc}"
-
-        def on_open(ws):
-            self.connected = True
-            self.last_error = ""
-
-        def on_error(ws, error):
-            self.connected = False
-            self.last_error = str(error)
-
-        def on_close(ws, code, msg):
-            self.connected = False
-
         while not self._stop:
-            try:
-                ws = websocket.WebSocketApp(
-                    url, on_open=on_open, on_message=on_message,
-                    on_error=on_error, on_close=on_close,
-                )
-                ws.run_forever(ping_interval=20, ping_timeout=10)
-            except Exception as exc:
-                self.connected = False
-                self.last_error = str(exc)
+            connected_this_round = False
+            for base in self.WS_BASES:
+                if self._stop:
+                    return
+                url = f"{base}/stream?streams={stream}"
+
+                def on_message(ws, message):
+                    try:
+                        payload = json.loads(message)
+                        data = payload.get("data", payload)
+                        event = data.get("e")
+                        if event == "aggTrade":
+                            self._on_agg_trade(data)
+                        elif event == "bookTicker":
+                            self._on_book_ticker(data)
+                    except Exception as exc:
+                        with self.lock:
+                            self.last_error = f"WS message: {exc}"
+
+                def on_open(ws):
+                    with self.lock:
+                        self.connected = True
+                        self.endpoint = base
+                        self.last_error = ""
+
+                def on_error(ws, error):
+                    with self.lock:
+                        self.connected = False
+                        self.last_error = f"WebSocket {base}: {error}"
+
+                def on_close(ws, code, msg):
+                    with self.lock:
+                        self.connected = False
+                        if code not in (None, 1000):
+                            self.last_error = f"WebSocket closed ({code}): {msg}"
+
+                try:
+                    ws = websocket.WebSocketApp(
+                        url,
+                        on_open=on_open,
+                        on_message=on_message,
+                        on_error=on_error,
+                        on_close=on_close,
+                    )
+                    ws.run_forever(
+                        ping_interval=20,
+                        ping_timeout=10,
+                        ping_payload="",
+                        skip_utf8_validation=True,
+                    )
+                    with self.lock:
+                        connected_this_round = self.connected
+                    if connected_this_round:
+                        # A clean close/reconnect is enough; otherwise try the next endpoint.
+                        time.sleep(1)
+                except Exception as exc:
+                    with self.lock:
+                        self.connected = False
+                        self.last_error = f"WebSocket connection error: {exc}"
+                if connected_this_round:
+                    break
             if not self._stop:
                 time.sleep(2)
 
     def snapshot(self, timeframe="5m", limit=300):
         with self.lock:
             rows = list(self.candles_1m.values())
-            trades = list(self.recent_trades)
             state = {
                 "connected": self.connected,
                 "last_error": self.last_error,
+                "endpoint": self.endpoint,
+                "rest_endpoint": self.rest_endpoint,
                 "last_price": self.last_price,
                 "best_bid": self.best_bid,
                 "best_bid_qty": self.best_bid_qty,
@@ -1945,6 +2008,8 @@ with tab4:
             c2.metric("Live Trade Delta", f"{r['delta']:,.4f}")
             c3.metric("RSI(14)", f"{r['rsi']:.2f}" if pd.notna(r['rsi']) else "-")
             c4.metric("Binance WS", "CONNECTED" if btc_stream_state.get("connected") else "RECONNECTING")
+            if not btc_stream_state.get("connected") and btc_stream_state.get("last_error"):
+                st.caption(f"Binance connection diagnostic: {btc_stream_state.get('last_error')}")
             if sig:
                 st.success(f"{sig['side']} signal — Entry {sig['price']:,.2f} | SL {sig['sl']:,.2f} | TP {sig['tp']:,.2f}")
                 st.caption("Rule-based signal calculated from Binance candles and executed-trade delta; not a profitability guarantee.")
@@ -1953,7 +2018,7 @@ with tab4:
                 st.info(f"No confirmed signal on the selected timeframe. Current status: {status}")
             st.dataframe(x[["timestamp","open","high","low","close","volume","buy_vol","sell_vol","delta","ema20","ema50","rsi","macd_hist"]].tail(30).iloc[::-1], use_container_width=True)
         else:
-            st.warning("Waiting for Binance market data...")
+            st.warning("Waiting for Binance market data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
     else:
         if df_ltf is not None and not df_ltf.empty:
             df_ltf = add_indicators(df_ltf)
@@ -1975,6 +2040,7 @@ with tab6:
     else:
         st.success("🟢 Direct Binance WebSocket LIVE — @aggTrade + @bookTicker")
         st.caption("Delta = aggressive buy volume − aggressive sell volume from Binance executed trades. Closed candles are immutable; only the current candle changes.")
+        st.caption(f"Market-data endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | WebSocket trades received: {btc_stream_state.get('trade_count', 0)}")
         x = add_binance_indicators(df_ltf)
         if x is not None and not x.empty:
             foot = x.tail(30).copy()
@@ -2006,7 +2072,7 @@ with tab6:
                 poc=float(vp.loc[vp["volume"].idxmax(),"price"])
                 st.metric("POC", f"{poc:,.2f}")
         else:
-            st.warning("Waiting for Binance aggTrade data...")
+            st.warning("Waiting for Binance aggTrade data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
 with tab7:
     st.markdown(f"## 🚀 **Advanced Binance Market Scanner ({display_name})**")
     if is_btc_market:
@@ -2041,7 +2107,7 @@ with tab7:
             st.metric("Risk Amount",f"{risk_amount:,.2f}")
             st.metric("Indicative BTC Quantity",f"{qty:.6f}")
             st.info("Options IV/VIX are not fabricated here; Binance Spot BTC trade data does not provide them.")
-        else: st.warning("Waiting for sufficient Binance history...")
+        else: st.warning("Waiting for sufficient Binance history..." if not btc_stream_state.get("last_error") else f"Binance history unavailable: {btc_stream_state.get('last_error')}")
     else:
         st.info("Select BTC (Bitcoin) to enable the Binance real-time scanner.")
 
@@ -2064,7 +2130,7 @@ with tab8:
             choch="Bullish CHOCH" if r["close"]>prev_high and r["delta"]>0 else ("Bearish CHOCH" if r["close"]<prev_low and r["delta"]<0 else "No confirmed CHOCH")
             st.subheader(choch)
             st.dataframe(x[["timestamp","close","buy_vol","sell_vol","delta","cvd"]].tail(50).iloc[::-1],use_container_width=True)
-        else: st.warning("Waiting for Binance trade/candle data...")
+        else: st.warning("Waiting for Binance trade/candle data..." if not btc_stream_state.get("last_error") else f"Binance data unavailable: {btc_stream_state.get('last_error')}")
     else: st.info("Select BTC (Bitcoin) to enable Binance order-flow analytics.")
 
 with tab9:
