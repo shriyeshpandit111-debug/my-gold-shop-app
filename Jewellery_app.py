@@ -224,6 +224,7 @@ class BinanceBTCStream:
         self.candles_1m = {}
         self._stop = False
         self._load_history(history_limit)
+        self._load_book_ticker()
         self._thread = threading.Thread(target=self._run_ws, daemon=True, name="binance-btc-ws")
         self._thread.start()
 
@@ -266,6 +267,37 @@ class BinanceBTCStream:
                 last_error = f"{base}: {exc}"
         with self.lock:
             self.last_error = f"Binance REST history failed. {last_error}"
+
+    def _load_book_ticker(self):
+        """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
+        The WebSocket then keeps these values live.
+        """
+        params = urlencode({"symbol": self.symbol})
+        last_error = ""
+        for base in self.REST_BASES:
+            try:
+                url = f"{base}/api/v3/ticker/bookTicker?{params}"
+                req = Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
+                    "Accept": "application/json",
+                })
+                with urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                with self.lock:
+                    self.best_bid = float(data.get("bidPrice", 0) or 0)
+                    self.best_bid_qty = float(data.get("bidQty", 0) or 0)
+                    self.best_ask = float(data.get("askPrice", 0) or 0)
+                    self.best_ask_qty = float(data.get("askQty", 0) or 0)
+                    if self.best_ask > 0:
+                        self.last_price = self.last_price or (self.best_bid + self.best_ask) / 2.0
+                return
+            except Exception as exc:
+                last_error = f"{base}: {exc}"
+        # Do not overwrite a successful REST candle connection error with a book-ticker error.
+        if not (self.best_bid > 0 and self.best_ask > 0):
+            with self.lock:
+                if not self.last_error:
+                    self.last_error = f"Binance bookTicker snapshot failed. {last_error}"
 
     @staticmethod
     def _minute_bucket(ts):
@@ -343,10 +375,13 @@ class BinanceBTCStream:
                     try:
                         payload = json.loads(message)
                         data = payload.get("data", payload)
+                        stream_name = str(payload.get("stream", "")).lower()
                         event = data.get("e")
-                        if event == "aggTrade":
+                        # Binance JSON bookTicker payloads do not contain an "e" event field.
+                        # In combined streams the wrapper's "stream" field identifies it.
+                        if event == "aggTrade" or stream_name.endswith("@aggtrade"):
                             self._on_agg_trade(data)
-                        elif event == "bookTicker":
+                        elif event == "bookTicker" or stream_name.endswith("@bookticker"):
                             self._on_book_ticker(data)
                     except Exception as exc:
                         with self.lock:
@@ -2055,11 +2090,20 @@ with tab6:
             c2.metric("Aggressive Sell Vol", f"{last['sell_vol']:,.4f}")
             c3.metric("Net Delta", f"{last['delta']:,.4f}")
             c4.metric("Live Price", f"{current_price:,.2f}")
-            c5,c6,c7,c8=st.columns(4)
-            c5.metric("Best Bid", f"{btc_stream_state.get('best_bid',0):,.2f}")
-            c6.metric("Bid Qty", f"{btc_stream_state.get('best_bid_qty',0):,.6f}")
-            c7.metric("Best Ask", f"{btc_stream_state.get('best_ask',0):,.2f}")
-            c8.metric("Ask Qty", f"{btc_stream_state.get('best_ask_qty',0):,.6f}")
+            st.markdown("### Live Best Bid / Ask")
+            bid=float(btc_stream_state.get("best_bid") or 0.0)
+            bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
+            ask=float(btc_stream_state.get("best_ask") or 0.0)
+            ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
+            o1,o2,o3,o4=st.columns(4)
+            o1.metric("Best Bid", f"{bid:,.2f}" if bid > 0 else "Waiting…")
+            o2.metric("Bid Qty", f"{bid_qty:,.6f}" if bid_qty > 0 else "Waiting…")
+            o3.metric("Best Ask", f"{ask:,.2f}" if ask > 0 else "Waiting…")
+            o4.metric("Ask Qty", f"{ask_qty:,.6f}" if ask_qty > 0 else "Waiting…")
+            if bid > 0 and ask > 0:
+                st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
+            else:
+                st.warning("Best Bid/Ask अजून आलेले नाहीत. Binance bookTicker snapshot/WebSocket reconnect चालू आहे.")
             st.markdown("### Real Binance trade tape")
             trades = list(binance_btc.recent_trades)
             if trades:
@@ -2093,19 +2137,47 @@ with tab7:
             c3.metric("EMA50",f"{r['ema50']:,.2f}")
             c4.metric("CVD",f"{r['cvd']:,.4f}")
             st.markdown("### Live liquidity / BOS checks")
-            prev_high=float(x["high"].tail(10).iloc[:-1].max())
-            prev_low=float(x["low"].tail(10).iloc[:-1].min())
-            bos="Bullish BOS" if r["close"]>prev_high else ("Bearish BOS" if r["close"]<prev_low else "No BOS")
-            sweep="Buy-side sweep" if r["high"]>prev_high and r["close"]<prev_high else ("Sell-side sweep" if r["low"]<prev_low and r["close"]>prev_low else "No confirmed sweep")
-            st.write({"BOS":bos,"Liquidity sweep":sweep,"Last trade side":btc_stream_state.get("last_trade_side","-"),"WebSocket trades received":btc_stream_state.get("trade_count",0)})
+            try:
+                # Use the previous completed candles as the reference, while the latest
+                # candle is allowed to be live. This avoids NaN/empty-slice failures.
+                ref=x.iloc[:-1].tail(10)
+                if len(ref) >= 3:
+                    prev_high=float(ref["high"].max())
+                    prev_low=float(ref["low"].min())
+                    close_now=float(r["close"])
+                    high_now=float(r["high"])
+                    low_now=float(r["low"])
+                    bos="Bullish BOS" if close_now > prev_high else ("Bearish BOS" if close_now < prev_low else "No BOS")
+                    sweep=("Buy-side liquidity sweep" if high_now > prev_high and close_now < prev_high
+                           else ("Sell-side liquidity sweep" if low_now < prev_low and close_now > prev_low
+                                 else "No confirmed sweep"))
+                else:
+                    prev_high=prev_low=float("nan")
+                    bos="Waiting for reference candles"
+                    sweep="Waiting for reference candles"
+            except Exception as exc:
+                prev_high=prev_low=float("nan")
+                bos="BOS calculation unavailable"
+                sweep="Liquidity calculation unavailable"
+                st.caption(f"Liquidity diagnostic: {exc}")
+
+            l1,l2,l3,l4=st.columns(4)
+            l1.metric("BOS", bos)
+            l2.metric("Liquidity Sweep", sweep)
+            l3.metric("Last Trade Side", btc_stream_state.get("last_trade_side") or "-")
+            l4.metric("WS Trades", f"{int(btc_stream_state.get('trade_count') or 0):,}")
+            if pd.notna(prev_high) and pd.notna(prev_low):
+                st.caption(f"Reference liquidity: High {prev_high:,.2f} | Low {prev_low:,.2f} | Current close {float(r['close']):,.2f}")
+
             st.markdown("### Risk calculator")
-            capital=st.number_input("Capital",min_value=1.0,value=100000.0,step=1000.0)
-            risk_pct=st.slider("Risk %",0.25,5.0,1.0,0.25)
-            atr=float(r["atr"]) if pd.notna(r["atr"]) and r["atr"]>0 else float(r["close"]*0.005)
-            risk_amount=capital*risk_pct/100
+            capital=st.number_input("Capital",min_value=1.0,value=100000.0,step=1000.0,key="btc_risk_capital")
+            risk_pct=st.slider("Risk %",0.25,5.0,1.0,0.25,key="btc_risk_pct")
+            atr=float(r["atr"]) if pd.notna(r["atr"]) and float(r["atr"])>0 else max(float(r["close"])*0.005, 1e-9)
+            risk_amount=float(capital)*float(risk_pct)/100.0
             qty=risk_amount/(1.5*atr)
-            st.metric("Risk Amount",f"{risk_amount:,.2f}")
-            st.metric("Indicative BTC Quantity",f"{qty:.6f}")
+            rc1,rc2=st.columns(2)
+            rc1.metric("Risk Amount",f"{risk_amount:,.2f}")
+            rc2.metric("Indicative BTC Quantity",f"{qty:.6f}")
             st.info("Options IV/VIX are not fabricated here; Binance Spot BTC trade data does not provide them.")
         else: st.warning("Waiting for sufficient Binance history..." if not btc_stream_state.get("last_error") else f"Binance history unavailable: {btc_stream_state.get('last_error')}")
     else:
