@@ -493,6 +493,7 @@ market_type = st.sidebar.radio(
 
 is_indian_market = False
 is_btc_market = False
+is_gold_silver = False
 
 if market_type == "यादीमधून निवडा":
     asset_choice = st.sidebar.selectbox(
@@ -518,6 +519,8 @@ if market_type == "यादीमधून निवडा":
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
+    if asset_choice in ["GOLD (सोने)", "SILVER (चांदी)"]:
+        is_gold_silver = True
 
 elif market_type == "मॅन्युअली नाव टाईप करा":
     manual_ticker = st.sidebar.text_input(
@@ -529,6 +532,8 @@ elif market_type == "मॅन्युअली नाव टाईप कर�
         is_indian_market = True
     if "BTC" in ticker:
         is_btc_market = True
+    if ticker in ["GC=F", "SI=F"]:
+        is_gold_silver = True
 else:
     forex_ticker = st.sidebar.text_input(
         "Forex Ticker टाका (उदा. EURUSD=X):", value="EURUSD=X"
@@ -1742,6 +1747,23 @@ elif is_indian_market:
 else:
     current_price = base_price
 
+# ---------------------------------------------------------------------------
+# Shared market context for Tabs 6-9
+# ---------------------------------------------------------------------------
+# This MUST live outside any individual tab. Streamlit reruns the complete
+# script whenever a market/timeframe widget changes.
+try:
+    if df_ltf is not None and len(df_ltf) >= 2:
+        price_change = float(df_ltf["close"].iloc[-1]) - float(df_ltf["close"].iloc[-2])
+    else:
+        price_change = 0.0
+except Exception:
+    price_change = 0.0
+
+# Defensive top-level defaults prevent NameError on BTC / GOLD / SILVER reruns.
+is_gold_silver = bool(globals().get("is_gold_silver", False))
+price_change = float(globals().get("price_change", 0.0) or 0.0)
+
 col_t1, col_t2 = st.columns(2)
 with col_t1:
     st.metric(
@@ -2430,7 +2452,6 @@ with tab6:
         oi_status="Not provided by source"
         funding_rate="Not provided"
         last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
-        price_change=float(df_ltf["close"].iloc[-1]-df_ltf["close"].iloc[-2]) if df_ltf is not None and len(df_ltf)>=2 else 0.0
         if price_change>0 and last_delta>0:
             bias_text="Price + Flow positive"
         elif price_change<0 and last_delta<0:
@@ -2446,6 +2467,8 @@ with tab6:
     st.info(bias_desc)
 
 with tab7:
+    price_change = float(globals().get("price_change", 0.0) or 0.0)
+    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
     st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
@@ -2551,6 +2574,8 @@ with tab7:
 
 # --- 🚀 TAB 8: DYNAMIC MULTI-ASSET CHOCH & BOS SCANNER ---
 with tab8:
+    price_change = float(globals().get("price_change", 0.0) or 0.0)
+    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
     st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
     st.markdown("---")
@@ -2621,6 +2646,8 @@ with tab8:
 
 # --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
 with tab9:
+    price_change = float(globals().get("price_change", 0.0) or 0.0)
+    is_gold_silver = bool(globals().get("is_gold_silver", False))
     st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
     st.caption("स्मार्ट मनीचे 'Change in State of Delivery' (CISD) आणि વાયકૉફ (Wyckoff Cycle - Accumulation, Manipulation, Distribution) चे रिअल-टाईम सिग्नल्स.")
     st.markdown("---")
