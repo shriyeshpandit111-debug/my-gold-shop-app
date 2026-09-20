@@ -669,6 +669,110 @@ def add_indicators(df):
     return df
 
 
+def analyze_smc_pro_v2(df, daily_trend):
+    """Generate historical SMC-style signals from OHLCV data.
+
+    This is a rule-based heuristic engine, not broker/institutional order-flow data.
+    It returns an empty frame when there is insufficient/invalid candle data.
+    """
+    columns = [
+        "Type", "Time", "Entry", "Stop_Loss", "Take_Profit",
+        "Institution Activity", "Trigger Reason",
+    ]
+    if df is None or df.empty or len(df) < 15:
+        return pd.DataFrame(columns=columns)
+
+    required = {"timestamp", "open", "high", "low", "close", "volume", "atr", "vol_sma"}
+    if not required.issubset(df.columns):
+        logger.warning("SMC analysis skipped; missing columns: %s", sorted(required - set(df.columns)))
+        return pd.DataFrame(columns=columns)
+
+    work = df.copy()
+    for col in ["open", "high", "low", "close", "volume", "atr", "vol_sma"]:
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+    work = work.dropna(subset=["timestamp", "open", "high", "low", "close"])
+    if len(work) < 15:
+        return pd.DataFrame(columns=columns)
+
+    signals = []
+    for i in range(12, len(work)):
+        close_i = float(work["close"].iloc[i])
+        open_i = float(work["open"].iloc[i])
+        high_i = float(work["high"].iloc[i])
+        low_i = float(work["low"].iloc[i])
+
+        atr_val = work["atr"].iloc[i]
+        atr_val = float(atr_val) if pd.notna(atr_val) and float(atr_val) > 0 else close_i * 0.003
+
+        current_vol = work["volume"].iloc[i]
+        avg_vol = work["vol_sma"].iloc[i]
+        high_volume = (
+            float(current_vol) > 1.05 * float(avg_vol)
+            if pd.notna(current_vol) and pd.notna(avg_vol) and float(avg_vol) > 0
+            else True
+        )
+
+        prev_4_low = float(work["low"].iloc[i - 4:i].min())
+        prev_4_high = float(work["high"].iloc[i - 4:i].max())
+
+        bullish_sweep = low_i < prev_4_low and close_i > open_i and close_i >= prev_4_low
+        bearish_sweep = high_i > prev_4_high and close_i < open_i and close_i <= prev_4_high
+
+        prev_3_high = float(work["high"].iloc[i - 3:i].max())
+        prev_3_low = float(work["low"].iloc[i - 3:i].min())
+        choch_bullish = close_i > prev_3_high
+        choch_bearish = close_i < prev_3_low
+
+        bullish_fvg = i > 2 and low_i > float(work["high"].iloc[i - 2])
+        bearish_fvg = i > 2 and high_i < float(work["low"].iloc[i - 2])
+
+        buy_triggered = (bullish_sweep and high_volume) or (
+            choch_bullish and bullish_fvg and close_i > open_i
+        )
+        sell_triggered = (bearish_sweep and high_volume) or (
+            choch_bearish and bearish_fvg and close_i < open_i
+        )
+
+        if buy_triggered == sell_triggered:
+            continue
+
+        timestamp = pd.to_datetime(work["timestamp"].iloc[i], errors="coerce")
+        if pd.isna(timestamp):
+            continue
+
+        if buy_triggered:
+            entry = close_i
+            stop_loss = low_i - 0.02 * atr_val
+            risk = entry - stop_loss
+            if risk > 0:
+                signals.append({
+                    "Type": "🟢 PERFECT BUY (CIRCLE ENTRY)",
+                    "Time": timestamp.strftime("%Y-%m-%d %H:%M"),
+                    "Entry": round(entry, 2),
+                    "Stop_Loss": round(stop_loss, 2),
+                    "Take_Profit": round(entry + risk * 2.5, 2),
+                    "Institution Activity": "Smart Money Liquidity Sweep & Wick Rejection",
+                    "Trigger Reason": "Liquidity sweep / CHOCH + FVG rule matched",
+                })
+        else:
+            entry = close_i
+            stop_loss = high_i + 0.02 * atr_val
+            risk = stop_loss - entry
+            if risk > 0:
+                signals.append({
+                    "Type": "🔴 PERFECT SELL (CIRCLE ENTRY)",
+                    "Time": timestamp.strftime("%Y-%m-%d %H:%M"),
+                    "Entry": round(entry, 2),
+                    "Stop_Loss": round(stop_loss, 2),
+                    "Take_Profit": round(entry - risk * 2.5, 2),
+                    "Institution Activity": "Smart Money Stop Hunt & Supply Sweep",
+                    "Trigger Reason": "Liquidity sweep / CHOCH + FVG rule matched",
+                })
+
+    return pd.DataFrame(signals, columns=columns)
+
+
+
 # --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (INTRADAY SENSITIVE) ---
 def analyze_cisd_and_wyckoff(df):
     if df is None or len(df) < 10:
