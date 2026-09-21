@@ -8,102 +8,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pyotp
 from SmartApi import SmartConnect
-try:
-    from SmartApi.smartWebSocketV2 import SmartWebSocketV2
-except Exception:
-    SmartWebSocketV2 = None
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
-from collections import deque, defaultdict
+from collections import deque
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
-import requests
-
-
-# --- TAB 6: ANGEL ONE LIVE BID/ASK DEPTH ENGINE ---
-_TAB6_ORDERFLOW_LOCK = threading.RLock()
-_TAB6_ANGEL = {"connected": False, "last_error": "", "ticks": defaultdict(deque), "started": set()}
-
-def _tab6_tf_minutes(tf):
-    return {"1m":1,"2m":2,"3m":3,"5m":5,"10m":10,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440}.get(tf,1)
-
-def _tab6_angel_token(display_name, ticker_symbol):
-    name=str(display_name).upper()
-    if "BANK NIFTY" in name or "BANKNIFTY" in name: return "99926009", 1
-    if "NIFTY 50" in name or name.strip()=="NIFTY": return "99926000", 1
-    sym=str(ticker_symbol).upper().replace(".NS","")
-    try:
-        r=requests.get("https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json",timeout=8)
-        if r.ok:
-            for item in r.json():
-                if str(item.get("exch_seg","")).upper()=="NSE" and str(item.get("symbol","")).upper().split("-")[0]==sym:
-                    return str(item.get("token")),1
-    except Exception:
-        pass
-    return None,1
-
-def _start_tab6_angel_orderflow(smart_api, client_code, api_key, exchange_type, token):
-    """Start one SmartAPI WebSocket 2.0 worker for live total buy/sell depth."""
-    if smart_api is None or SmartWebSocketV2 is None or not token: return
-    key=f"{client_code}:{exchange_type}:{token}"
-    with _TAB6_ORDERFLOW_LOCK:
-        if key in _TAB6_ANGEL["started"]: return
-        _TAB6_ANGEL["started"].add(key); _TAB6_ANGEL["ticks"][key]=deque(maxlen=20000)
-    try:
-        feed_token=smart_api.getfeedToken()
-        auth_token=getattr(smart_api,"access_token",None) or getattr(smart_api,"authToken",None)
-        if isinstance(auth_token,str) and auth_token.startswith("Bearer "): auth_token=auth_token.replace("Bearer ","",1)
-        if not feed_token or not auth_token:
-            _TAB6_ANGEL["last_error"]="Angel One feed/auth token unavailable"; return
-        def run():
-            while True:
-                try:
-                    sws=SmartWebSocketV2(auth_token,api_key,client_code,feed_token,max_retry_attempt=5,retry_strategy=1,retry_delay=2,retry_multiplier=2,retry_duration=30)
-                    def on_open(wsapp):
-                        try:
-                            sws.subscribe(f"tab6_{token}",3,[{"exchangeType":int(exchange_type),"tokens":[str(token)]}])
-                            with _TAB6_ORDERFLOW_LOCK: _TAB6_ANGEL["connected"]=True; _TAB6_ANGEL["last_error"]=""
-                        except Exception as exc: _TAB6_ANGEL["last_error"]=str(exc)
-                    def on_data(wsapp,message):
-                        try:
-                            if not isinstance(message,dict): return
-                            mode=message.get("subscription_mode")
-                            if mode not in (2,3,"QUOTE","SNAP_QUOTE"): return
-                            buy=float(message.get("total_buy_quantity") or 0.0)
-                            sell=float(message.get("total_sell_quantity") or 0.0)
-                            ts=int(message.get("exchange_timestamp") or int(time.time()*1000))
-                            with _TAB6_ORDERFLOW_LOCK:
-                                _TAB6_ANGEL["ticks"][key].append({"ts":ts,"buy":buy,"sell":sell,"ltp":float(message.get("last_traded_price") or 0.0)})
-                                _TAB6_ANGEL["connected"]=True
-                        except Exception as exc: _TAB6_ANGEL["last_error"]=str(exc)
-                    def on_error(wsapp,error): _TAB6_ANGEL["connected"]=False; _TAB6_ANGEL["last_error"]=str(error)
-                    def on_close(wsapp): _TAB6_ANGEL["connected"]=False
-                    sws.on_open=on_open; sws.on_data=on_data; sws.on_error=on_error; sws.on_close=on_close; sws.connect()
-                except Exception as exc:
-                    _TAB6_ANGEL["connected"]=False; _TAB6_ANGEL["last_error"]=str(exc)
-                time.sleep(3)
-        threading.Thread(target=run,daemon=True,name=f"Tab6Angel-{token}").start()
-    except Exception as exc: _TAB6_ANGEL["last_error"]=str(exc)
-
-def _tab6_angel_map(key,timestamps,tf):
-    with _TAB6_ORDERFLOW_LOCK: rows=list(_TAB6_ANGEL["ticks"].get(key,[]))
-    out={}; mins=_tab6_tf_minutes(tf); bucket_ms=mins*60*1000
-    for ts in timestamps:
-        try:
-            t=pd.Timestamp(ts)
-            if t.tzinfo is None: t=t.tz_localize("Asia/Kolkata")
-            ms=int(t.timestamp()*1000); start=(ms//bucket_ms)*bucket_ms; end=start+bucket_ms
-            bucket=[r for r in rows if start<=r["ts"]<end]
-            if bucket:
-                x=bucket[-1]; b=float(x["buy"]); s=float(x["sell"]); out[str(ts)]=(b,s,b-s)
-        except Exception: pass
-    return out
-
-def _tab6_has_live_angel(map_data):
-    return bool(map_data) and any(abs(float(v[0]))+abs(float(v[1]))>0 for v in map_data.values())
 
 # पानाची रचना सेट करा
 st.set_page_config(
@@ -355,6 +267,95 @@ class BinanceBTCStream:
                 last_error = f"{base}: {exc}"
         with self.lock:
             self.last_error = f"Binance REST history failed. {last_error}"
+
+    def historical_chart(self, timeframe="5m", days=20, limit=1000):
+        """Fetch up to the requested historical window directly from Binance REST.
+        Used by Tab 2 so the chart is not limited to the live 1,000 x 1-minute
+        bootstrap candles held by the websocket engine.
+        """
+        tf_map = {
+            "1m": "1m", "2m": "1m", "3m": "3m", "5m": "5m",
+            "10m": "5m", "15m": "15m", "30m": "30m",
+            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d",
+        }
+        source_tf = tf_map.get(timeframe, "5m")
+        source_ms = {
+            "1m": 60_000, "3m": 180_000, "5m": 300_000,
+            "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
+            "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000,
+        }[source_tf]
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - int(days * 86_400_000)
+        rows_all = []
+        cursor = start_ms
+        last_error = ""
+
+        # Binance spot klines accept max 1000 rows per request, so page forward.
+        while cursor < end_ms and len(rows_all) < 100_000:
+            got = None
+            for base in self.REST_BASES:
+                try:
+                    params = urlencode({
+                        "symbol": self.symbol,
+                        "interval": source_tf,
+                        "startTime": cursor,
+                        "endTime": end_ms,
+                        "limit": int(limit),
+                    })
+                    url = f"{base}/api/v3/klines?{params}"
+                    req = Request(url, headers={
+                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Chart",
+                        "Accept": "application/json",
+                    })
+                    with urlopen(req, timeout=15) as resp:
+                        got = json.loads(resp.read().decode("utf-8"))
+                    self.rest_endpoint = base
+                    break
+                except Exception as exc:
+                    last_error = f"{base}: {exc}"
+
+            if not got:
+                break
+            rows_all.extend(got)
+            next_cursor = int(got[-1][0]) + source_ms
+            if next_cursor <= cursor:
+                break
+            cursor = next_cursor
+            if len(got) < int(limit):
+                break
+
+        if not rows_all:
+            return pd.DataFrame()
+
+        # De-duplicate pages and build a clean OHLCV dataframe.
+        rows_all = {int(r[0]): r for r in rows_all}.values()
+        rows_all = sorted(rows_all, key=lambda r: int(r[0]))
+        df = pd.DataFrame(rows_all, columns=[
+            "timestamp_ms", "open", "high", "low", "close", "volume",
+            "close_time", "quote_volume", "trades", "taker_buy_base",
+            "taker_buy_quote", "ignore"
+        ])
+        df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True)
+        for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["buy_vol"] = df["taker_buy_base"].fillna(0.0)
+        df["sell_vol"] = (df["volume"].fillna(0.0) - df["buy_vol"]).clip(lower=0.0)
+        df["delta"] = df["buy_vol"] - df["sell_vol"]
+        df = df[["timestamp", "open", "high", "low", "close", "volume", "buy_vol", "sell_vol", "delta"]].dropna()
+
+        # 2m/10m are not native Binance intervals; aggregate from 1m/5m.
+        if timeframe in {"2m", "10m"}:
+            rule = "2min" if timeframe == "2m" else "10min"
+            df = (df.set_index("timestamp")
+                    .resample(rule, origin="epoch", label="left", closed="left")
+                    .agg({
+                        "open": "first", "high": "max", "low": "min", "close": "last",
+                        "volume": "sum", "buy_vol": "sum", "sell_vol": "sum", "delta": "sum"
+                    })
+                    .dropna(subset=["open", "high", "low", "close"])
+                    .reset_index())
+
+        return df.tail(max(1, int(days * 1440 / max(1, source_ms / 60_000)) + 20)).reset_index(drop=True)
 
     def _load_book_ticker(self):
         """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
@@ -811,6 +812,13 @@ def build_market_flow_columns(df):
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
+            # Tab 2 asks for a 20-day chart.  Use paginated Binance REST history
+            # instead of the websocket engine's 1,000-minute bootstrap window.
+            if custom_period in {"20d", "30d", "60d", "90d", "120d", "1y", "max"}:
+                days_map = {"20d": 20, "30d": 30, "60d": 60, "90d": 90, "120d": 120, "1y": 365, "max": 365}
+                df_btc = binance_btc.historical_chart(target_tf, days=days_map.get(custom_period, 20))
+                if df_btc is not None and not df_btc.empty:
+                    return build_market_flow_columns(df_btc)
             df_btc, _state = binance_btc.snapshot(target_tf, limit=1000)
             if df_btc is not None and not df_btc.empty:
                 return df_btc
@@ -1527,56 +1535,6 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
-
-def fetch_previous_20_days_daily_data(ticker_symbol, is_indian=False):
-    """Fetch exactly the latest 20 daily OHLC candles for Tab 2.
-
-    Tab 2 intentionally uses daily historical candles for every asset, including
-    BTC, instead of the short live 1-minute Binance buffer.
-    """
-    try:
-        data = yf.download(
-            tickers=ticker_symbol,
-            period="2mo",
-            interval="1d",
-            progress=False,
-            auto_adjust=False,
-            threads=False,
-            timeout=10,
-        )
-        if data is None or data.empty:
-            return None
-
-        df = data.reset_index()
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        else:
-            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-
-        df = df.rename(columns={
-            "Datetime": "timestamp", "Date": "timestamp",
-            "Open": "open", "High": "high", "Low": "low",
-            "Close": "close", "Volume": "volume",
-        })
-        required = ["timestamp", "open", "high", "low", "close"]
-        if any(c not in df.columns for c in required):
-            return None
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        if getattr(df["timestamp"].dt, "tz", None) is None:
-            df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
-        df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-
-        for c in ["open", "high", "low", "close", "volume"]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
-        if "volume" not in df.columns:
-            df["volume"] = 0.0
-        df = df.dropna(subset=required).sort_values("timestamp").tail(20).reset_index(drop=True)
-        return df if not df.empty else None
-    except Exception:
-        return None
-
 def render_tradingview_lightweight_chart(df, asset_title):
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
@@ -1940,14 +1898,14 @@ with tab2:
             key="custom_chart_tf"
         )
     
-    # Tab 2 is a historical daily-candle view for all supported markets.
-    # It always displays the latest 20 completed daily candles.
-    st.info("Tab 2 मध्ये निवडलेल्या मार्केटचे मागील 20 daily candles दाखवले जात आहेत.")
-    df_chart = fetch_previous_20_days_daily_data(ticker, is_indian_market)
-    if df_chart is None or df_chart.empty:
-        st.warning("मागील 20 दिवसांचा daily candle data उपलब्ध नाही. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.")
-    else:
-        render_tradingview_lightweight_chart(df_chart, display_name)
+    chart_period_map = {
+        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
+        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
+    }
+    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
+    render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
     st.markdown("### 🌎 Global Asset Live Charts")
@@ -2338,32 +2296,12 @@ with tab6:
     st.markdown("---")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
-    st.caption("BTC: Binance real executed-trade delta | Indian indices: Angel One live Bid/Ask depth delta when connected, otherwise Yahoo Finance OHLCV Proxy Delta.")
+    st.caption("BTC साठी real Binance executed-trade flow; इतर assets साठी त्यांच्या उपलब्ध OHLCV data वर आधारित candle-flow proxy.")
 
     col_of1, col_of2 = st.columns([3,1])
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
-            # BTC = real Binance executed-trade delta.
-            # Indian market + working Angel One = real live Bid/Ask depth delta.
-            # Indian market without Angel One/live feed = Yahoo OHLCV proxy.
-            base_flow = build_market_flow_columns(df_ltf).tail(30).copy()
-            orderflow_source = "Yahoo Finance OHLCV Proxy Delta"
-            angel_live_used = False
-            if is_indian_market and st.session_state.get("smart_api_session") is not None:
-                _tok, _ex = _tab6_angel_token(display_name, ticker)
-                if _tok:
-                    _start_tab6_angel_orderflow(st.session_state.get("smart_api_session"), angel_client_code, angel_api_key, _ex, _tok)
-                    _key=f"{angel_client_code}:{_ex}:{_tok}"
-                    _live_map=_tab6_angel_map(_key, list(base_flow["timestamp"]), timeframe)
-                    if _tab6_has_live_angel(_live_map):
-                        for _i, _ts in enumerate(base_flow["timestamp"]):
-                            _b,_s,_d=_live_map.get(str(_ts),(0.0,0.0,0.0))
-                            base_flow.iloc[_i, base_flow.columns.get_loc("buy_vol")] = _b
-                            base_flow.iloc[_i, base_flow.columns.get_loc("sell_vol")] = _s
-                            base_flow.iloc[_i, base_flow.columns.get_loc("delta")] = _d
-                        orderflow_source="Angel One SmartAPI WebSocket 2.0 — Live Bid/Ask Depth Delta"
-                        angel_live_used=True
-            df_of=base_flow.copy()
+            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
             # Keep the Delta panel visually consistent across refreshes. Plotly's
             # default autoscaling can make the same Delta series look very different
             # when the latest candles have a smaller/larger absolute Delta.
@@ -2410,7 +2348,7 @@ with tab6:
             c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
             c3.metric("Net Delta",f"{last['delta']:,.4f}")
             c4.metric("Live Price",f"{current_price:,.2f}")
-            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else orderflow_source)
+            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
         else:
             df_of=pd.DataFrame()
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
