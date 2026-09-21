@@ -500,6 +500,17 @@ class BinanceBTCStream:
             "open":"first", "high":"max", "low":"min", "close":"last",
             "volume":"sum", "buy_vol":"sum", "sell_vol":"sum", "delta":"sum"
         }).dropna(subset=["open","high","low","close"]).reset_index()
+
+        # Binance timestamps arrive as UTC-aware timestamps.  The rest of the
+        # application displays chart time in IST, so convert once here and
+        # keep the dataframe timestamp tz-naive IST.  This prevents Plotly
+        # from silently displaying UTC/browser-local time.
+        out["timestamp"] = (
+            pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
+            .dt.tz_convert("Asia/Kolkata")
+            .dt.tz_localize(None)
+        )
+        out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
         return out.tail(limit).reset_index(drop=True), state
 
 @st.cache_resource(show_spinner=False)
@@ -855,16 +866,64 @@ def detect_structure_events(df, swing=3):
 
 
 def data_quality_report(df, source_name):
+    """Return data-health metrics without mixing tz-aware and tz-naive timestamps.
+
+    All app charts are displayed in IST.  Some feeds (especially Binance)
+    naturally arrive as UTC-aware timestamps, while Yahoo/older data can be
+    timezone-naive after normalization.  Pandas correctly rejects arithmetic
+    between those two types, which was the cause of the Tab 6 TypeError that
+    stopped the remaining tabs from rendering.
+    """
     if df is None or df.empty:
-        return {"status": "DATA UNAVAILABLE", "rows": 0, "duplicates": 0, "gaps": 0, "last_age_min": None, "source": source_name}
-    x = df.sort_values("timestamp").copy()
+        return {
+            "status": "DATA UNAVAILABLE", "rows": 0, "duplicates": 0,
+            "gaps": 0, "last_age_min": None, "source": source_name
+        }
+
+    x = df.copy()
+    if "timestamp" not in x.columns:
+        return {
+            "status": "DATA UNAVAILABLE", "rows": len(x), "duplicates": 0,
+            "gaps": 0, "last_age_min": None, "source": source_name
+        }
+
+    # Normalize timestamps for the quality calculation only.
+    # - tz-aware input: convert to IST, then remove tz info.
+    # - tz-naive input: it is already treated by this app as IST.
+    try:
+        ts = pd.to_datetime(x["timestamp"], errors="coerce")
+        if getattr(ts.dt, "tz", None) is not None:
+            ts = ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+    except Exception:
+        # Handles mixed timestamp objects safely.  utc=True gives a common
+        # representation; after conversion every value is comparable.
+        ts = (
+            pd.to_datetime(x["timestamp"], errors="coerce", utc=True)
+            .dt.tz_convert("Asia/Kolkata")
+            .dt.tz_localize(None)
+        )
+
+    x["timestamp"] = ts
+    x = x.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    if x.empty:
+        return {
+            "status": "DATA UNAVAILABLE", "rows": 0, "duplicates": 0,
+            "gaps": 0, "last_age_min": None, "source": source_name
+        }
+
     dup = int(x["timestamp"].duplicated().sum())
     diffs = x["timestamp"].diff().dropna()
-    gaps = int((diffs > diffs.median() * 3).sum()) if len(diffs) and diffs.median() > pd.Timedelta(0) else 0
+    median_gap = diffs.median() if len(diffs) else pd.Timedelta(0)
+    gaps = int((diffs > median_gap * 3).sum()) if median_gap > pd.Timedelta(0) else 0
+
     now_ist = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)
-    last_age = max(0.0, (now_ist - x["timestamp"].iloc[-1]).total_seconds() / 60.0)
+    last_ts = x["timestamp"].iloc[-1]
+    last_age = max(0.0, (now_ist - last_ts).total_seconds() / 60.0)
     status = "LIVE" if last_age <= 3 else ("DELAYED" if last_age <= 30 else "STALE")
-    return {"status": status, "rows": len(x), "duplicates": dup, "gaps": gaps, "last_age_min": last_age, "source": source_name}
+    return {
+        "status": status, "rows": len(x), "duplicates": dup,
+        "gaps": gaps, "last_age_min": last_age, "source": source_name
+    }
 
 
 def _normalize_ohlcv_dataframe(data):
