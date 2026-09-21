@@ -40,6 +40,7 @@ st.markdown(
 )
 
 st.title("⚡ SMC PRO - Multi-Asset & Global Forex Trading Signals")
+st.caption("v3 — deterministic candle + delta + volume engine, IST normalization, CVD/divergence, VWAP sigma bands, confirmed FVG/OB, BOS/CHOCH and data-quality checks")
 
 # --- ⏱️ १. ऑटो-रिफ्रेश आणि प्रीमियम डीके टाईम सेटिंग ---
 st.sidebar.header("⏱️ Auto Refresh Settings")
@@ -229,19 +230,54 @@ class BinanceBTCStream:
         self._thread.start()
 
     def _load_history(self, limit=1000):
+        """Load approximately 20 days of 1-minute BTC history.
+
+        Binance returns at most 1000 klines per REST request, so the old
+        single-request loader could only seed about 16 hours of 1m candles
+        (or about 7 days after 5m resampling).  We page backwards until the
+        requested 20-calendar-day window is filled, then keep the WebSocket
+        running for the live/current candle.
+        """
         last_error = ""
-        params = urlencode({"symbol": self.symbol, "interval": "1m", "limit": int(limit)})
+        target_start = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=20)
+        target_start_ms = int(target_start.timestamp() * 1000)
+
         for base in self.REST_BASES:
             try:
-                url = f"{base}/api/v3/klines?{params}"
-                req = Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
-                    "Accept": "application/json",
-                })
-                with urlopen(req, timeout=12) as resp:
-                    rows = json.loads(resp.read().decode("utf-8"))
-                if not isinstance(rows, list) or not rows:
+                all_rows = []
+                end_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+                # 30 pages is enough for 20 days of 1-minute bars (28,800 bars).
+                for _ in range(35):
+                    params = urlencode({
+                        "symbol": self.symbol,
+                        "interval": "1m",
+                        "limit": 1000,
+                        "endTime": end_ms,
+                    })
+                    url = f"{base}/api/v3/klines?{params}"
+                    req = Request(url, headers={
+                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
+                        "Accept": "application/json",
+                    })
+                    with urlopen(req, timeout=12) as resp:
+                        rows = json.loads(resp.read().decode("utf-8"))
+                    if not isinstance(rows, list) or not rows:
+                        break
+                    all_rows = rows + all_rows
+                    first_open_ms = int(rows[0][0])
+                    if first_open_ms <= target_start_ms or len(rows) < 1000:
+                        break
+                    end_ms = first_open_ms - 1
+
+                if not all_rows:
                     raise RuntimeError(f"empty response from {base}")
+
+                # Deduplicate, sort, and trim exactly to the requested window.
+                unique = {int(r[0]): r for r in all_rows}
+                rows = [unique[k] for k in sorted(unique) if k >= target_start_ms]
+                if not rows:
+                    raise RuntimeError(f"no rows in 20-day window from {base}")
+
                 with self.lock:
                     self.candles_1m.clear()
                     for r in rows:
@@ -267,95 +303,6 @@ class BinanceBTCStream:
                 last_error = f"{base}: {exc}"
         with self.lock:
             self.last_error = f"Binance REST history failed. {last_error}"
-
-    def historical_chart(self, timeframe="5m", days=20, limit=1000):
-        """Fetch up to the requested historical window directly from Binance REST.
-        Used by Tab 2 so the chart is not limited to the live 1,000 x 1-minute
-        bootstrap candles held by the websocket engine.
-        """
-        tf_map = {
-            "1m": "1m", "2m": "1m", "3m": "3m", "5m": "5m",
-            "10m": "5m", "15m": "15m", "30m": "30m",
-            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d",
-        }
-        source_tf = tf_map.get(timeframe, "5m")
-        source_ms = {
-            "1m": 60_000, "3m": 180_000, "5m": 300_000,
-            "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
-            "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000,
-        }[source_tf]
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - int(days * 86_400_000)
-        rows_all = []
-        cursor = start_ms
-        last_error = ""
-
-        # Binance spot klines accept max 1000 rows per request, so page forward.
-        while cursor < end_ms and len(rows_all) < 100_000:
-            got = None
-            for base in self.REST_BASES:
-                try:
-                    params = urlencode({
-                        "symbol": self.symbol,
-                        "interval": source_tf,
-                        "startTime": cursor,
-                        "endTime": end_ms,
-                        "limit": int(limit),
-                    })
-                    url = f"{base}/api/v3/klines?{params}"
-                    req = Request(url, headers={
-                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Chart",
-                        "Accept": "application/json",
-                    })
-                    with urlopen(req, timeout=15) as resp:
-                        got = json.loads(resp.read().decode("utf-8"))
-                    self.rest_endpoint = base
-                    break
-                except Exception as exc:
-                    last_error = f"{base}: {exc}"
-
-            if not got:
-                break
-            rows_all.extend(got)
-            next_cursor = int(got[-1][0]) + source_ms
-            if next_cursor <= cursor:
-                break
-            cursor = next_cursor
-            if len(got) < int(limit):
-                break
-
-        if not rows_all:
-            return pd.DataFrame()
-
-        # De-duplicate pages and build a clean OHLCV dataframe.
-        rows_all = {int(r[0]): r for r in rows_all}.values()
-        rows_all = sorted(rows_all, key=lambda r: int(r[0]))
-        df = pd.DataFrame(rows_all, columns=[
-            "timestamp_ms", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades", "taker_buy_base",
-            "taker_buy_quote", "ignore"
-        ])
-        df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True)
-        for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["buy_vol"] = df["taker_buy_base"].fillna(0.0)
-        df["sell_vol"] = (df["volume"].fillna(0.0) - df["buy_vol"]).clip(lower=0.0)
-        df["delta"] = df["buy_vol"] - df["sell_vol"]
-        df = df[["timestamp", "open", "high", "low", "close", "volume", "buy_vol", "sell_vol", "delta"]].dropna()
-
-        # 2m/10m are not native Binance intervals; aggregate from 1m/5m.
-        if timeframe in {"2m", "10m"}:
-            rule = "2min" if timeframe == "2m" else "10min"
-            df = (df.set_index("timestamp")
-                    .resample(rule, origin="epoch", label="left", closed="left")
-                    .agg({
-                        "open": "first", "high": "max", "low": "min", "close": "last",
-                        "volume": "sum", "buy_vol": "sum", "sell_vol": "sum", "delta": "sum"
-                    })
-                    .dropna(subset=["open", "high", "low", "close"])
-                    .reset_index())
-
-        return df.tail(max(1, int(days * 1440 / max(1, source_ms / 60_000)) + 20)).reset_index(drop=True)
 
     def _load_book_ticker(self):
         """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
@@ -553,23 +500,11 @@ class BinanceBTCStream:
             "open":"first", "high":"max", "low":"min", "close":"last",
             "volume":"sum", "buy_vol":"sum", "sell_vol":"sum", "delta":"sum"
         }).dropna(subset=["open","high","low","close"]).reset_index()
-
-        # Binance timestamps arrive in UTC.  The dashboard is intended to
-        # display all chart candle times in Indian Standard Time (IST).
-        # Convert only after resampling so the Binance candle boundaries stay
-        # aligned to their original UTC exchange buckets, then expose the
-        # resulting local wall-clock time to Plotly as a naive timestamp.
-        out["timestamp"] = (
-            pd.to_datetime(out["timestamp"], utc=True)
-            .dt.tz_convert("Asia/Kolkata")
-            .dt.tz_localize(None)
-        )
-
         return out.tail(limit).reset_index(drop=True), state
 
 @st.cache_resource(show_spinner=False)
 def get_binance_btc_engine():
-    return BinanceBTCStream("BTCUSDT", history_limit=1000)
+    return BinanceBTCStream("BTCUSDT", history_limit=28800)
 
 # Binance engine is created only after BTC is selected.
 
@@ -809,127 +744,347 @@ def build_market_flow_columns(df):
     return out
 
 
-def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
-    if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
+
+def prepare_orderflow_frame(df, min_rows=20):
+    """Prepare deterministic candle + delta + volume data for Tab 6."""
+    if df is None or df.empty:
+        return None
+    out = df.copy().sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    for c in ["open", "high", "low", "close", "volume"]:
+        if c not in out.columns:
+            out[c] = 0.0
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    out = out.dropna(subset=["timestamp", "open", "high", "low", "close"]).copy()
+    out["volume"] = out["volume"].fillna(0.0).clip(lower=0.0)
+    real_trade_flow = all(c in out.columns for c in ["buy_vol", "sell_vol", "delta"]) and (
+        pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0).abs().sum() > 0 or
+        pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0).abs().sum() > 0
+    )
+    if real_trade_flow:
+        out["flow_source"] = "REAL_EXECUTED_TRADES"
+        out["buy_vol"] = pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        out["sell_vol"] = pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        out["delta"] = out["buy_vol"] - out["sell_vol"]
+        out["display_volume"] = out["volume"]
+        out["volume_label"] = "Exchange Volume"
+    else:
+        out["flow_source"] = "OHLCV_PROXY"
+        rng = (out["high"] - out["low"]).clip(lower=0.0)
+        body = out["close"] - out["open"]
+        signed_ratio = (body / rng.replace(0, np.nan)).replace([np.inf, -np.inf], 0).fillna(0).clip(-1, 1)
+        zero_volume = float(out["volume"].abs().sum()) <= 0
+        if zero_volume:
+            activity = (rng + body.abs() * 0.5).clip(lower=0.0)
+            scale = max(float(out["close"].median()) * 0.001, 1.0)
+            out["display_volume"] = activity / scale
+            out["volume_label"] = "OHLCV Activity Proxy"
+        else:
+            out["display_volume"] = out["volume"]
+            out["volume_label"] = "Yahoo/Angel Volume"
+        out["buy_vol"] = (out["display_volume"] * (1.0 + signed_ratio) / 2.0).clip(lower=0.0)
+        out["sell_vol"] = (out["display_volume"] * (1.0 - signed_ratio) / 2.0).clip(lower=0.0)
+        out["delta"] = out["buy_vol"] - out["sell_vol"]
+    out["cvd"] = out["delta"].cumsum()
+    out["delta_ema"] = out["delta"].ewm(span=8, adjust=False).mean()
+    return out.tail(max(min_rows, min(len(out), 500))).reset_index(drop=True)
+
+
+def calculate_vwap_bands(df):
+    """Session/weekly VWAP and volume-weighted 1/2 sigma bands."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    vol = pd.to_numeric(out.get("display_volume", out.get("volume", 0)), errors="coerce").fillna(0.0).clip(lower=0.0)
+    tp = (out["high"] + out["low"] + out["close"]) / 3.0
+    session_key = out["timestamp"].dt.date
+    week_key = out["timestamp"].dt.to_period("W").astype(str)
+    for key, prefix in [(session_key, "session"), (week_key, "weekly")]:
+        pv = (tp * vol).groupby(key).cumsum()
+        vv = vol.groupby(key).cumsum()
+        out[f"{prefix}_vwap"] = (pv / vv.replace(0, np.nan)).fillna(out["close"])
+    dev = ((tp - out["session_vwap"]) ** 2 * vol).groupby(session_key).cumsum() / vol.groupby(session_key).cumsum().replace(0, np.nan)
+    sigma = np.sqrt(dev.clip(lower=0)).fillna(0.0)
+    out["vwap_upper_1"] = out["session_vwap"] + sigma
+    out["vwap_lower_1"] = out["session_vwap"] - sigma
+    out["vwap_upper_2"] = out["session_vwap"] + 2 * sigma
+    out["vwap_lower_2"] = out["session_vwap"] - 2 * sigma
+    return out
+
+
+def detect_smart_money_zones(df):
+    """Detect actual 3-candle FVGs and displacement-based Order Blocks."""
+    if df is None or len(df) < 5:
+        return {"bull_fvg": None, "bear_fvg": None, "bull_ob": None, "bear_ob": None}
+    x = df.copy().reset_index(drop=True)
+    atr = (x["high"] - x["low"]).rolling(14).mean().bfill()
+    bull_fvg = bear_fvg = bull_ob = bear_ob = None
+    for i in range(2, len(x)):
+        if float(x.loc[i, "low"]) > float(x.loc[i-2, "high"]):
+            bull_fvg = {"low": float(x.loc[i-2, "high"]), "high": float(x.loc[i, "low"]), "index": i}
+        if float(x.loc[i, "high"]) < float(x.loc[i-2, "low"]):
+            bear_fvg = {"low": float(x.loc[i, "high"]), "high": float(x.loc[i-2, "low"]), "index": i}
+        disp = float(x.loc[i, "close"] - x.loc[i, "open"])
+        if disp > 1.2 * float(atr.iloc[i]) and float(x.loc[i-1, "close"]) < float(x.loc[i-1, "open"]):
+            bull_ob = {"low": float(x.loc[i-1, "low"]), "high": float(x.loc[i-1, "high"]), "index": i-1}
+        if disp < -1.2 * float(atr.iloc[i]) and float(x.loc[i-1, "close"]) > float(x.loc[i-1, "open"]):
+            bear_ob = {"low": float(x.loc[i-1, "low"]), "high": float(x.loc[i-1, "high"]), "index": i-1}
+    return {"bull_fvg": bull_fvg, "bear_fvg": bear_fvg, "bull_ob": bull_ob, "bear_ob": bear_ob}
+
+
+def detect_structure_events(df, swing=3):
+    """Return close-confirmed BOS events from local swing structure."""
+    if df is None or len(df) < swing * 2 + 3:
+        return pd.DataFrame()
+    x = df.copy().reset_index(drop=True)
+    events, swing_highs, swing_lows = [], [], []
+    for i in range(swing, len(x) - swing):
+        if float(x.loc[i, "high"]) >= float(x.loc[i-swing:i+swing, "high"].max()):
+            swing_highs.append((i, float(x.loc[i, "high"])))
+        if float(x.loc[i, "low"]) <= float(x.loc[i-swing:i+swing, "low"].min()):
+            swing_lows.append((i, float(x.loc[i, "low"])))
+    broken_h = broken_l = None
+    for i in range(swing * 2, len(x)):
+        highs = [v for j, v in swing_highs if j < i]
+        lows = [v for j, v in swing_lows if j < i]
+        close = float(x.loc[i, "close"])
+        if highs and close > highs[-1] and highs[-1] != broken_h:
+            events.append({"index": i, "type": "BOS_UP", "level": highs[-1]}); broken_h = highs[-1]
+        if lows and close < lows[-1] and lows[-1] != broken_l:
+            events.append({"index": i, "type": "BOS_DOWN", "level": lows[-1]}); broken_l = lows[-1]
+    return pd.DataFrame(events)
+
+
+def data_quality_report(df, source_name):
+    if df is None or df.empty:
+        return {"status": "DATA UNAVAILABLE", "rows": 0, "duplicates": 0, "gaps": 0, "last_age_min": None, "source": source_name}
+    x = df.sort_values("timestamp").copy()
+    dup = int(x["timestamp"].duplicated().sum())
+    diffs = x["timestamp"].diff().dropna()
+    gaps = int((diffs > diffs.median() * 3).sum()) if len(diffs) and diffs.median() > pd.Timedelta(0) else 0
+    now_ist = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)
+    last_age = max(0.0, (now_ist - x["timestamp"].iloc[-1]).total_seconds() / 60.0)
+    status = "LIVE" if last_age <= 3 else ("DELAYED" if last_age <= 30 else "STALE")
+    return {"status": status, "rows": len(x), "duplicates": dup, "gaps": gaps, "last_age_min": last_age, "source": source_name}
+
+
+def _normalize_ohlcv_dataframe(data):
+    """Normalize yfinance/SmartAPI OHLCV output to the app's standard columns."""
+    if data is None or data.empty:
+        return None
+
+    df = data.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        # yfinance can return a MultiIndex even for a single ticker.
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+    df = df.reset_index() if not isinstance(df.index, pd.RangeIndex) else df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+    rename_map = {
+        "Datetime": "timestamp", "Date": "timestamp", "index": "timestamp",
+        "Open": "open", "High": "high", "Low": "low",
+        "Close": "close", "Adj Close": "adj_close", "Volume": "volume",
+        "open": "open", "high": "high", "low": "low",
+        "close": "close", "volume": "volume", "timestamp": "timestamp",
+    }
+    df = df.rename(columns=rename_map)
+
+    required = ["timestamp", "open", "high", "low", "close"]
+    if any(c not in df.columns for c in required):
+        return None
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["timestamp", "open", "high", "low", "close"])
+
+    # The app displays all chart timestamps in Indian Standard Time.
+    # Yahoo may return UTC-aware timestamps or naive timestamps depending on
+    # the symbol/interval, so normalize both cases explicitly.
+    if getattr(df["timestamp"].dt, "tz", None) is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+    df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+
+    return df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+
+
+def _yahoo_download_with_fallbacks(ticker_symbol, source_interval, requested_period):
+    """Download enough history for Tab 2, with a safer fallback chain."""
+    attempts = []
+    if source_interval == "1m":
+        # Yahoo's 1-minute feed is limited to roughly one day. Do not pretend
+        # it contains 20 days; use it only as a live-candle fallback.
+        attempts = [("1m", "1d")]
+    elif source_interval == "2m":
+        attempts = [("2m", "5d"), ("5m", "20d")]
+    elif source_interval == "5m":
+        attempts = [("5m", requested_period), ("5m", "20d"), ("15m", "30d")]
+    elif source_interval == "15m":
+        attempts = [("15m", requested_period), ("15m", "60d")]
+    elif source_interval == "30m":
+        attempts = [("30m", requested_period), ("30m", "60d")]
+    elif source_interval == "1h":
+        attempts = [("1h", requested_period), ("1h", "120d")]
+    elif source_interval == "1d":
+        attempts = [("1d", requested_period), ("1d", "60d"), ("1d", "1y")]
+    else:
+        attempts = [(source_interval, requested_period)]
+
+    for interval, period in attempts:
         try:
-            # Tab 2 asks for a 20-day chart.  Use paginated Binance REST history
-            # instead of the websocket engine's 1,000-minute bootstrap window.
-            if custom_period in {"20d", "30d", "60d", "90d", "120d", "1y", "max"}:
-                days_map = {"20d": 20, "30d": 30, "60d": 60, "90d": 90, "120d": 120, "1y": 365, "max": 365}
-                df_btc = binance_btc.historical_chart(target_tf, days=days_map.get(custom_period, 20))
-                if df_btc is not None and not df_btc.empty:
-                    return build_market_flow_columns(df_btc)
-            df_btc, _state = binance_btc.snapshot(target_tf, limit=1000)
+            data = yf.download(
+                tickers=ticker_symbol,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+                timeout=12,
+            )
+            if data is not None and not data.empty:
+                return data, interval
+        except Exception:
+            continue
+    return None, None
+
+
+def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="20d"):
+    """Fetch Tab-2 history and keep a full 20-day intraday window.
+
+    Important Yahoo limitation: 1m candles cannot be requested for 20 days.
+    Therefore the app uses a 5m source for the normal 20-day intraday chart,
+    while higher timeframes use their appropriate source interval. The latest
+    returned candle is always retained so GOLD/SILVER also show the current
+    available candle after each Streamlit auto-refresh.
+    """
+    symbol_upper = str(ticker_symbol).upper()
+    try:
+        history_days = max(1, int(str(custom_period).lower().replace("d", "")))
+    except Exception:
+        history_days = 20
+
+    # BTC has its own Binance stream. Keep it as the source for BTC so the
+    # latest candle remains genuinely live rather than being replaced by Yahoo.
+    if symbol_upper in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
+        try:
+            df_btc, _state = binance_btc.snapshot(target_tf, limit=40000)
             if df_btc is not None and not df_btc.empty:
+                df_btc = _normalize_ohlcv_dataframe(df_btc)
                 return df_btc
         except Exception:
             pass
 
     smart_api = st.session_state.get("smart_api_session", None)
 
-    if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
+    # Angel One historical candles are used for NSE indices when available.
+    if is_indian and smart_api:
         try:
-            token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
+            token = "99926000" if "^NSEI" in symbol_upper else "99926009"
             interval_map = {
-                "1m": "ONE_MINUTE",
-                "2m": "THREE_MINUTE",
-                "3m": "THREE_MINUTE",
-                "5m": "FIVE_MINUTE",
-                "10m": "TEN_MINUTE",
-                "15m": "FIFTEEN_MINUTE",
-                "30m": "THIRTY_MINUTE",
+                "1m": "ONE_MINUTE", "2m": "THREE_MINUTE", "3m": "THREE_MINUTE",
+                "5m": "FIVE_MINUTE", "10m": "TEN_MINUTE", "15m": "FIFTEEN_MINUTE",
+                "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1d": "ONE_DAY",
             }
-            angel_tf = interval_map.get(target_tf, "ONE_MINUTE")
-
-            days_back = 30 if "mo" in custom_period or "y" in custom_period else 5
-            from_date = (datetime.now() - timedelta(days=days_back)).strftime(
-                "%Y-%m-%d %H:%M"
-            )
-            to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-            hist_data = smart_api.getCandleData({
-                "exchange": "NSE",
-                "symboltoken": token,
-                "interval": angel_tf,
-                "fromdate": from_date,
-                "todate": to_date,
-            })
-
-            if hist_data and hist_data.get("status") and hist_data.get("data"):
-                df = pd.DataFrame(
-                    hist_data["data"],
-                    columns=["timestamp", "open", "high", "low", "close", "volume"],
-                )
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-                return df
+            angel_tf = interval_map.get(target_tf)
+            if angel_tf:
+                # Request more calendar days than the final 20-day display so
+                # weekends/holidays do not reduce the number of visible candles.
+                days_back = max(45, history_days + 10) if target_tf == "1d" else max(30, history_days + 10)
+                from_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d %H:%M")
+                to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+                hist_data = smart_api.getCandleData({
+                    "exchange": "NSE",
+                    "symboltoken": token,
+                    "interval": angel_tf,
+                    "fromdate": from_date,
+                    "todate": to_date,
+                })
+                if hist_data and hist_data.get("status") and hist_data.get("data"):
+                    df = pd.DataFrame(
+                        hist_data["data"],
+                        columns=["timestamp", "open", "high", "low", "close", "volume"],
+                    )
+                    df = _normalize_ohlcv_dataframe(df)
+                    if df is not None and not df.empty:
+                        # Keep a complete 20-calendar-day window. Angel One supports
+                        # 30 days for 1-minute and more for larger intervals.
+                        cutoff = df["timestamp"].max() - pd.Timedelta(days=history_days)
+                        df = df[df["timestamp"] >= cutoff].reset_index(drop=True)
+                        return df
         except Exception:
             pass
 
-    try:
-        if target_tf in ["1h", "2h"]:
-            source_interval, period = "1h", custom_period if custom_period != "7d" else "60d"
-        elif target_tf == "4h":
-            source_interval, period = "1h", custom_period if custom_period != "7d" else "90d"
-        elif target_tf == "1d":
-            source_interval, period = "1d", "max" if "y" in custom_period else custom_period
-        else:
-            source_interval, period = "1m", custom_period
+    # Yahoo source intervals are chosen according to the requested chart
+    # timeframe. This is the key fix for the old "only one day" problem:
+    # the previous code requested 1m data with period=20d, which Yahoo cannot
+    # supply, so the returned chart collapsed to roughly one day.
+    if target_tf in {"1m", "2m", "3m", "5m"}:
+        source_interval = "5m"
+        requested_period = f"{history_days}d"
+        display_rule = {"1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min"}[target_tf]
+    elif target_tf in {"10m", "15m"}:
+        source_interval = "15m"
+        requested_period = f"{max(history_days, 30)}d"
+        display_rule = {"10m": "10min", "15m": "15min"}[target_tf]
+    elif target_tf == "30m":
+        source_interval = "30m"
+        requested_period = f"{max(history_days, 60)}d"
+        display_rule = "30min"
+    elif target_tf in {"1h", "2h", "4h"}:
+        source_interval = "1h"
+        requested_period = {"1h": "120d", "2h": "120d", "4h": "120d"}[target_tf]
+        display_rule = {"1h": "1h", "2h": "2h", "4h": "4h"}[target_tf]
+    else:
+        source_interval = "1d"
+        requested_period = "60d"
+        display_rule = "1d"
 
-        data = yf.download(
-            tickers=ticker_symbol,
-            period=period,
-            interval=source_interval,
-            progress=False,
-            timeout=5,
-        )
-        if data is None or data.empty:
-            return None
-
-        df = data.reset_index()
-        df.columns = [
-            col[0] if isinstance(col, tuple) else col for col in df.columns
-        ]
-        df = df.rename(
-            columns={
-                "Datetime": "timestamp",
-                "Date": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            }
-        )
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        if df["timestamp"].dt.tz is None:
-            df["timestamp"] = df["timestamp"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-        else:
-            df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
-
-        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
-
-        tf_map = {
-            "1m": "1min", "2m": "2min", "3m": "3min", "5m": "5min",
-            "10m": "10min", "15m": "15min", "30m": "30min",
-            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d"
-        }
-        resample_rule = tf_map.get(target_tf, "1min")
-        
-        if resample_rule != source_interval:
-            df.set_index("timestamp", inplace=True)
-            resampled_df = df.resample(resample_rule).agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum"
-            }).dropna().reset_index()
-            return resampled_df
-
-        return df
-    except Exception:
+    data, actual_interval = _yahoo_download_with_fallbacks(
+        ticker_symbol, source_interval, requested_period
+    )
+    df = _normalize_ohlcv_dataframe(data)
+    if df is None or df.empty:
         return None
+
+    # If Yahoo had to fall back to a coarser source interval, never resample
+    # backwards into fake lower-timeframe candles. Keep the real source data.
+    source_rule = {
+        "1m": "1min", "2m": "2min", "5m": "5min", "15m": "15min",
+        "30m": "30min", "1h": "1h", "1d": "1d"
+    }.get(actual_interval, actual_interval)
+
+    if display_rule != source_rule:
+        # Only aggregate to a larger timeframe. For smaller requested frames,
+        # return the real source candles rather than fabricating precision.
+        source_minutes = {"1min":1, "2min":2, "5min":5, "15min":15, "30min":30, "1h":60, "1d":1440}
+        target_minutes = {"1min":1, "2min":2, "3min":3, "5min":5, "10min":10, "15min":15, "30min":30, "1h":60, "2h":120, "4h":240, "1d":1440}
+        if source_rule in source_minutes and display_rule in target_minutes and target_minutes[display_rule] >= source_minutes[source_rule]:
+            df = (
+                df.set_index("timestamp")
+                .resample(display_rule, origin="start_day")
+                .agg({
+                    "open": "first", "high": "max", "low": "min",
+                    "close": "last", "volume": "sum"
+                })
+                .dropna(subset=["open", "high", "low", "close"])
+                .reset_index()
+            )
+
+    # For the requested 20-day intraday view, retain the full returned history.
+    # For daily candles, show the latest 20 trading sessions.
+    if target_tf == "1d":
+        # Previous 20 completed/available trading sessions.
+        df = df.tail(20).reset_index(drop=True)
+    else:
+        # Every intraday timeframe in Tab 2 is constrained to the previous
+        # 20 calendar days, including 1h/2h/4h.
+        cutoff = df["timestamp"].max() - pd.Timedelta(days=history_days)
+        df = df[df["timestamp"] >= cutoff].reset_index(drop=True)
+
+    return df
 
 
 def get_daily_trend(ticker_symbol):
@@ -1588,7 +1743,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
 
     df_calc = add_indicators(df.copy())
     df_calc["typical_price"] = (df_calc["high"] + df_calc["low"] + df_calc["close"]) / 3
-    df_calc["vwap"] = (df_calc["typical_price"] * df_calc["volume"]).cumsum() / df_calc["volume"].cumsum()
+    df_calc = calculate_vwap_bands(df_calc)
+    df_calc["vwap"] = df_calc["session_vwap"]
     df_calc["vwap"] = df_calc["vwap"].fillna(df_calc["close"])
     
     for i in range(len(df_calc)):
@@ -1632,17 +1788,15 @@ def render_tradingview_lightweight_chart(df, asset_title):
             continue
 
     lookback_window = min(len(df_calc), 75)
-    stable_high = df_calc['high'].iloc[-lookback_window:].max()
-    stable_low = df_calc['low'].iloc[-lookback_window:].min()
-    
-    bsl_price = round(stable_high * 1.002, 2)
-    ssl_price = round(stable_low * 0.998, 2)
-    
-    bullish_ob = round(df_calc['low'].iloc[-lookback_window:].min() * 1.001, 2)
-    bearish_ob = round(df_calc['high'].iloc[-lookback_window:].max() * 0.999, 2)
-    
-    bullish_fvg = round(stable_low * 1.0015, 2)
-    bearish_fvg = round(stable_high * 0.9985, 2)
+    stable_high = float(df_calc['high'].iloc[-lookback_window:].max())
+    stable_low = float(df_calc['low'].iloc[-lookback_window:].min())
+    bsl_price = round(stable_high, 2)
+    ssl_price = round(stable_low, 2)
+    zones_tv = detect_smart_money_zones(df_calc)
+    bullish_ob = round(zones_tv['bull_ob']['low'], 2) if zones_tv['bull_ob'] else round(stable_low, 2)
+    bearish_ob = round(zones_tv['bear_ob']['high'], 2) if zones_tv['bear_ob'] else round(stable_high, 2)
+    bullish_fvg = round(zones_tv['bull_fvg']['low'], 2) if zones_tv['bull_fvg'] else round(stable_low, 2)
+    bearish_fvg = round(zones_tv['bear_fvg']['high'], 2) if zones_tv['bear_fvg'] else round(stable_high, 2)
 
     lookback_p = min(len(df_calc), 10)
     yt_recent_high = df_calc['high'].iloc[-lookback_p:].max()
@@ -1653,6 +1807,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
     candles_json = json.dumps(tv_candles)
     markers_json = json.dumps(markers) if show_choch else json.dumps([])
     vwap_json = json.dumps(tv_vwap)
+    vwap_upper_json = json.dumps([{"time": int(r["timestamp"].timestamp()), "value": float(r["vwap_upper_1"])} for _, r in df_calc.iterrows() if pd.notna(r.get("vwap_upper_1"))])
+    vwap_lower_json = json.dumps([{"time": int(r["timestamp"].timestamp()), "value": float(r["vwap_lower_1"])} for _, r in df_calc.iterrows() if pd.notna(r.get("vwap_lower_1"))])
 
     bsl_line_js = f"""
     candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }});
@@ -1669,12 +1825,12 @@ def render_tradingview_lightweight_chart(df, asset_title):
     """ if show_fvg else ""
 
     vwap_series_js = f"""
-    const vwapSeries = chart.addLineSeries({{
-        color: '#2962FF',
-        lineWidth: 2,
-        title: 'VWAP',
-    }});
+    const vwapSeries = chart.addLineSeries({{ color: '#2962FF', lineWidth: 2, title: 'Session VWAP' }});
+    const vwapUpper = chart.addLineSeries({{ color: '#60a5fa', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'VWAP +1σ' }});
+    const vwapLower = chart.addLineSeries({{ color: '#60a5fa', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'VWAP -1σ' }});
     vwapSeries.setData({vwap_json});
+    vwapUpper.setData({vwap_upper_json});
+    vwapLower.setData({vwap_lower_json});
     """ if show_vwap else ""
 
     yt_strategy_lines_js = f"""
@@ -1754,6 +1910,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             
             candlestickSeries.setData(candleData);
             candlestickSeries.setMarkers(markerData);
+            chart.timeScale().fitContent();
 
             {bsl_line_js}
             {ob_lines_js}
@@ -1772,31 +1929,36 @@ def render_tradingview_lightweight_chart(df, asset_title):
 
 
 # --- TradingView Widget function for other assets ---
-def render_tv_widget(symbol, title):
+def render_tv_widget(symbol, title, interval="5", range_value="1M"):
+    """Embed TradingView's own market-data widget for live/current market view."""
+    safe_id = symbol.replace(":", "_").replace("!", "_").replace("/", "_")
     widget_html = f"""
     <div class="tradingview-widget-container">
-      <div id="tradingview_{symbol}"></div>
+      <div id="tradingview_{safe_id}"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget({{
       "width": "100%",
-      "height": 400,
+      "height": 430,
       "symbol": "{symbol}",
-      "interval": "D",
+      "interval": "{interval}",
+      "range": "{range_value}",
       "timezone": "Asia/Kolkata",
       "theme": "dark",
       "style": "1",
       "locale": "en",
       "toolbar_bg": "#f1f3f6",
       "enable_publishing": false,
+      "hide_top_toolbar": false,
+      "hide_legend": false,
       "allow_symbol_change": true,
-      "container_id": "tradingview_{symbol}"
+      "container_id": "tradingview_{safe_id}"
       }});
       </script>
     </div>
     """
     st.markdown(f"### {title}")
-    components.html(widget_html, height=420)
+    components.html(widget_html, height=450, scrolling=False)
 
 
 df_ltf = None
@@ -1805,7 +1967,7 @@ btc_stream_state = {}
 with st.spinner("डेटा लोड होत आहे..."):
     if is_btc_market:
         binance_btc = get_binance_btc_engine()
-        df_ltf, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
+        df_ltf, btc_stream_state = binance_btc.snapshot(timeframe, limit=40000)
         df_ltf = build_market_flow_columns(df_ltf)
         if df_ltf is not None and not df_ltf.empty:
             daily_trend = (
@@ -1826,7 +1988,7 @@ base_price = (
 )
 
 if is_btc_market and binance_btc is not None:
-    _btc_df_now, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
+    _btc_df_now, btc_stream_state = binance_btc.snapshot(timeframe, limit=40000)
     current_price = float(btc_stream_state.get("last_price") or base_price)
     # Keep the legacy state name available to the existing Tab 4 logic.
     st.session_state["btc_ws_data"] = {
@@ -1843,8 +2005,9 @@ elif is_indian_market:
 else:
     current_price = base_price
 
-# Shared price change used by Tabs 7-9 and Tab 6.
-# Keep it defined before any tab code so BTC, Gold and Silver cannot raise NameError.
+# Shared price-change value used by Tabs 6-9.
+# It must be defined outside Tab 6 so switching to GOLD/SILVER/BTC
+# cannot leave Tabs 7-9 with an undefined variable on a Streamlit rerun.
 if df_ltf is not None and len(df_ltf) >= 2:
     try:
         price_change = float(df_ltf["close"].iloc[-1]) - float(df_ltf["close"].iloc[-2])
@@ -1887,9 +2050,9 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-    st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
+    st.caption("मागील २० दिवसांचा कॅन्डल डेटा — NIFTY/BANK NIFTY (Angel One historical API), BTC (Binance 1-minute history + live WebSocket), आणि Gold/Silver साठी खाली TradingView MCX continuous-futures live charts. सर्व chart time IST मध्ये आहेत.")
     
-    col_tf1, col_tf2 = st.columns([2, 5])
+    col_tf1, col_tf2, col_tf3 = st.columns([2, 2, 3])
     with col_tf1:
         chart_timeframe = st.selectbox(
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
@@ -1897,29 +2060,42 @@ with tab2:
             index=3,
             key="custom_chart_tf"
         )
-    
-    chart_period_map = {
-        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
-        "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
-    }
-    selected_period = chart_period_map.get(chart_timeframe, "20d")
-    
-    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
+    with col_tf2:
+        history_window = st.selectbox(
+            "📅 History Window", ["20D", "30D", "60D", "90D"], index=0, key="tab2_history_window"
+        )
+    with col_tf3:
+        if is_btc_market and history_window != "20D":
+            st.info("BTC Binance 1m engine सध्या 20D deterministic history ठेवतो; live WebSocket current candle जोडतो.")
+        else:
+            st.caption("Historical window applies to the selected Yahoo/Angel source. Current candle is retained on refresh.")
+
+    selected_period = {"20D":"20d", "30D":"30d", "60D":"60d", "90D":"90d"}.get(history_window, "20d")
+
+    df_chart = fetch_and_resample_data(
+        ticker, chart_timeframe, is_indian_market, custom_period=selected_period
+    )
+    tab2_quality = data_quality_report(df_chart if df_chart is not None else df_ltf, "Selected chart source")
+    tq1,tq2,tq3 = st.columns(3)
+    tq1.metric("Chart Data", tab2_quality["status"])
+    tq2.metric("Bars Loaded", f"{tab2_quality['rows']:,}")
+    tq3.metric("Last Bar Age", "—" if tab2_quality["last_age_min"] is None else f"{tab2_quality['last_age_min']:.1f} min")
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
-    st.markdown("### 🌎 Global Asset Live Charts")
+    st.markdown("### 🌎 Live Market Reference Charts")
+    st.caption("Gold/Silver साठी खालील live reference charts TradingView च्या MCX continuous futures symbols वर आहेत. त्यामुळे Yahoo GC=F/SI=F च्या जुन्या candle वर अवलंबून राहावे लागत नाही.")
     c1, c2 = st.columns(2)
     with c1:
-        render_tv_widget("TVC:GOLD", "Gold Live Chart")
+        render_tv_widget("MCX:GOLD1!", "🟡 MCX Gold Futures — Live TradingView Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     with c2:
-        render_tv_widget("TVC:SILVER", "Silver Live Chart")
+        render_tv_widget("MCX:SILVER1!", "⚪ MCX Silver Futures — Live TradingView Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     
     c3, c4 = st.columns(2)
     with c3:
-        render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
+        render_tv_widget("BINANCE:BTCUSDT", "₿ Bitcoin (BTC/USDT) Live Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     with c4:
-        render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
+        render_tv_widget("NSE:NIFTY", "🇮🇳 Nifty 50 Live Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
@@ -2185,9 +2361,7 @@ with tab4:
         btc_ws = st.session_state.get("btc_ws_data", {})
         current_btc_price = float(btc_stream_state.get("last_price") or current_price) if is_btc_market else current_price
         btc_change = float(btc_ws.get("change", 0) or 0)
-        # Keep live signal timestamps in Indian Standard Time as well.
-        IST = timezone(timedelta(hours=5, minutes=30))
-        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         live_sig_type = "🔴 PERFECT SELL (CHOCH CONFIRMED)"
         inst_act = "Binance Direct WS: Institutional Order Block Tap"
@@ -2284,311 +2458,210 @@ with tab6:
 
     if is_btc_market:
         st.success("🟢 Binance Spot WebSocket LIVE — @aggTrade + @bookTicker")
-        st.caption("Delta = aggressive buy volume − aggressive sell volume from Binance executed trades. Closed Binance candles are immutable; only the current candle updates.")
-        st.caption(f"Market-data endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | WebSocket trades received: {int(btc_stream_state.get('trade_count') or 0):,}")
+        st.caption("BTC Delta = aggressive buy volume − aggressive sell volume from real Binance executed trades. Closed candles are frozen; only the current candle updates.")
+        st.caption(f"Endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | Trades received: {int(btc_stream_state.get('trade_count') or 0):,}")
+        flow_source_name = "Binance Spot aggTrade"
     elif is_indian_market:
-        source="Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance"
-        st.info(f"{display_name} साठी {source} market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
+        flow_source_name = "Angel One / Yahoo Finance OHLCV"
+        st.info(f"{display_name} साठी {flow_source_name} वापरला जात आहे. Aggressor-side real trade delta उपलब्ध नसल्यामुळे delta हा clearly-labelled OHLCV proxy आहे.")
     else:
-        st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
+        flow_source_name = "Yahoo Finance OHLCV"
+        st.info(f"{display_name} साठी Yahoo Finance OHLCV वापरला जात आहे. Yahoo OHLCV feed मध्ये exchange aggressor-side trades नसल्यामुळे delta हा proxy आहे; chart WebSocket/live refresh असला तरी source field नसल्यास real bid/ask delta म्हणून तो दाखवला जाणार नाही.")
 
-    st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
+    st.caption("Deterministic flow engine: one selected timeframe, one sorted/deduplicated dataframe, same candle used for candle + delta + volume + CVD.")
     st.markdown("---")
+
+    flow_df = df_ltf.copy() if df_ltf is not None else None
+    if is_gold_silver:
+        try:
+            fresh = fetch_and_resample_data(ticker, timeframe, False, custom_period="7d")
+            if fresh is not None and not fresh.empty:
+                flow_df = fresh
+        except Exception:
+            pass
+    flow_df = prepare_orderflow_frame(flow_df, min_rows=72)
+    if flow_df is not None and not flow_df.empty:
+        flow_df = calculate_vwap_bands(flow_df)
+
+    quality = data_quality_report(flow_df, flow_source_name)
+    q1,q2,q3,q4,q5 = st.columns(5)
+    q1.metric("Data Status", quality["status"])
+    q2.metric("Bars", f"{quality['rows']:,}")
+    q3.metric("Duplicate Timestamps", f"{quality['duplicates']}")
+    q4.metric("Large Gaps", f"{quality['gaps']}")
+    q5.metric("Last Bar Age", "—" if quality["last_age_min"] is None else f"{quality['last_age_min']:.1f} min")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
-    st.caption("BTC साठी real Binance executed-trade flow; इतर assets साठी त्यांच्या उपलब्ध OHLCV data वर आधारित candle-flow proxy.")
+    st.caption("Layout is fixed as: Candles → Delta → Volume/Activity. This remains visible even when a live/WebSocket source is connected or temporarily reconnecting.")
 
-    col_of1, col_of2 = st.columns([3,1])
-    with col_of1:
-        if df_ltf is not None and not df_ltf.empty:
-            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
-            # Keep the Delta panel visually consistent across refreshes. Plotly's
-            # default autoscaling can make the same Delta series look very different
-            # when the latest candles have a smaller/larger absolute Delta.
-            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
-            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
-            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
-            # A stable reference floor gives a chart appearance close to the original
-            # footprint view while still allowing larger real deltas to expand naturally.
-            delta_axis_top = max(200.0, max_abs_delta * 1.25)
-            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
+    if flow_df is not None and len(flow_df) >= 2:
+        chart_df = flow_df.tail(96).copy()
+        fig_footprint = make_subplots(
+            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.025,
+            row_heights=[0.58, 0.23, 0.19],
+            subplot_titles=("Price / Candles", "Net Delta (Buy − Sell)", "Volume / Activity"),
+        )
+        fig_footprint.add_trace(go.Candlestick(
+            x=chart_df["timestamp"], open=chart_df["open"], high=chart_df["high"],
+            low=chart_df["low"], close=chart_df["close"], name="Candles",
+            increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+            increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
+        ), row=1, col=1)
+        delta_colors = ["#22c55e" if float(v) >= 0 else "#ef4444" for v in chart_df["delta"]]
+        fig_footprint.add_trace(go.Bar(
+            x=chart_df["timestamp"], y=chart_df["delta"], name="Net Delta",
+            marker_color=delta_colors,
+            hovertemplate="%{x|%d-%m %H:%M IST}<br>Delta: %{y:,.4f}<extra></extra>",
+        ), row=2, col=1)
+        vol_colors = ["#64748b" if float(c) >= 0 else "#94a3b8" for c in chart_df["close"] - chart_df["open"]]
+        fig_footprint.add_trace(go.Bar(
+            x=chart_df["timestamp"], y=chart_df["display_volume"], name=chart_df["volume_label"].iloc[-1],
+            marker_color=vol_colors,
+            hovertemplate="%{x|%d-%m %H:%M IST}<br>Volume/Activity: %{y:,.4f}<extra></extra>",
+        ), row=3, col=1)
+        fig_footprint.add_hline(y=0, line_width=1, line_dash="dot", row=2, col=1)
+        fig_footprint.update_xaxes(type="date", row=3, col=1, tickformat="%d-%m %H:%M")
+        fig_footprint.update_layout(
+            height=760, margin=dict(l=20,r=20,t=50,b=30), showlegend=False,
+            hovermode="x unified", xaxis_rangeslider_visible=False,
+            uirevision=f"tab6-{display_name}-{timeframe}",
+        )
+        fig_footprint.update_yaxes(title_text="Price", row=1, col=1, fixedrange=False)
+        fig_footprint.update_yaxes(title_text="Delta", row=2, col=1, zeroline=True)
+        fig_footprint.update_yaxes(title_text="Volume", row=3, col=1, rangemode="tozero")
+        st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_3pane_v3")
 
-            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
-            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
-            fig_footprint.add_trace(
-                go.Bar(
-                    x=df_of["timestamp"],
-                    y=df_of["delta"],
-                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
-                    name="Flow Delta",
-                    hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
-                ),
-                row=2,col=1,
-            )
-            fig_footprint.update_yaxes(
-                range=[delta_axis_bottom, delta_axis_top],
-                zeroline=True,
-                zerolinewidth=1,
-                showgrid=True,
-                tickformat=",.0f",
-                row=2,
-                col=1,
-            )
-            fig_footprint.update_layout(
-                height=520,
-                margin=dict(l=10,r=10,t=10,b=10),
-                showlegend=False,
-                hovermode="x unified",
-                bargap=0.12,
-            )
-            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
-            last=df_of.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
-            c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
-            c3.metric("Net Delta",f"{last['delta']:,.4f}")
-            c4.metric("Live Price",f"{current_price:,.2f}")
-            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
+        last = flow_df.iloc[-1]
+        prev = flow_df.iloc[-2]
+        m1,m2,m3,m4,m5 = st.columns(5)
+        m1.metric("Buy Flow", f"{float(last['buy_vol']):,.4f}")
+        m2.metric("Sell Flow", f"{float(last['sell_vol']):,.4f}")
+        m3.metric("Net Delta", f"{float(last['delta']):,.4f}", delta=f"{float(last['delta']-prev['delta']):,.4f}")
+        m4.metric("CVD", f"{float(last['cvd']):,.4f}")
+        m5.metric("Live Price", f"{current_price:,.2f}")
+        st.caption(f"Flow source: {flow_source_name} | Volume panel: {last['volume_label']} | Timestamp display: Asia/Kolkata (IST)")
+
+        st.markdown("#### 📊 CVD / Delta Divergence")
+        recent = flow_df.tail(60).copy()
+        price_change_lookback = float(recent["close"].iloc[-1] - recent["close"].iloc[0])
+        cvd_change = float(recent["cvd"].iloc[-1] - recent["cvd"].iloc[0])
+        div_a, div_b, div_c = st.columns(3)
+        div_a.metric("Price Change", f"{price_change_lookback:,.2f}")
+        div_b.metric("CVD Change", f"{cvd_change:,.4f}")
+        if price_change_lookback > 0 and cvd_change < 0:
+            divergence = "Bearish delta divergence"
+        elif price_change_lookback < 0 and cvd_change > 0:
+            divergence = "Bullish delta divergence"
         else:
-            df_of=pd.DataFrame()
-            st.info("Order Flow डेटा उपलब्ध होत आहे...")
+            divergence = "No clear price/CVD divergence"
+        div_c.metric("Divergence State", divergence)
+    else:
+        st.warning("Order Flow chart साठी पुरेसा OHLCV data उपलब्ध नाही. Live source येताच chart पुन्हा भरला जाईल.")
+        flow_df = pd.DataFrame()
 
-    with col_of2:
-        st.markdown("##### 🔍 Live Footprint Insights")
-        if not df_of.empty:
-            last_buy=float(df_of['buy_vol'].iloc[-1])
-            last_sell=float(df_of['sell_vol'].iloc[-1])
-            last_delta=float(df_of['delta'].iloc[-1])
-            st.metric("Buyer Volume (Ask)",f"{last_buy:,.4f}")
-            st.metric("Seller Volume (Bid)",f"{last_sell:,.4f}")
-            st.metric("Net Delta Imbalance",f"{last_delta:,.4f}",delta_color="normal")
-            if last_delta>0: st.success("🟢 Positive buying flow")
-            elif last_delta<0: st.error("🔴 Negative selling flow")
-            else: st.info("Neutral flow")
-
-    if is_btc_market and binance_btc is not None:
-        st.markdown("### Live Best Bid / Ask")
-        bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
-        ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
-        o1,o2,o3,o4=st.columns(4)
-        o1.metric("Best Bid",f"{bid:,.2f}" if bid>0 else "Waiting…")
-        o2.metric("Bid Qty",f"{bid_qty:,.6f}" if bid_qty>0 else "Waiting…")
-        o3.metric("Best Ask",f"{ask:,.2f}" if ask>0 else "Waiting…")
-        o4.metric("Ask Qty",f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
-        if bid>0 and ask>0: st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
+    with st.expander("🔍 Live Footprint / Bid-Ask Details", expanded=True):
+        if is_btc_market and binance_btc is not None:
+            bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
+            ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
+            o1,o2,o3,o4 = st.columns(4)
+            o1.metric("Best Bid", f"{bid:,.2f}" if bid>0 else "Waiting…")
+            o2.metric("Bid Qty", f"{bid_qty:,.6f}" if bid_qty>0 else "Waiting…")
+            o3.metric("Best Ask", f"{ask:,.2f}" if ask>0 else "Waiting…")
+            o4.metric("Ask Qty", f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
+            if bid>0 and ask>0:
+                st.caption(f"Spread: {ask-bid:,.2f} USDT | Source: Binance @bookTicker")
+        elif not flow_df.empty:
+            z = flow_df.iloc[-1]
+            o1,o2,o3 = st.columns(3)
+            o1.metric("Buy Flow", f"{float(z['buy_vol']):,.4f}")
+            o2.metric("Sell Flow", f"{float(z['sell_vol']):,.4f}")
+            o3.metric("Delta", f"{float(z['delta']):,.4f}")
+            st.caption("Non-BTC assets do not expose true aggressor-side bid/ask trades in the Yahoo/Angel OHLCV dataframe; these are proxy values.")
 
     st.markdown("---")
-    st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
-    st.caption("रिटेल ट्रेडर्सचे Stop-Losses कुठे साचले आहेत (Liquidity Sweep Entry Points).")
-    col_lh1,col_lh2=st.columns(2)
-    with col_lh1:
-        st.markdown("##### 🎯 **Buy-Side & Sell-Side Liquidity Zones**")
-        bsl_level=round(current_price*1.008,2); ssl_level=round(current_price*0.992,2)
-        st.markdown(f"""<div style='background-color:#f0fdf4;border:1px solid #bbf7d0;padding:12px;border-radius:8px;margin-bottom:10px;'><b style='color:#166534;'>🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#15803d;'>{bsl_level}</span></div><div style='background-color:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;'><b style='color:#991b1b;'>🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#b91c1c;'>{ssl_level}</span></div>""",unsafe_allow_html=True)
-    with col_lh2:
-        st.markdown("##### 📊 **Depth of Market (DOM Liquidity)**")
-        if is_btc_market:
-            levels=[]
-            for i in range(3,0,-1): levels.append((round(bid-i*10,2),0.0,"Bid side"))
-            levels.append((bid,bid_qty,"Best Bid")); levels.append((ask,ask_qty,"Best Ask"))
-            for i in range(1,4): levels.append((round(ask+i*10,2),0.0,"Ask side"))
-            dom_df=pd.DataFrame(levels,columns=["Price Level","Quantity","Source"])
-            st.dataframe(dom_df,use_container_width=True,height=220)
-            st.caption("@bookTicker provides real best bid/ask only; deeper levels are not claimed as live depth.")
+    st.markdown("### 2️⃣ **VWAP + Sigma Bands / Structure**")
+    if not flow_df.empty:
+        z=flow_df.iloc[-1]
+        v1,v2,v3,v4 = st.columns(4)
+        v1.metric("Session VWAP", f"{float(z['session_vwap']):,.2f}")
+        v2.metric("VWAP +1σ", f"{float(z['vwap_upper_1']):,.2f}")
+        v3.metric("VWAP -1σ", f"{float(z['vwap_lower_1']):,.2f}")
+        v4.metric("Weekly VWAP", f"{float(z['weekly_vwap']):,.2f}")
+        structure = detect_structure_events(flow_df, swing=3)
+        if not structure.empty:
+            latest_struct = structure.iloc[-1]
+            st.info(f"Latest confirmed structure event: **{latest_struct['type']}** at {float(latest_struct['level']):,.2f} | close-confirmed")
         else:
-            base_vol=float(df_of["volume"].tail(10).mean()) if not df_of.empty else 0.0
-            dom_prices=[round(current_price+(i*10),2) for i in range(3,-4,-1)]
-            dom_orders=[round(base_vol*(1+0.05*abs(i)),2) for i in range(3,-4,-1)]
-            st.dataframe(pd.DataFrame({"Price Level":dom_prices,"Pending Orders / Volume Proxy":dom_orders}),use_container_width=True,height=220)
+            st.info("No confirmed BOS event in the current visible structure window.")
 
     st.markdown("---")
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
-    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. प्रत्येक candle चा volume त्याच्या High-Low price range मध्ये वितरित केला जातो, त्यामुळे profile मध्ये सलग आणि स्पष्ट horizontal bars दिसतात.")
-    if df_ltf is not None and not df_ltf.empty:
-        df_vp_data = build_market_flow_columns(df_ltf).copy()
-        df_vp_data = df_vp_data.dropna(subset=["open", "high", "low", "close", "volume"]).tail(120)
-
-        if len(df_vp_data) >= 3:
-            o = pd.to_numeric(df_vp_data["open"], errors="coerce").to_numpy(dtype=float)
-            h = pd.to_numeric(df_vp_data["high"], errors="coerce").to_numpy(dtype=float)
-            l = pd.to_numeric(df_vp_data["low"], errors="coerce").to_numpy(dtype=float)
-            c = pd.to_numeric(df_vp_data["close"], errors="coerce").to_numpy(dtype=float)
-            v = pd.to_numeric(df_vp_data["volume"], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
-
-            valid = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c) & np.isfinite(v) & (v >= 0)
-            o, h, l, c, v = o[valid], h[valid], l[valid], c[valid], v[valid]
-
-            if len(c) >= 3 and float(v.sum()) > 0:
-                pmin = float(np.nanmin(l))
-                pmax = float(np.nanmax(h))
-
-                # Use enough bins to make the profile visually continuous while
-                # avoiding hundreds of very thin bars.
-                bin_count = int(min(40, max(20, round(np.sqrt(len(c)) * 3))))
-                if not np.isfinite(pmin) or not np.isfinite(pmax) or pmax <= pmin:
-                    center = float(c[-1])
-                    span = max(abs(center) * 0.002, 1.0)
-                    pmin, pmax = center - span, center + span
-
-                edges = np.linspace(pmin, pmax, bin_count + 1)
-                mids = (edges[:-1] + edges[1:]) / 2.0
-                profile = np.zeros(bin_count, dtype=float)
-
-                # Distribute each candle's volume across the price bins touched
-                # by its High-Low range. This produces a true range-based
-                # horizontal volume profile instead of concentrating all volume
-                # at the candle close.
-                for hi, lo, vol_value in zip(h, l, v):
-                    if vol_value <= 0 or not np.isfinite(hi) or not np.isfinite(lo):
-                        continue
-                    if hi < lo:
-                        hi, lo = lo, hi
-                    if hi == lo:
-                        pos = int(np.clip(np.searchsorted(edges, hi, side="right") - 1, 0, bin_count - 1))
-                        profile[pos] += vol_value
-                    else:
-                        touched = np.where((edges[:-1] <= hi) & (edges[1:] >= lo))[0]
-                        if len(touched):
-                            widths = np.minimum(edges[touched + 1], hi) - np.maximum(edges[touched], lo)
-                            widths = np.clip(widths, 0, None)
-                            width_sum = float(widths.sum())
-                            if width_sum > 0:
-                                profile[touched] += vol_value * (widths / width_sum)
-
-                vp = pd.DataFrame({"price": mids, "volume": profile})
-
-                if float(vp["volume"].sum()) > 0:
-                    total = float(vp["volume"].sum())
-                    poc_pos = int(vp["volume"].to_numpy().argmax())
-                    poc_price = float(vp.iloc[poc_pos]["price"])
-
-                    # 70% value area, expanding from POC toward the larger
-                    # neighbouring volume.
-                    target = total * 0.70
-                    covered = float(vp.iloc[poc_pos]["volume"])
-                    lo_pos = hi_pos = poc_pos
-                    while covered < target and (lo_pos > 0 or hi_pos < len(vp) - 1):
-                        left_vol = float(vp.iloc[lo_pos - 1]["volume"]) if lo_pos > 0 else -1.0
-                        right_vol = float(vp.iloc[hi_pos + 1]["volume"]) if hi_pos < len(vp) - 1 else -1.0
-                        if right_vol >= left_vol and hi_pos < len(vp) - 1:
-                            hi_pos += 1
-                            covered += max(0.0, right_vol)
-                        elif lo_pos > 0:
-                            lo_pos -= 1
-                            covered += max(0.0, left_vol)
-                        else:
-                            break
-
-                    val_price = float(vp.iloc[lo_pos]["price"])
-                    vah_price = float(vp.iloc[hi_pos]["price"])
-
-                    col_vp1, col_vp2, col_vp3 = st.columns(3)
-                    col_vp1.metric("Value Area High (VAH)", f"{vah_price:,.2f}")
-                    col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price:,.2f}")
-                    col_vp3.metric("Value Area Low (VAL)", f"{val_price:,.2f}")
-
-                    bin_width = float(edges[1] - edges[0])
-                    fig_vp = go.Figure()
-                    fig_vp.add_trace(go.Bar(
-                        x=vp["volume"],
-                        y=vp["price"],
-                        orientation="h",
-                        width=bin_width * 0.90,
-                        marker=dict(
-                            line=dict(width=0.4)
-                        ),
-                        hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
-                        name="Volume Profile"
-                    ))
-
-                    fig_vp.add_hline(
-                        y=poc_price, line_width=3, line_dash="solid",
-                        annotation_text="POC", annotation_position="top right"
-                    )
-                    fig_vp.add_hline(
-                        y=vah_price, line_width=1.5, line_dash="dash",
-                        annotation_text="VAH", annotation_position="top right"
-                    )
-                    fig_vp.add_hline(
-                        y=val_price, line_width=1.5, line_dash="dash",
-                        annotation_text="VAL", annotation_position="bottom right"
-                    )
-
-                    # Keep every price bin visible and use a compact linear
-                    # scale so the horizontal profile does not look broken.
-                    y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
-                    fig_vp.update_layout(
-                        title="Horizontal Volume Profile",
-                        height=500,
-                        margin=dict(l=75, r=35, t=50, b=50),
-                        xaxis_title="Volume",
-                        yaxis_title="Price Level",
-                        yaxis=dict(
-                            type="linear",
-                            range=[pmin - y_pad, pmax + y_pad],
-                            tickformat=",.2f",
-                            showgrid=True,
-                            zeroline=False,
-                            fixedrange=False
-                        ),
-                        xaxis=dict(showgrid=True, zeroline=False),
-                        bargap=0.02,
-                        hovermode="closest",
-                        showlegend=False
-                    )
-                    st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed_v2")
-                    st.caption(
-                        f"Profile source: selected asset OHLCV volume | {bin_count} price bins | "
-                        f"Range-based volume distribution | Value Area = 70% of profile volume"
-                    )
-                else:
-                    st.info("Volume Profile उपलब्ध नाही कारण source volume distribution शून्य आहे.")
-            else:
-                st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
+    st.caption("Range-based horizontal volume profile. For Yahoo/Angel zero-volume feeds, the profile uses the same clearly-labelled activity proxy as the footprint chart.")
+    if not flow_df.empty and len(flow_df) >= 3:
+        df_vp_data = flow_df.dropna(subset=["open","high","low","close","display_volume"]).tail(120).copy()
+        o=df_vp_data["open"].to_numpy(float); h=df_vp_data["high"].to_numpy(float); l=df_vp_data["low"].to_numpy(float); c=df_vp_data["close"].to_numpy(float); v=df_vp_data["display_volume"].to_numpy(float)
+        valid=np.isfinite(o)&np.isfinite(h)&np.isfinite(l)&np.isfinite(c)&np.isfinite(v)&(v>=0)
+        h,l,c,v=h[valid],l[valid],c[valid],v[valid]
+        if len(c)>=3 and float(v.sum())>0:
+            pmin=float(np.nanmin(l)); pmax=float(np.nanmax(h)); bin_count=int(min(40,max(20,round(np.sqrt(len(c))*3))))
+            if pmax<=pmin: pmax=pmin+max(abs(pmin)*0.002,1.0)
+            edges=np.linspace(pmin,pmax,bin_count+1); mids=(edges[:-1]+edges[1:])/2; profile=np.zeros(bin_count)
+            for hi,lo,volv in zip(h,l,v):
+                if volv<=0: continue
+                if hi<lo: hi,lo=lo,hi
+                touched=np.where((edges[:-1]<=hi)&(edges[1:]>=lo))[0]
+                if len(touched):
+                    widths=np.minimum(edges[touched+1],hi)-np.maximum(edges[touched],lo); widths=np.clip(widths,0,None); ws=float(widths.sum())
+                    if ws>0: profile[touched]+=volv*(widths/ws)
+            vp=pd.DataFrame({"price":mids,"volume":profile})
+            total=float(vp["volume"].sum()); poc_pos=int(vp["volume"].to_numpy().argmax()); poc_price=float(vp.iloc[poc_pos]["price"])
+            target=total*0.70; covered=float(vp.iloc[poc_pos]["volume"]); lo_pos=hi_pos=poc_pos
+            while covered<target and (lo_pos>0 or hi_pos<len(vp)-1):
+                lv=float(vp.iloc[lo_pos-1]["volume"]) if lo_pos>0 else -1; rv=float(vp.iloc[hi_pos+1]["volume"]) if hi_pos<len(vp)-1 else -1
+                if rv>=lv and hi_pos<len(vp)-1: hi_pos+=1; covered+=max(0,rv)
+                elif lo_pos>0: lo_pos-=1; covered+=max(0,lv)
+                else: break
+            val_price=float(vp.iloc[lo_pos]["price"]); vah_price=float(vp.iloc[hi_pos]["price"])
+            a,b,c1=st.columns(3); a.metric("VAH",f"{vah_price:,.2f}"); b.metric("POC",f"{poc_price:,.2f}"); c1.metric("VAL",f"{val_price:,.2f}")
+            fig_vp=go.Figure(go.Bar(x=vp["volume"],y=vp["price"],orientation="h",hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>"))
+            fig_vp.add_hline(y=poc_price,line_width=3,annotation_text="POC")
+            fig_vp.add_hline(y=vah_price,line_width=1.5,line_dash="dash",annotation_text="VAH")
+            fig_vp.add_hline(y=val_price,line_width=1.5,line_dash="dash",annotation_text="VAL")
+            pad=max((edges[1]-edges[0])*1.5,abs(pmax-pmin)*0.01)
+            fig_vp.update_layout(height=520,margin=dict(l=80,r=40,t=40,b=50),xaxis_title="Volume / Activity",yaxis_title="Price",bargap=0,showlegend=False,hovermode="closest")
+            fig_vp.update_yaxes(range=[pmin-pad,pmax+pad],tickformat=",.2f")
+            st.plotly_chart(fig_vp,use_container_width=True,key="vp_horizontal_chart_tab6_v3")
         else:
-            st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
-
-    st.markdown("---")
-    st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
-    st.caption("ऑटोमॅटिक Order Blocks (OB), Fair Value Gaps (FVG) आणि CHOCH/BOS ब्रेकआउट्स.")
-    if df_ltf is not None and len(df_ltf)>5:
-        last_low=df_ltf["low"].iloc[-3]; last_high=df_ltf["high"].iloc[-3]
-        col_smc1,col_smc2=st.columns(2)
-        with col_smc1:
-            st.markdown("##### 🟢 **Bullish Order Block & FVG**")
-            st.info(f"**Bullish Order Block Zone:** {round(last_low*0.998,2)} - {round(last_low,2)}\n\n**Bullish FVG (Imbalance Gap):** {round(last_low*1.001,2)} - {round(last_low*1.003,2)}")
-        with col_smc2:
-            st.markdown("##### 🔴 **Bearish Order Block & FVG**")
-            st.error(f"**Bearish Order Block Zone:** {round(last_high,2)} - {round(last_high*1.002,2)}\n\n**Bearish FVG (Imbalance Gap):** {round(last_high*0.997,2)} - {round(last_high*0.999,2)}")
-
-    st.markdown("---")
-    st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
-    st.caption("फ्युचर्स OI, Funding आणि Options Writing साठी derivatives/options feed आवश्यक असतो; ते Spot @aggTrade + @bookTicker मधून उपलब्ध होत नाहीत.")
-
-    if is_btc_market:
-        st.info("ℹ️ BTC Spot mode: Binance @aggTrade + @bookTicker मधून executed trades आणि best bid/ask मिळतात. Spot stream मध्ये Futures Open Interest, Funding Rate किंवा Options Writing data नसल्यामुळे येथे कोणताही बनावट OI value दाखवला जात नाही.")
-        oi_status="Not available — Spot"
-        funding_rate="Not available"
-        bias_text="Price / Delta context"
-        bias_desc="वरील real Binance Buy Flow, Sell Flow, Net Delta आणि Best Bid/Ask यावर spot order-flow context पाहा. Actual Futures OI साठी Binance Futures derivatives feed आवश्यक आहे."
+            st.info("Volume Profile साठी positive volume/activity data उपलब्ध नाही.")
     else:
-        source = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") is not None else ("Yahoo Finance" if is_indian_market or is_gold_silver else "Selected market data")
-        oi_status="Not provided by source"
-        funding_rate="Not provided"
-        last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
-        if price_change>0 and last_delta>0:
-            bias_text="Price + Flow positive"
-        elif price_change<0 and last_delta<0:
-            bias_text="Price + Flow negative"
-        else:
-            bias_text="Mixed price / flow"
-        bias_desc=f"{display_name} साठी {source} source मध्ये Futures OI / Options Writing field उपलब्ध नसल्यामुळे OI वाढत आहे असा निष्कर्ष लावलेला नाही. येथे फक्त उपलब्ध price/flow context दाखवला आहे."
+        st.info("Volume Profile साठी पुरेसा data उपलब्ध नाही.")
 
-    col_oi1,col_oi2,col_oi3=st.columns(3)
-    col_oi1.metric("Open Interest Dynamics",oi_status)
-    col_oi2.metric("Funding / OI Source",funding_rate)
-    col_oi3.metric("Market Flow Context",bias_text)
-    st.info(bias_desc)
+    st.markdown("---")
+    st.markdown("### 4️⃣ **Automatic SMC Zones — Actual FVG / Order Block**")
+    st.caption("FVG = 3-candle imbalance; Order Block = opposite candle preceding a confirmed displacement move. Synthetic percentage-based zones वापरलेले नाहीत.")
+    zones=detect_smart_money_zones(flow_df) if not flow_df.empty else {"bull_fvg":None,"bear_fvg":None,"bull_ob":None,"bear_ob":None}
+    z1,z2=st.columns(2)
+    with z1:
+        if zones["bull_fvg"]:
+            q=zones["bull_fvg"]; st.success(f"Bullish FVG: {q['low']:,.2f} → {q['high']:,.2f}")
+        else: st.info("Bullish FVG not confirmed in current window")
+        if zones["bull_ob"]:
+            q=zones["bull_ob"]; st.success(f"Bullish Order Block: {q['low']:,.2f} → {q['high']:,.2f}")
+        else: st.info("Bullish Order Block not confirmed")
+    with z2:
+        if zones["bear_fvg"]:
+            q=zones["bear_fvg"]; st.error(f"Bearish FVG: {q['low']:,.2f} → {q['high']:,.2f}")
+        else: st.info("Bearish FVG not confirmed in current window")
+        if zones["bear_ob"]:
+            q=zones["bear_ob"]; st.error(f"Bearish Order Block: {q['low']:,.2f} → {q['high']:,.2f}")
+        else: st.info("Bearish Order Block not confirmed")
+
+    st.markdown("---")
+    st.markdown("### 5️⃣ **OI / Funding / Options Data Quality**")
+    if is_btc_market:
+        st.info("BTC Spot mode: actual Futures OI, Funding Rate आणि Options Writing values येथे बनावट दाखवले जात नाहीत. त्यासाठी Binance Futures/Options derivatives feed स्वतंत्रपणे जोडावा लागेल.")
+    else:
+        st.info(f"{display_name} source मध्ये Futures OI / Options Writing fields उपलब्ध नसल्यामुळे येथे फक्त price + flow context दाखवला जातो. Source: {flow_source_name}")
 
 with tab7:
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
