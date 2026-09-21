@@ -1130,6 +1130,42 @@ def build_market_flow_columns(df):
     return out
 
 
+def get_synchronized_flow_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d", live_price=None, live_ts=None):
+    """Build one synchronized OHLCV+flow frame for Tabs 2/5/6.
+
+    The previous implementation made independent Yahoo requests in different
+    tabs. A Streamlit rerun could therefore show a newer candle in one tab and
+    an older candle/flow value in another. This function fetches one frame and
+    merges the newest 1-minute quote into that same frame exactly once.
+    """
+    symbol = str(ticker_symbol).upper()
+    frame = fetch_and_resample_data(ticker_symbol, target_tf, is_indian, custom_period)
+    if symbol in {"GC=F", "SI=F"}:
+        if live_price is None or live_ts is None:
+            lp, lts = fetch_yahoo_latest_intraday(ticker_symbol)
+            if live_price is None:
+                live_price = lp
+            if live_ts is None:
+                live_ts = lts
+        if live_price is not None:
+            if frame is None or frame.empty:
+                ts = pd.Timestamp(live_ts) if live_ts is not None else pd.Timestamp(datetime.now(timezone(timedelta(hours=5, minutes=30))).replace(tzinfo=None))
+                if ts.tzinfo is not None:
+                    ts = ts.tz_convert("Asia/Kolkata").tz_localize(None)
+                minutes = {"1m":1,"2m":2,"3m":3,"5m":5,"10m":10,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440}.get(target_tf, 10)
+                elapsed = int((ts - ts.normalize()).total_seconds() // 60)
+                bucket = ts.normalize() + pd.Timedelta(minutes=(elapsed // minutes) * minutes)
+                frame = pd.DataFrame([{"timestamp":bucket,"open":float(live_price),"high":float(live_price),"low":float(live_price),"close":float(live_price),"volume":0.0}])
+            else:
+                frame = _merge_live_global_candle(frame, live_price, target_tf, live_ts)
+    if frame is None or frame.empty:
+        return None
+    frame = _normalise_ohlcv_frame(frame)
+    if frame is None or frame.empty:
+        return None
+    return build_market_flow_columns(frame)
+
+
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     """Single data path used by Tabs 2, 5 and 6.
 
@@ -2224,17 +2260,13 @@ with tab2:
     }
     selected_period = chart_period_map.get(chart_timeframe, "20d")
     
-    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
-    if is_indian_market and df_chart is not None and not df_chart.empty:
-        df_chart = _merge_live_index_candle(df_chart, current_price, chart_timeframe)
-    elif is_gold_silver:
+    if is_gold_silver:
         live_px, live_ts = fetch_yahoo_latest_intraday(ticker)
         if live_px is not None:
             current_price = live_px
-            if df_chart is None or df_chart.empty:
-                df_chart = pd.DataFrame([{"timestamp": live_ts, "open": live_px, "high": live_px, "low": live_px, "close": live_px, "volume": 0.0}])
-            df_chart = _merge_live_global_candle(df_chart, live_px, chart_timeframe, live_ts)
-    df_chart = build_market_flow_columns(df_chart) if df_chart is not None else df_chart
+        df_chart = get_synchronized_flow_data(ticker, chart_timeframe, False, selected_period, live_px, live_ts)
+    else:
+        df_chart = get_synchronized_flow_data(ticker, chart_timeframe, is_indian_market, selected_period, current_price, None)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None and not df_chart.empty else df_ltf, display_name)
 
     st.markdown("---")
@@ -2589,37 +2621,53 @@ with tab5:
             c.metric("Sell Flow",f"{z['sell_vol']:,.4f}")
             d.metric("Net Delta",f"{z['delta']:,.4f}")
     elif is_gold_silver:
-        st.markdown(f"## 📉 **Live {display_name} Flow / Decay Analytics**")
-        st.caption(f"Yahoo Finance latest 1-minute market data + {decay_tf_choice} candle flow proxy. Live candle and Flow Delta use the same synchronized source as Tabs 2 and 6.")
-        decay_df = fetch_and_resample_data(ticker, decay_tf_choice, False, custom_period="5d")
-        if decay_df is not None and not decay_df.empty:
-            decay_df = build_market_flow_columns(decay_df)
-            tail = decay_df.tail(120).copy()
+        st.markdown(f"## 📉 **Live {display_name} Flow / Footprint Analytics**")
+        st.caption(
+            f"Synchronized Yahoo Finance OHLCV + latest 1-minute quote | Timeframe: {timeframe}. "
+            "Chart, Buy Flow, Sell Flow and Net Delta are calculated from the same candle frame."
+        )
+        flow_df = get_synchronized_flow_data(
+            ticker, timeframe, False, custom_period="7d",
+            live_price=current_price,
+            live_ts=global_live_ts if 'global_live_ts' in globals() else None
+        )
+        if flow_df is not None and not flow_df.empty:
+            tail = flow_df.tail(120).copy()
             tail["timestamp"] = pd.to_datetime(tail["timestamp"], errors="coerce")
-            tail = tail.dropna(subset=["timestamp","open","high","low","close","delta"])
+            tail = tail.dropna(subset=["timestamp","open","high","low","close","delta","buy_vol","sell_vol"])
             if len(tail) > 1:
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.035, row_heights=[0.70,0.30])
                 fig.add_trace(go.Candlestick(
                     x=tail["timestamp"], open=tail["open"], high=tail["high"], low=tail["low"], close=tail["close"],
-                    name="Price", increasing_line_color="#16a34a", decreasing_line_color="#ef4444"), row=1, col=1)
+                    name=display_name, increasing_line_color="#16a34a", decreasing_line_color="#ef4444"), row=1, col=1)
                 fig.add_trace(go.Bar(
                     x=tail["timestamp"], y=tail["delta"], name="Flow Delta",
                     marker_color=["#16a34a" if float(v)>=0 else "#ef4444" for v in tail["delta"]]), row=2, col=1)
+                max_abs=float(np.nanmax(np.abs(pd.to_numeric(tail["delta"], errors="coerce"))))
+                max_abs=max(max_abs,1.0)
                 fig.update_layout(height=620, hovermode="x unified", margin=dict(l=15,r=15,t=20,b=20), xaxis_rangeslider_visible=False, showlegend=False)
                 fig.update_xaxes(rangebreaks=[dict(bounds=["sat","mon"])], showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
                 fig.update_yaxes(title_text="Price", showgrid=True, gridcolor="#e5e7eb", row=1, col=1)
-                fig.update_yaxes(title_text="Delta Proxy", showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
-                st.plotly_chart(fig, use_container_width=True, key="metal_live_flow_decay")
-                z=tail.iloc[-1]
-                a,b,c,d=st.columns(4)
-                a.metric("Live Price",f"{current_price:,.2f}")
-                b.metric("Buy Flow",f"{z['buy_vol']:,.2f}")
-                c.metric("Sell Flow",f"{z['sell_vol']:,.2f}")
-                d.metric("Flow Delta",f"{z['delta']:,.2f}")
+                fig.update_yaxes(title_text="Delta", range=[-max_abs*1.15,max_abs*1.15], showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
+                st.plotly_chart(fig, use_container_width=True, key="tab5_metal_flow_chart")
+                last=tail.iloc[-1]
+                c1,c2,c3,c4=st.columns(4)
+                c1.metric("Live Price",f"{current_price:,.2f}")
+                c2.metric("Buy Flow",f"{float(last['buy_vol']):,.4f}")
+                c3.metric("Sell Flow",f"{float(last['sell_vol']):,.4f}")
+                c4.metric("Net Delta",f"{float(last['delta']):,.4f}")
+                st.markdown("##### 🔍 Live Footprint Insights")
+                i1,i2,i3=st.columns(3)
+                i1.metric("Buyer Volume (Ask)",f"{float(last['buy_vol']):,.4f}")
+                i2.metric("Seller Volume (Bid)",f"{float(last['sell_vol']):,.4f}")
+                i3.metric("Net Delta Imbalance",f"{float(last['delta']):,.4f}",delta_color="normal")
+                if float(last["delta"])>0: st.success("🟢 Positive buying flow")
+                elif float(last["delta"])<0: st.error("🔴 Negative selling flow")
+                else: st.info("Neutral flow")
             else:
                 st.info("Gold/Silver live candles are loading…")
         else:
-            st.warning("Gold/Silver live market data is temporarily unavailable. The chart will retry on the next refresh.")
+            st.warning("Gold/Silver market data is temporarily unavailable. The app will retry on the next refresh.")
     else:
         st.markdown(f"## 📉 **Premium / Flow Decay Analytics ({display_name})**")
         x = build_market_flow_columns(df_ltf) if df_ltf is not None else None
