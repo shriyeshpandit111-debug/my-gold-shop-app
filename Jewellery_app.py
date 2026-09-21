@@ -17,9 +17,10 @@ import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
-from collections import deque
+from collections import deque, defaultdict
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
+import requests
 
 
 # --- TAB 6: ANGEL ONE LIVE BID/ASK DEPTH ENGINE ---
