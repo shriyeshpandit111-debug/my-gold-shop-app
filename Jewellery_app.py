@@ -785,6 +785,104 @@ def _normalise_ohlcv_frame(df):
     return out.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
 
 
+def fetch_yahoo_latest_intraday(ticker_symbol):
+    """Return the latest available Yahoo 1m OHLCV row for global assets.
+
+    Yahoo is not an exchange tick feed.  This helper therefore uses the latest
+    available 1-minute quote/candle and its timestamp, which lets the app
+    update the currently-forming Gold/Silver candle without inventing ticks.
+    """
+    try:
+        data = yf.download(
+            tickers=ticker_symbol,
+            period="2d",
+            interval="1m",
+            progress=False,
+            timeout=10,
+            auto_adjust=False,
+            prepost=True,
+        )
+        if data is None or data.empty:
+            return None, None
+        frame = data.reset_index()
+        if isinstance(frame.columns, pd.MultiIndex):
+            frame.columns = [col[0] if isinstance(col, tuple) else col for col in frame.columns]
+        frame = _normalise_ohlcv_frame(frame)
+        if frame is None or frame.empty:
+            return None, None
+        last = frame.iloc[-1]
+        price = float(last["close"])
+        ts = pd.Timestamp(last["timestamp"])
+        if not np.isfinite(price) or price <= 0:
+            return None, None
+        return price, ts
+    except Exception:
+        return None, None
+
+
+def _merge_live_global_candle(df, current_price, target_tf, live_timestamp=None):
+    """Merge the latest Yahoo global-asset quote into the current candle.
+
+    Only a recent quote is merged.  Stale/weekend quotes are not used to append
+    a fake candle, which prevents the large empty gaps seen in Plotly tabs.
+    """
+    if df is None or df.empty or current_price is None:
+        return df
+    try:
+        px = float(current_price)
+        if not np.isfinite(px) or px <= 0:
+            return df
+        if live_timestamp is None:
+            live_ts = pd.Timestamp(datetime.now(timezone(timedelta(hours=5, minutes=30))).replace(tzinfo=None))
+        else:
+            live_ts = pd.Timestamp(live_timestamp)
+        if live_ts.tzinfo is not None:
+            live_ts = live_ts.tz_convert("Asia/Kolkata").tz_localize(None)
+        now_ist = pd.Timestamp(datetime.now(timezone(timedelta(hours=5, minutes=30))).replace(tzinfo=None))
+        # Yahoo can return the last quote from the prior session.  Do not move
+        # that stale price into a brand-new current-day candle.
+        if live_ts > now_ist + pd.Timedelta(minutes=5) or live_ts < now_ist - pd.Timedelta(hours=3):
+            return df
+        minutes = {"1m":1,"2m":2,"3m":3,"5m":5,"10m":10,"15m":15,"30m":30,
+                   "1h":60,"2h":120,"4h":240,"1d":1440}.get(target_tf, 10)
+        day_start = live_ts.normalize()
+        elapsed = int((live_ts - day_start).total_seconds() // 60)
+        bucket = day_start + pd.Timedelta(minutes=(elapsed // minutes) * minutes)
+
+        out = df.copy()
+        out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+        if out["timestamp"].dt.tz is not None:
+            out["timestamp"] = out["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+        # Merge only if the quote belongs to a normal weekday.  Gold/Silver
+        # futures are closed over the weekend, so a weekend quote must never
+        # create a false candle.
+        if live_ts.weekday() >= 5:
+            return out
+
+        if out.empty or pd.Timestamp(out["timestamp"].iloc[-1]) < bucket:
+            new_row = {"timestamp": bucket, "open": px, "high": px, "low": px, "close": px, "volume": 0.0}
+            out = pd.concat([out, pd.DataFrame([new_row])], ignore_index=True)
+        elif pd.Timestamp(out["timestamp"].iloc[-1]) == bucket:
+            i = out.index[-1]
+            old_open = float(out.at[i, "open"])
+            old_high = float(out.at[i, "high"])
+            old_low = float(out.at[i, "low"])
+            out.at[i, "open"] = old_open
+            out.at[i, "high"] = max(old_high, px)
+            out.at[i, "low"] = min(old_low, px)
+            out.at[i, "close"] = px
+        else:
+            # Historical frame can end on a later timestamp than the quote
+            # after a refresh race; keep the exchange candle intact.
+            return out
+
+        return out.sort_values("timestamp").drop_duplicates("timestamp", keep="last").tail(20000).reset_index(drop=True)
+    except Exception:
+        return df
+
+
 def fetch_angel_historical_data(ticker_symbol, target_tf, custom_period="7d"):
     """Fetch Angel One index candles in IST, in safe chunks, and combine them."""
     smart_api = st.session_state.get("smart_api_session")
@@ -1839,6 +1937,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             
             candlestickSeries.setData(candleData);
             candlestickSeries.setMarkers(markerData);
+            chart.timeScale().fitContent();
 
             {bsl_line_js}
             {ob_lines_js}
@@ -1927,12 +2026,21 @@ elif is_indian_market:
     current_price = oi_live_data.get("live_ltp", base_price)
 else:
     current_price = base_price
+    global_live_price = None
+    global_live_ts = None
+    if is_gold_silver:
+        global_live_price, global_live_ts = fetch_yahoo_latest_intraday(ticker)
+        if global_live_price is not None:
+            current_price = global_live_price
 
 # Add the latest Angel One LTP to the currently-forming NSE candle.  This
 # keeps Tab 2 and Tab 6 from showing a stale/blank last candle between
 # historical-API responses.
 if is_indian_market and current_price and df_ltf is not None and not df_ltf.empty:
     df_ltf = _merge_live_index_candle(df_ltf, current_price, timeframe)
+    df_ltf = build_market_flow_columns(df_ltf)
+elif is_gold_silver and current_price and df_ltf is not None and not df_ltf.empty:
+    df_ltf = _merge_live_global_candle(df_ltf, current_price, timeframe, global_live_ts)
     df_ltf = build_market_flow_columns(df_ltf)
 
 # Shared price-change value used by Tabs 6-9.
@@ -2000,6 +2108,14 @@ with tab2:
     df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
     if is_indian_market and df_chart is not None and not df_chart.empty:
         df_chart = _merge_live_index_candle(df_chart, current_price, chart_timeframe)
+        df_chart = build_market_flow_columns(df_chart)
+    elif is_gold_silver and df_chart is not None and not df_chart.empty:
+        # Keep Tab 2's long history but overlay the latest Yahoo 1m quote on
+        # the currently-forming 10m/other timeframe candle.
+        live_px, live_ts = fetch_yahoo_latest_intraday(ticker)
+        if live_px is not None:
+            current_price = live_px
+            df_chart = _merge_live_global_candle(df_chart, live_px, chart_timeframe, live_ts)
         df_chart = build_market_flow_columns(df_chart)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
@@ -2355,26 +2471,32 @@ with tab5:
             c.metric("Sell Flow",f"{z['sell_vol']:,.4f}")
             d.metric("Net Delta",f"{z['delta']:,.4f}")
     else:
-        st.markdown(f"## 📉 **Price & Flow Decay Analytics ({display_name})**")
-        st.caption("GOLD / SILVER साठी Yahoo Finance OHLCV उपलब्ध आहे. या feed मध्ये exchange aggressor-side trades नसल्यामुळे खालील Buy/Sell/Delta हे deterministic candle-flow proxy आहेत; ते option premium data नाहीत.")
+        st.markdown(f"## 📉 **Premium / Flow Decay Analytics ({display_name})**")
+        st.caption("GOLD / SILVER साठी Yahoo Finance OHLCV + latest available 1-minute quote वापरला जातो. Buy/Sell/Delta हे candle-flow proxy आहेत; ते exchange aggressor-side volume किंवा option premium नाहीत.")
         x = build_market_flow_columns(df_ltf) if df_ltf is not None else None
         if x is not None and len(x) > 1:
-            tail = x.tail(120).copy()
-            tail["cum_delta"] = tail["delta"].cumsum()
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-                                row_heights=[0.72, 0.28], specs=[[{"secondary_y":False}], [{"secondary_y":False}]])
+            # Show the most recent trading candles only.  Weekend/non-trading
+            # gaps are removed from the x-axis so the chart remains readable.
+            tail = x.tail(72).copy()
+            tail["timestamp"] = pd.to_datetime(tail["timestamp"], errors="coerce")
+            tail = tail.dropna(subset=["timestamp","open","high","low","close","delta"])
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.035,
+                                row_heights=[0.70, 0.30])
             fig.add_trace(go.Candlestick(
                 x=tail["timestamp"], open=tail["open"], high=tail["high"],
-                low=tail["low"], close=tail["close"], name="Price"), row=1, col=1)
+                low=tail["low"], close=tail["close"], name="Price",
+                increasing_line_color="#16a34a", decreasing_line_color="#ef4444"), row=1, col=1)
             fig.add_trace(go.Bar(
                 x=tail["timestamp"], y=tail["delta"], name="Flow Delta",
-                marker_color=["#22c55e" if float(v) >= 0 else "#ef4444" for v in tail["delta"]]),
-                row=2, col=1)
-            fig.update_layout(height=520, hovermode="x unified", margin=dict(l=20,r=20,t=30,b=30),
+                marker_color=["#16a34a" if float(v) >= 0 else "#ef4444" for v in tail["delta"]]), row=2, col=1)
+            fig.update_layout(height=600, hovermode="x unified", margin=dict(l=15,r=15,t=20,b=20),
                               xaxis_rangeslider_visible=False, showlegend=False)
-            fig.update_yaxes(title_text="Price", row=1, col=1)
-            fig.update_yaxes(title_text="Delta Proxy", row=2, col=1)
-            st.plotly_chart(fig, use_container_width=True, key="market_flow_decay")
+            fig.update_xaxes(
+                rangebreaks=[dict(bounds=["sat", "mon"])],
+                showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
+            fig.update_yaxes(title_text="Price", showgrid=True, gridcolor="#e5e7eb", row=1, col=1)
+            fig.update_yaxes(title_text="Delta Proxy", showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
+            st.plotly_chart(fig, width="stretch", key="market_flow_decay")
             z = tail.iloc[-1]
             a,b,c,d = st.columns(4)
             a.metric("Live Price", f"{current_price:,.2f}")
@@ -2406,12 +2528,21 @@ with tab6:
     col_of1, col_of2 = st.columns([3,1])
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
-            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
-            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
-            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
-            fig_footprint.add_trace(go.Bar(x=df_of["timestamp"],y=df_of["delta"],marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],name="Flow Delta"),row=2,col=1)
-            fig_footprint.update_layout(height=520,margin=dict(l=10,r=10,t=10,b=10),showlegend=False)
-            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
+            df_of=build_market_flow_columns(df_ltf).tail(72).copy()
+            df_of["timestamp"] = pd.to_datetime(df_of["timestamp"], errors="coerce")
+            df_of = df_of.dropna(subset=["timestamp","open","high","low","close","delta"])
+            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.035,row_heights=[0.70,0.30])
+            fig_footprint.add_trace(go.Candlestick(
+                x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],
+                name=display_name,increasing_line_color="#16a34a",decreasing_line_color="#ef4444"),row=1,col=1)
+            fig_footprint.add_trace(go.Bar(
+                x=df_of["timestamp"],y=df_of["delta"],
+                marker_color=["#16a34a" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],name="Flow Delta"),row=2,col=1)
+            fig_footprint.update_layout(height=600,margin=dict(l=15,r=15,t=10,b=15),showlegend=False,hovermode="x unified")
+            fig_footprint.update_xaxes(rangebreaks=[dict(bounds=["sat","mon"])], showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
+            fig_footprint.update_yaxes(title_text="Price", showgrid=True, gridcolor="#e5e7eb", row=1, col=1)
+            fig_footprint.update_yaxes(title_text="Delta", showgrid=True, gridcolor="#e5e7eb", row=2, col=1)
+            st.plotly_chart(fig_footprint,width="stretch",key="of_footprint_chart")
             last=df_of.iloc[-1]
             c1,c2,c3,c4=st.columns(4)
             c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
