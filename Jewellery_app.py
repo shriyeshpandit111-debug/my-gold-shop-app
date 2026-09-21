@@ -229,19 +229,54 @@ class BinanceBTCStream:
         self._thread.start()
 
     def _load_history(self, limit=1000):
+        """Load approximately 20 days of 1-minute BTC history.
+
+        Binance returns at most 1000 klines per REST request, so the old
+        single-request loader could only seed about 16 hours of 1m candles
+        (or about 7 days after 5m resampling).  We page backwards until the
+        requested 20-calendar-day window is filled, then keep the WebSocket
+        running for the live/current candle.
+        """
         last_error = ""
-        params = urlencode({"symbol": self.symbol, "interval": "1m", "limit": int(limit)})
+        target_start = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=20)
+        target_start_ms = int(target_start.timestamp() * 1000)
+
         for base in self.REST_BASES:
             try:
-                url = f"{base}/api/v3/klines?{params}"
-                req = Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
-                    "Accept": "application/json",
-                })
-                with urlopen(req, timeout=12) as resp:
-                    rows = json.loads(resp.read().decode("utf-8"))
-                if not isinstance(rows, list) or not rows:
+                all_rows = []
+                end_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+                # 30 pages is enough for 20 days of 1-minute bars (28,800 bars).
+                for _ in range(35):
+                    params = urlencode({
+                        "symbol": self.symbol,
+                        "interval": "1m",
+                        "limit": 1000,
+                        "endTime": end_ms,
+                    })
+                    url = f"{base}/api/v3/klines?{params}"
+                    req = Request(url, headers={
+                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
+                        "Accept": "application/json",
+                    })
+                    with urlopen(req, timeout=12) as resp:
+                        rows = json.loads(resp.read().decode("utf-8"))
+                    if not isinstance(rows, list) or not rows:
+                        break
+                    all_rows = rows + all_rows
+                    first_open_ms = int(rows[0][0])
+                    if first_open_ms <= target_start_ms or len(rows) < 1000:
+                        break
+                    end_ms = first_open_ms - 1
+
+                if not all_rows:
                     raise RuntimeError(f"empty response from {base}")
+
+                # Deduplicate, sort, and trim exactly to the requested window.
+                unique = {int(r[0]): r for r in all_rows}
+                rows = [unique[k] for k in sorted(unique) if k >= target_start_ms]
+                if not rows:
+                    raise RuntimeError(f"no rows in 20-day window from {base}")
+
                 with self.lock:
                     self.candles_1m.clear()
                     for r in rows:
@@ -468,7 +503,7 @@ class BinanceBTCStream:
 
 @st.cache_resource(show_spinner=False)
 def get_binance_btc_engine():
-    return BinanceBTCStream("BTCUSDT", history_limit=1000)
+    return BinanceBTCStream("BTCUSDT", history_limit=28800)
 
 # Binance engine is created only after BTC is selected.
 
@@ -807,7 +842,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
     # latest candle remains genuinely live rather than being replaced by Yahoo.
     if symbol_upper in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
-            df_btc, _state = binance_btc.snapshot(target_tf, limit=2000)
+            df_btc, _state = binance_btc.snapshot(target_tf, limit=40000)
             if df_btc is not None and not df_btc.empty:
                 df_btc = _normalize_ohlcv_dataframe(df_btc)
                 return df_btc
@@ -846,7 +881,11 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
                     )
                     df = _normalize_ohlcv_dataframe(df)
                     if df is not None and not df.empty:
-                        return df.tail(4000).reset_index(drop=True)
+                        # Keep a complete 20-calendar-day window. Angel One supports
+                        # 30 days for 1-minute and more for larger intervals.
+                        cutoff = df["timestamp"].max() - pd.Timedelta(days=20)
+                        df = df[df["timestamp"] >= cutoff].reset_index(drop=True)
+                        return df
         except Exception:
             pass
 
@@ -1742,6 +1781,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             
             candlestickSeries.setData(candleData);
             candlestickSeries.setMarkers(markerData);
+            chart.timeScale().fitContent();
 
             {bsl_line_js}
             {ob_lines_js}
@@ -1760,31 +1800,36 @@ def render_tradingview_lightweight_chart(df, asset_title):
 
 
 # --- TradingView Widget function for other assets ---
-def render_tv_widget(symbol, title):
+def render_tv_widget(symbol, title, interval="5", range_value="1M"):
+    """Embed TradingView's own market-data widget for live/current market view."""
+    safe_id = symbol.replace(":", "_").replace("!", "_").replace("/", "_")
     widget_html = f"""
     <div class="tradingview-widget-container">
-      <div id="tradingview_{symbol}"></div>
+      <div id="tradingview_{safe_id}"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget({{
       "width": "100%",
-      "height": 400,
+      "height": 430,
       "symbol": "{symbol}",
-      "interval": "D",
+      "interval": "{interval}",
+      "range": "{range_value}",
       "timezone": "Asia/Kolkata",
       "theme": "dark",
       "style": "1",
       "locale": "en",
       "toolbar_bg": "#f1f3f6",
       "enable_publishing": false,
+      "hide_top_toolbar": false,
+      "hide_legend": false,
       "allow_symbol_change": true,
-      "container_id": "tradingview_{symbol}"
+      "container_id": "tradingview_{safe_id}"
       }});
       </script>
     </div>
     """
     st.markdown(f"### {title}")
-    components.html(widget_html, height=420)
+    components.html(widget_html, height=450, scrolling=False)
 
 
 df_ltf = None
@@ -1793,7 +1838,7 @@ btc_stream_state = {}
 with st.spinner("डेटा लोड होत आहे..."):
     if is_btc_market:
         binance_btc = get_binance_btc_engine()
-        df_ltf, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
+        df_ltf, btc_stream_state = binance_btc.snapshot(timeframe, limit=40000)
         df_ltf = build_market_flow_columns(df_ltf)
         if df_ltf is not None and not df_ltf.empty:
             daily_trend = (
@@ -1814,7 +1859,7 @@ base_price = (
 )
 
 if is_btc_market and binance_btc is not None:
-    _btc_df_now, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
+    _btc_df_now, btc_stream_state = binance_btc.snapshot(timeframe, limit=40000)
     current_price = float(btc_stream_state.get("last_price") or base_price)
     # Keep the legacy state name available to the existing Tab 4 logic.
     st.session_state["btc_ws_data"] = {
@@ -1876,7 +1921,7 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-    st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा — NIFTY, BANK NIFTY, BTC, GOLD आणि SILVER साठी. नवीन उपलब्ध candle प्रत्येक auto-refresh वर अपडेट होते; सर्व chart time Indian Standard Time (IST) मध्ये आहेत.")
+    st.caption("मागील २० दिवसांचा कॅन्डल डेटा — NIFTY/BANK NIFTY (Angel One historical API), BTC (Binance 1-minute history + live WebSocket), आणि Gold/Silver साठी खाली TradingView MCX continuous-futures live charts. सर्व chart time IST मध्ये आहेत.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
     with col_tf1:
@@ -1903,18 +1948,19 @@ with tab2:
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
-    st.markdown("### 🌎 Global Asset Live Charts")
+    st.markdown("### 🌎 Live Market Reference Charts")
+    st.caption("Gold/Silver साठी खालील live reference charts TradingView च्या MCX continuous futures symbols वर आहेत. त्यामुळे Yahoo GC=F/SI=F च्या जुन्या candle वर अवलंबून राहावे लागत नाही.")
     c1, c2 = st.columns(2)
     with c1:
-        render_tv_widget("TVC:GOLD", "Gold Live Chart")
+        render_tv_widget("MCX:GOLD1!", "🟡 MCX Gold Futures — Live TradingView Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     with c2:
-        render_tv_widget("TVC:SILVER", "Silver Live Chart")
+        render_tv_widget("MCX:SILVER1!", "⚪ MCX Silver Futures — Live TradingView Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     
     c3, c4 = st.columns(2)
     with c3:
-        render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
+        render_tv_widget("BINANCE:BTCUSDT", "₿ Bitcoin (BTC/USDT) Live Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
     with c4:
-        render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
+        render_tv_widget("NSE:NIFTY", "🇮🇳 Nifty 50 Live Chart", interval={"1m":"1","2m":"3","3m":"3","5m":"5","10m":"10","15m":"15","30m":"30","1h":"60","2h":"120","4h":"240","1d":"D"}.get(chart_timeframe,"5"), range_value="1M")
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
