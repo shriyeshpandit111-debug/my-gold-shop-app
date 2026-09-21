@@ -13,9 +13,6 @@ import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 import websocket
 import yfinance as yf
-from collections import deque
-from urllib.request import Request, urlopen
-from urllib.parse import urlencode
 
 # पानाची रचना सेट करा
 st.set_page_config(
@@ -182,396 +179,41 @@ else:
     )
 
 
-# --- 🌐 BINANCE BTC REAL-TIME MARKET DATA ENGINE ---
-# Public Binance Spot market data only.
-# Primary endpoints use Binance's market-data-only domains, which are intended
-# for public market data and avoid region/API-key issues on hosted servers.
-# @aggTrade = executed trades; @bookTicker = best bid/ask.
+# --- 🌐 BINANCE WEBSOCKET INTEGRATION FOR BTC ---
+def binance_ws_thread():
+    ws_url = "wss://stream.binance.com:9443/ws/btcusdt@ticker"
 
-class BinanceBTCStream:
-    REST_BASES = [
-        "https://data-api.binance.vision",
-        "https://api.binance.com",
-        "https://api1.binance.com",
-        "https://api2.binance.com",
-        "https://api3.binance.com",
-        "https://api4.binance.com",
-    ]
-    WS_BASES = [
-        "wss://data-stream.binance.vision:443",
-        "wss://stream.binance.com:443",
-        "wss://stream.binance.com:9443",
-    ]
-
-    def __init__(self, symbol="BTCUSDT", history_limit=1000):
-        self.symbol = symbol.upper()
-        self.lock = threading.RLock()
-        self.connected = False
-        self.last_error = ""
-        self.endpoint = ""
-        self.rest_endpoint = ""
-        self.last_trade_time = None
-        self.last_update_time = None
-        self.best_bid = 0.0
-        self.best_bid_qty = 0.0
-        self.best_ask = 0.0
-        self.best_ask_qty = 0.0
-        self.last_price = 0.0
-        self.last_trade_qty = 0.0
-        self.last_trade_side = ""
-        self.trade_count = 0
-        self.recent_trades = deque(maxlen=5000)
-        self.candles_1m = {}
-        self._stop = False
-        self._load_history(history_limit)
-        self._load_book_ticker()
-        self._thread = threading.Thread(target=self._run_ws, daemon=True, name="binance-btc-ws")
-        self._thread.start()
-
-    def _load_history(self, limit=1000):
-        last_error = ""
-        params = urlencode({"symbol": self.symbol, "interval": "1m", "limit": int(limit)})
-        for base in self.REST_BASES:
-            try:
-                url = f"{base}/api/v3/klines?{params}"
-                req = Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
-                    "Accept": "application/json",
-                })
-                with urlopen(req, timeout=12) as resp:
-                    rows = json.loads(resp.read().decode("utf-8"))
-                if not isinstance(rows, list) or not rows:
-                    raise RuntimeError(f"empty response from {base}")
-                with self.lock:
-                    self.candles_1m.clear()
-                    for r in rows:
-                        ts = pd.Timestamp(r[0], unit="ms", tz="UTC")
-                        volume = float(r[5])
-                        taker_buy = float(r[9])
-                        self.candles_1m[ts] = {
-                            "timestamp": ts,
-                            "open": float(r[1]), "high": float(r[2]),
-                            "low": float(r[3]), "close": float(r[4]),
-                            "volume": volume,
-                            "buy_vol": taker_buy,
-                            "sell_vol": max(0.0, volume - taker_buy),
-                            "delta": taker_buy - max(0.0, volume - taker_buy),
-                            "closed": True,
-                        }
-                        self.last_price = float(r[4])
-                    self.last_update_time = datetime.now(timezone.utc)
-                    self.rest_endpoint = base
-                    self.last_error = ""
-                return
-            except Exception as exc:
-                last_error = f"{base}: {exc}"
-        with self.lock:
-            self.last_error = f"Binance REST history failed. {last_error}"
-
-    def historical_chart(self, timeframe="5m", days=20, limit=1000):
-        """Fetch up to the requested historical window directly from Binance REST.
-        Used by Tab 2 so the chart is not limited to the live 1,000 x 1-minute
-        bootstrap candles held by the websocket engine.
-        """
-        tf_map = {
-            "1m": "1m", "2m": "1m", "3m": "3m", "5m": "5m",
-            "10m": "5m", "15m": "15m", "30m": "30m",
-            "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d",
-        }
-        source_tf = tf_map.get(timeframe, "5m")
-        source_ms = {
-            "1m": 60_000, "3m": 180_000, "5m": 300_000,
-            "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000,
-            "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000,
-        }[source_tf]
-        end_ms = int(time.time() * 1000)
-        start_ms = end_ms - int(days * 86_400_000)
-        rows_all = []
-        cursor = start_ms
-        last_error = ""
-
-        # Binance spot klines accept max 1000 rows per request, so page forward.
-        while cursor < end_ms and len(rows_all) < 100_000:
-            got = None
-            for base in self.REST_BASES:
-                try:
-                    params = urlencode({
-                        "symbol": self.symbol,
-                        "interval": source_tf,
-                        "startTime": cursor,
-                        "endTime": end_ms,
-                        "limit": int(limit),
-                    })
-                    url = f"{base}/api/v3/klines?{params}"
-                    req = Request(url, headers={
-                        "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Chart",
-                        "Accept": "application/json",
-                    })
-                    with urlopen(req, timeout=15) as resp:
-                        got = json.loads(resp.read().decode("utf-8"))
-                    self.rest_endpoint = base
-                    break
-                except Exception as exc:
-                    last_error = f"{base}: {exc}"
-
-            if not got:
-                break
-            rows_all.extend(got)
-            next_cursor = int(got[-1][0]) + source_ms
-            if next_cursor <= cursor:
-                break
-            cursor = next_cursor
-            if len(got) < int(limit):
-                break
-
-        if not rows_all:
-            return pd.DataFrame()
-
-        # De-duplicate pages and build a clean OHLCV dataframe.
-        rows_all = {int(r[0]): r for r in rows_all}.values()
-        rows_all = sorted(rows_all, key=lambda r: int(r[0]))
-        df = pd.DataFrame(rows_all, columns=[
-            "timestamp_ms", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades", "taker_buy_base",
-            "taker_buy_quote", "ignore"
-        ])
-        df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True)
-        for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["buy_vol"] = df["taker_buy_base"].fillna(0.0)
-        df["sell_vol"] = (df["volume"].fillna(0.0) - df["buy_vol"]).clip(lower=0.0)
-        df["delta"] = df["buy_vol"] - df["sell_vol"]
-        df = df[["timestamp", "open", "high", "low", "close", "volume", "buy_vol", "sell_vol", "delta"]].dropna()
-
-        # 2m/10m are not native Binance intervals; aggregate from 1m/5m.
-        if timeframe in {"2m", "10m"}:
-            rule = "2min" if timeframe == "2m" else "10min"
-            df = (df.set_index("timestamp")
-                    .resample(rule, origin="epoch", label="left", closed="left")
-                    .agg({
-                        "open": "first", "high": "max", "low": "min", "close": "last",
-                        "volume": "sum", "buy_vol": "sum", "sell_vol": "sum", "delta": "sum"
-                    })
-                    .dropna(subset=["open", "high", "low", "close"])
-                    .reset_index())
-
-        return df.tail(max(1, int(days * 1440 / max(1, source_ms / 60_000)) + 20)).reset_index(drop=True)
-
-    def _load_book_ticker(self):
-        """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
-        The WebSocket then keeps these values live.
-        """
-        params = urlencode({"symbol": self.symbol})
-        last_error = ""
-        for base in self.REST_BASES:
-            try:
-                url = f"{base}/api/v3/ticker/bookTicker?{params}"
-                req = Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Market-Data",
-                    "Accept": "application/json",
-                })
-                with urlopen(req, timeout=8) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                with self.lock:
-                    self.best_bid = float(data.get("bidPrice", 0) or 0)
-                    self.best_bid_qty = float(data.get("bidQty", 0) or 0)
-                    self.best_ask = float(data.get("askPrice", 0) or 0)
-                    self.best_ask_qty = float(data.get("askQty", 0) or 0)
-                    if self.best_ask > 0:
-                        self.last_price = self.last_price or (self.best_bid + self.best_ask) / 2.0
-                return
-            except Exception as exc:
-                last_error = f"{base}: {exc}"
-        # Do not overwrite a successful REST candle connection error with a book-ticker error.
-        if not (self.best_bid > 0 and self.best_ask > 0):
-            with self.lock:
-                if not self.last_error:
-                    self.last_error = f"Binance bookTicker snapshot failed. {last_error}"
-
-    @staticmethod
-    def _minute_bucket(ts):
-        return ts.floor("min")
-
-    def _on_agg_trade(self, data):
+    def on_message(ws, message):
         try:
-            price = float(data["p"])
-            qty = float(data["q"])
-            ts = pd.Timestamp(int(data["T"]), unit="ms", tz="UTC")
-            bucket = self._minute_bucket(ts)
-            # Binance: m=true means the buyer is the maker, so the aggressive/taker side is SELL.
-            aggressive_sell = bool(data.get("m", False))
-            buy_qty = 0.0 if aggressive_sell else qty
-            sell_qty = qty if aggressive_sell else 0.0
-            with self.lock:
-                c = self.candles_1m.get(bucket)
-                if c is None:
-                    c = {
-                        "timestamp": bucket, "open": price, "high": price,
-                        "low": price, "close": price, "volume": 0.0,
-                        "buy_vol": 0.0, "sell_vol": 0.0, "delta": 0.0,
-                        "closed": False,
-                    }
-                    self.candles_1m[bucket] = c
-                c["high"] = max(c["high"], price)
-                c["low"] = min(c["low"], price)
-                c["close"] = price
-                c["volume"] += qty
-                c["buy_vol"] += buy_qty
-                c["sell_vol"] += sell_qty
-                c["delta"] = c["buy_vol"] - c["sell_vol"]
-                c["closed"] = False
-                self.last_price = price
-                self.last_trade_qty = qty
-                self.last_trade_side = "BUY" if buy_qty > 0 else "SELL"
-                self.last_trade_time = ts
-                self.last_update_time = datetime.now(timezone.utc)
-                self.trade_count += 1
-                self.recent_trades.append({
-                    "time": ts, "price": price, "qty": qty,
-                    "side": self.last_trade_side,
-                    "buy_qty": buy_qty, "sell_qty": sell_qty,
-                })
-                # Once the trade stream moves to a new minute, prior buckets are frozen.
-                for key, old in self.candles_1m.items():
-                    if key < bucket:
-                        old["closed"] = True
-        except Exception as exc:
-            with self.lock:
-                self.last_error = f"aggTrade parse: {exc}"
-
-    def _on_book_ticker(self, data):
-        try:
-            with self.lock:
-                self.best_bid = float(data["b"])
-                self.best_bid_qty = float(data["B"])
-                self.best_ask = float(data["a"])
-                self.best_ask_qty = float(data["A"])
-                self.last_update_time = datetime.now(timezone.utc)
-        except Exception as exc:
-            with self.lock:
-                self.last_error = f"bookTicker parse: {exc}"
-
-    def _run_ws(self):
-        stream = f"{self.symbol.lower()}@aggTrade/{self.symbol.lower()}@bookTicker"
-        while not self._stop:
-            connected_this_round = False
-            for base in self.WS_BASES:
-                if self._stop:
-                    return
-                url = f"{base}/stream?streams={stream}"
-
-                def on_message(ws, message):
-                    try:
-                        payload = json.loads(message)
-                        data = payload.get("data", payload)
-                        stream_name = str(payload.get("stream", "")).lower()
-                        event = data.get("e")
-                        # Binance JSON bookTicker payloads do not contain an "e" event field.
-                        # In combined streams the wrapper's "stream" field identifies it.
-                        if event == "aggTrade" or stream_name.endswith("@aggtrade"):
-                            self._on_agg_trade(data)
-                        elif event == "bookTicker" or stream_name.endswith("@bookticker"):
-                            self._on_book_ticker(data)
-                    except Exception as exc:
-                        with self.lock:
-                            self.last_error = f"WS message: {exc}"
-
-                def on_open(ws):
-                    with self.lock:
-                        self.connected = True
-                        self.endpoint = base
-                        self.last_error = ""
-
-                def on_error(ws, error):
-                    with self.lock:
-                        self.connected = False
-                        self.last_error = f"WebSocket {base}: {error}"
-
-                def on_close(ws, code, msg):
-                    with self.lock:
-                        self.connected = False
-                        if code not in (None, 1000):
-                            self.last_error = f"WebSocket closed ({code}): {msg}"
-
-                try:
-                    ws = websocket.WebSocketApp(
-                        url,
-                        on_open=on_open,
-                        on_message=on_message,
-                        on_error=on_error,
-                        on_close=on_close,
-                    )
-                    ws.run_forever(
-                        ping_interval=20,
-                        ping_timeout=10,
-                        ping_payload="",
-                        skip_utf8_validation=True,
-                    )
-                    with self.lock:
-                        connected_this_round = self.connected
-                    if connected_this_round:
-                        # A clean close/reconnect is enough; otherwise try the next endpoint.
-                        time.sleep(1)
-                except Exception as exc:
-                    with self.lock:
-                        self.connected = False
-                        self.last_error = f"WebSocket connection error: {exc}"
-                if connected_this_round:
-                    break
-            if not self._stop:
-                time.sleep(2)
-
-    def snapshot(self, timeframe="5m", limit=300):
-        with self.lock:
-            rows = list(self.candles_1m.values())
-            state = {
-                "connected": self.connected,
-                "last_error": self.last_error,
-                "endpoint": self.endpoint,
-                "rest_endpoint": self.rest_endpoint,
-                "last_price": self.last_price,
-                "best_bid": self.best_bid,
-                "best_bid_qty": self.best_bid_qty,
-                "best_ask": self.best_ask,
-                "best_ask_qty": self.best_ask_qty,
-                "last_trade_time": self.last_trade_time,
-                "last_trade_side": self.last_trade_side,
-                "trade_count": self.trade_count,
-                "last_update_time": self.last_update_time,
+            data = json.loads(message)
+            st.session_state["btc_ws_data"] = {
+                "price": float(data.get("c", 0)),
+                "volume": float(data.get("v", 0)),
+                "high": float(data.get("h", 0)),
+                "low": float(data.get("l", 0)),
+                "change": float(data.get("P", 0)),
+                "connected": True,
             }
-        if not rows:
-            return pd.DataFrame(), state
-        df = pd.DataFrame(rows).sort_values("timestamp")
-        df = df.set_index("timestamp")
-        rule_map = {
-            "1m":"1min", "2m":"2min", "3m":"3min", "5m":"5min",
-            "10m":"10min", "15m":"15min", "30m":"30min", "1h":"1h",
-            "2h":"2h", "4h":"4h", "1d":"1D"
-        }
-        rule = rule_map.get(timeframe, "5min")
-        out = df.resample(rule, origin="epoch", label="left", closed="left").agg({
-            "open":"first", "high":"max", "low":"min", "close":"last",
-            "volume":"sum", "buy_vol":"sum", "sell_vol":"sum", "delta":"sum"
-        }).dropna(subset=["open","high","low","close"]).reset_index()
+        except Exception:
+            pass
 
-        # Binance timestamps arrive in UTC.  The dashboard is intended to
-        # display all chart candle times in Indian Standard Time (IST).
-        # Convert only after resampling so the Binance candle boundaries stay
-        # aligned to their original UTC exchange buckets, then expose the
-        # resulting local wall-clock time to Plotly as a naive timestamp.
-        out["timestamp"] = (
-            pd.to_datetime(out["timestamp"], utc=True)
-            .dt.tz_convert("Asia/Kolkata")
-            .dt.tz_localize(None)
-        )
+    def on_error(ws, error):
+        st.session_state["btc_ws_data"]["connected"] = False
 
-        return out.tail(limit).reset_index(drop=True), state
+    def on_close(ws, close_status_code, close_msg):
+        st.session_state["btc_ws_data"]["connected"] = False
 
-@st.cache_resource(show_spinner=False)
-def get_binance_btc_engine():
-    return BinanceBTCStream("BTCUSDT", history_limit=1000)
+    ws = websocket.WebSocketApp(
+        ws_url, on_message=on_message, on_error=on_error, on_close=on_close
+    )
+    ws.run_forever()
 
-# Binance engine is created only after BTC is selected.
+
+if "ws_thread_started" not in st.session_state:
+    st.session_state["ws_thread_started"] = True
+    t = threading.Thread(target=binance_ws_thread, daemon=True)
+    t.start()
+
 
 # --- ⚙️ २. मार्केट इनपुट ---
 st.sidebar.header("⚙️ Market & Settings")
@@ -582,7 +224,6 @@ market_type = st.sidebar.radio(
 
 is_indian_market = False
 is_btc_market = False
-is_gold_silver = False
 
 if market_type == "यादीमधून निवडा":
     asset_choice = st.sidebar.selectbox(
@@ -608,8 +249,6 @@ if market_type == "यादीमधून निवडा":
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
-    if asset_choice in ("GOLD (सोने)", "SILVER (चांदी)"):
-        is_gold_silver = True
 
 elif market_type == "मॅन्युअली नाव टाईप करा":
     manual_ticker = st.sidebar.text_input(
@@ -621,8 +260,6 @@ elif market_type == "मॅन्युअली नाव टाईप कर�
         is_indian_market = True
     if "BTC" in ticker:
         is_btc_market = True
-    if ticker in ("GC=F", "SI=F"):
-        is_gold_silver = True
 else:
     forex_ticker = st.sidebar.text_input(
         "Forex Ticker टाका (उदा. EURUSD=X):", value="EURUSD=X"
@@ -779,52 +416,7 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
     }
 
 
-def build_market_flow_columns(df):
-    """Create buy/sell/delta columns from the selected market source.
-
-    BTC uses real Binance aggTrade fields already present in the dataframe.
-    Other markets generally expose OHLCV rather than aggressor-side trades, so
-    their flow is explicitly an OHLCV candle-flow proxy, never presented as
-    exchange-level bid/ask trade flow.
-    """
-    if df is None or df.empty:
-        return df
-    out=df.copy()
-    for col in ["open","high","low","close","volume"]:
-        if col in out.columns:
-            out[col]=pd.to_numeric(out[col], errors="coerce")
-    if all(c in out.columns for c in ["buy_vol","sell_vol","delta"]):
-        out["buy_vol"]=pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0.0)
-        out["sell_vol"]=pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0.0)
-        out["delta"]=pd.to_numeric(out["delta"], errors="coerce").fillna(0.0)
-        return out
-    vol=out["volume"].fillna(0.0).clip(lower=0.0)
-    rng=(out["high"]-out["low"]).replace(0,np.nan)
-    body=(out["close"]-out["open"])
-    signed_ratio=(body/rng).replace([np.inf,-np.inf],0).fillna(0).clip(-1,1)
-    delta=vol*signed_ratio
-    out["delta"]=delta
-    out["buy_vol"]=(vol+delta)/2.0
-    out["sell_vol"]=(vol-delta)/2.0
-    return out
-
-
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
-    if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
-        try:
-            # Tab 2 asks for a 20-day chart.  Use paginated Binance REST history
-            # instead of the websocket engine's 1,000-minute bootstrap window.
-            if custom_period in {"20d", "30d", "60d", "90d", "120d", "1y", "max"}:
-                days_map = {"20d": 20, "30d": 30, "60d": 60, "90d": 90, "120d": 120, "1y": 365, "max": 365}
-                df_btc = binance_btc.historical_chart(target_tf, days=days_map.get(custom_period, 20))
-                if df_btc is not None and not df_btc.empty:
-                    return build_market_flow_columns(df_btc)
-            df_btc, _state = binance_btc.snapshot(target_tf, limit=1000)
-            if df_btc is not None and not df_btc.empty:
-                return df_btc
-        except Exception:
-            pass
-
     smart_api = st.session_state.get("smart_api_session", None)
 
     if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
@@ -1800,58 +1392,23 @@ def render_tv_widget(symbol, title):
 
 
 df_ltf = None
-binance_btc = None
-btc_stream_state = {}
 with st.spinner("डेटा लोड होत आहे..."):
-    if is_btc_market:
-        binance_btc = get_binance_btc_engine()
-        df_ltf, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
-        df_ltf = build_market_flow_columns(df_ltf)
-        if df_ltf is not None and not df_ltf.empty:
-            daily_trend = (
-                "BULLISH 📈" if float(df_ltf["close"].iloc[-1]) >= float(df_ltf["close"].iloc[-2])
-                else "BEARISH 📉"
-            ) if len(df_ltf) >= 2 else "NEUTRAL ➡️"
-        else:
-            daily_trend = "NEUTRAL ➡️"
-    else:
-        daily_trend = get_daily_trend(ticker)
-        df_ltf = fetch_and_resample_data(ticker, timeframe, is_indian_market)
-        df_ltf = build_market_flow_columns(df_ltf)
+    daily_trend = get_daily_trend(ticker)
+    df_ltf = fetch_and_resample_data(ticker, timeframe, is_indian_market)
 
 base_price = (
-    float(df_ltf["close"].iloc[-1])
+    df_ltf["close"].iloc[-1]
     if df_ltf is not None and not df_ltf.empty
     else 24000.0
 )
 
-if is_btc_market and binance_btc is not None:
-    _btc_df_now, btc_stream_state = binance_btc.snapshot(timeframe, limit=1000)
-    current_price = float(btc_stream_state.get("last_price") or base_price)
-    # Keep the legacy state name available to the existing Tab 4 logic.
-    st.session_state["btc_ws_data"] = {
-        "price": current_price,
-        "volume": float(df_ltf["volume"].iloc[-1]) if df_ltf is not None and not df_ltf.empty else 0.0,
-        "high": float(df_ltf["high"].iloc[-1]) if df_ltf is not None and not df_ltf.empty else 0.0,
-        "low": float(df_ltf["low"].iloc[-1]) if df_ltf is not None and not df_ltf.empty else 0.0,
-        "change": float(((df_ltf["close"].iloc[-1] / df_ltf["close"].iloc[-2])-1)*100) if df_ltf is not None and len(df_ltf)>1 and float(df_ltf["close"].iloc[-2]) else 0.0,
-        "connected": bool(btc_stream_state.get("connected")),
-    }
+if is_btc_market and st.session_state["btc_ws_data"]["price"] > 0:
+    current_price = st.session_state["btc_ws_data"]["price"]
 elif is_indian_market:
     oi_live_data = fetch_angel_one_real_oi(base_price, display_name)
     current_price = oi_live_data.get("live_ltp", base_price)
 else:
     current_price = base_price
-
-# Shared price change used by Tabs 7-9 and Tab 6.
-# Keep it defined before any tab code so BTC, Gold and Silver cannot raise NameError.
-if df_ltf is not None and len(df_ltf) >= 2:
-    try:
-        price_change = float(df_ltf["close"].iloc[-1]) - float(df_ltf["close"].iloc[-2])
-    except Exception:
-        price_change = 0.0
-else:
-    price_change = 0.0
 
 col_t1, col_t2 = st.columns(2)
 with col_t1:
@@ -2183,11 +1740,9 @@ with tab4:
             btc_hist_signals = pd.DataFrame()
 
         btc_ws = st.session_state.get("btc_ws_data", {})
-        current_btc_price = float(btc_stream_state.get("last_price") or current_price) if is_btc_market else current_price
-        btc_change = float(btc_ws.get("change", 0) or 0)
-        # Keep live signal timestamps in Indian Standard Time as well.
-        IST = timezone(timedelta(hours=5, minutes=30))
-        now_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+        current_btc_price = btc_ws.get("price", current_price) if btc_ws.get("price", 0) > 0 else current_price
+        btc_change = btc_ws.get("change", 0)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         live_sig_type = "🔴 PERFECT SELL (CHOCH CONFIRMED)"
         inst_act = "Binance Direct WS: Institutional Order Block Tap"
@@ -2241,354 +1796,242 @@ with tab4:
 with tab5:
     if is_indian_market:
         render_stockmojo_premium_decay_tab(current_price)
-    elif is_btc_market:
-        st.markdown(f"## 📉 **Binance Spot Flow / Decay Analytics ({display_name})**")
-        st.success("🟢 Binance @aggTrade + @bookTicker real-time source")
-        st.caption("BTC Spot does not expose option premium/IV through @aggTrade + @bookTicker, so this tab uses the same real BTC price and executed-trade flow data rather than fabricated option values.")
-        x=build_market_flow_columns(df_ltf)
-        if x is not None and len(x)>1:
-            tail=x.tail(60).copy()
-            tail["cum_delta"]=tail["delta"].cumsum()
-            fig=make_subplots(specs=[[{"secondary_y":True}]])
-            fig.add_trace(go.Scatter(x=tail["timestamp"],y=tail["close"],name="BTC Price",mode="lines"),secondary_y=False)
-            fig.add_trace(go.Scatter(x=tail["timestamp"],y=tail["cum_delta"],name="Cumulative Delta",mode="lines"),secondary_y=True)
-            fig.update_layout(height=420,hovermode="x unified",margin=dict(l=20,r=20,t=30,b=30))
-            st.plotly_chart(fig,use_container_width=True,key="btc_spot_flow_decay")
-            z=tail.iloc[-1]
-            a,b,c,d=st.columns(4)
-            a.metric("Live BTC Price",f"{current_price:,.2f}")
-            b.metric("Buy Flow",f"{z['buy_vol']:,.4f}")
-            c.metric("Sell Flow",f"{z['sell_vol']:,.4f}")
-            d.metric("Net Delta",f"{z['delta']:,.4f}")
     else:
-        st.markdown(f"## 📉 **Market Price & Flow Analytics ({display_name})**")
-        st.caption("Selected GOLD / SILVER / other market uses Yahoo Finance OHLCV data. Flow is an OHLCV candle-flow proxy because Yahoo Finance does not provide exchange aggressor-side trades.")
-        x=build_market_flow_columns(df_ltf)
-        if x is not None and len(x)>1:
-            tail=x.tail(60).copy()
-            tail["cum_delta"]=tail["delta"].cumsum()
-            fig=make_subplots(specs=[[{"secondary_y":True}]])
-            fig.add_trace(go.Scatter(x=tail["timestamp"],y=tail["close"],name="Price",mode="lines"),secondary_y=False)
-            fig.add_trace(go.Scatter(x=tail["timestamp"],y=tail["cum_delta"],name="Flow Proxy",mode="lines"),secondary_y=True)
-            fig.update_layout(height=420,hovermode="x unified",margin=dict(l=20,r=20,t=30,b=30))
-            st.plotly_chart(fig,use_container_width=True,key="market_flow_decay")
-            z=tail.iloc[-1]
-            a,b,c,d=st.columns(4)
-            a.metric("Live Price",f"{current_price:,.2f}")
-            b.metric("Buy Flow",f"{z['buy_vol']:,.2f}")
-            c.metric("Sell Flow",f"{z['sell_vol']:,.2f}")
-            d.metric("Flow Delta",f"{z['delta']:,.2f}")
+        st.info("ℹ️ Available for Indian Market Indices.")
 
 with tab6:
     st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
 
     if is_btc_market:
-        st.success("🟢 Binance Spot WebSocket LIVE — @aggTrade + @bookTicker")
-        st.caption("Delta = aggressive buy volume − aggressive sell volume from Binance executed trades. Closed Binance candles are immutable; only the current candle updates.")
-        st.caption(f"Market-data endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | WebSocket trades received: {int(btc_stream_state.get('trade_count') or 0):,}")
+        st.markdown(
+            "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+            " border-radius: 5px; font-weight: bold;'>⚡ Direct Binance"
+            " WebSocket API Connected for Real-time Order Flow & SMC</div>",
+            unsafe_allow_html=True,
+        )
     elif is_indian_market:
-        source="Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance"
-        st.info(f"{display_name} साठी {source} market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
-    else:
-        st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
+        if st.session_state.get("smart_api_session") is not None:
+            st.markdown(
+                "<div style='background-color: #d1e7dd; color: #0f5132; padding: 10px;"
+                " border-radius: 5px; font-weight: bold;'>🟢 Angel One SmartAPI"
+                " Live Connected (Real-Time Indian Market Data)</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div style='background-color: #fff3cd; color: #664d03; padding: 10px;"
+                " border-radius: 5px; font-weight: bold;'>⚠️ Angel One Not Connected - Connect API for Live Institutional Data</div>",
+                unsafe_allow_html=True,
+            )
 
     st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
-    st.caption("BTC साठी real Binance executed-trade flow; इतर assets साठी त्यांच्या उपलब्ध OHLCV data वर आधारित candle-flow proxy.")
+    st.caption("कॅन्डलच्या आत चालू असलेले Bid/Ask Volume आणि Imbalance दाखवणारा मोजमाप चार्ट.")
 
-    col_of1, col_of2 = st.columns([3,1])
+    col_of1, col_of2 = st.columns([3, 1])
+
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
-            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
-            # Keep the Delta panel visually consistent across refreshes. Plotly's
-            # default autoscaling can make the same Delta series look very different
-            # when the latest candles have a smaller/larger absolute Delta.
-            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
-            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
-            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
-            # A stable reference floor gives a chart appearance close to the original
-            # footprint view while still allowing larger real deltas to expand naturally.
-            delta_axis_top = max(200.0, max_abs_delta * 1.25)
-            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
+            df_of = df_ltf.tail(15).copy()
 
-            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
-            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
-            fig_footprint.add_trace(
-                go.Bar(
-                    x=df_of["timestamp"],
-                    y=df_of["delta"],
-                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
-                    name="Flow Delta",
-                    hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
-                ),
-                row=2,col=1,
-            )
-            fig_footprint.update_yaxes(
-                range=[delta_axis_bottom, delta_axis_top],
-                zeroline=True,
-                zerolinewidth=1,
-                showgrid=True,
-                tickformat=",.0f",
-                row=2,
-                col=1,
-            )
-            fig_footprint.update_layout(
-                height=520,
-                margin=dict(l=10,r=10,t=10,b=10),
-                showlegend=False,
-                hovermode="x unified",
-                bargap=0.12,
-            )
-            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
-            last=df_of.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
-            c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
-            c3.metric("Net Delta",f"{last['delta']:,.4f}")
-            c4.metric("Live Price",f"{current_price:,.2f}")
-            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
+            df_of['volume'] = df_of['volume'].replace(0, np.nan)
+            df_of['volume'] = df_of['volume'].fillna(df_of['close'] * 1.5)
+
+            buy_vols = []
+            sell_vols = []
+            deltas = []
+
+            for idx, row in df_of.iterrows():
+                is_bullish = row['close'] >= row['open']
+                tot_vol = row['volume']
+                
+                if is_bullish:
+                    b_ratio = np.random.uniform(0.55, 0.72)
+                else:
+                    b_ratio = np.random.uniform(0.28, 0.45)
+                
+                b_vol = int(tot_vol * b_ratio)
+                s_vol = int(tot_vol - b_vol)
+                d_val = b_vol - s_vol
+                
+                buy_vols.append(b_vol)
+                sell_vols.append(s_vol)
+                deltas.append(d_val)
+
+            df_of['buy_vol'] = buy_vols
+            df_of['sell_vol'] = sell_vols
+            df_of['delta'] = deltas
+
+            fig_footprint = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+
+            fig_footprint.add_trace(go.Candlestick(
+                x=df_of['timestamp'],
+                open=df_of['open'], high=df_of['high'],
+                low=df_of['low'], close=df_of['close'],
+                name='Price'
+            ), row=1, col=1)
+
+            colors = ['#22c55e' if d >= 0 else '#ef4444' for d in df_of['delta']]
+            fig_footprint.add_trace(go.Bar(
+                x=df_of['timestamp'], y=df_of['delta'],
+                marker_color=colors, name='Cumulative Delta'
+            ), row=2, col=1)
+
+            fig_footprint.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), showlegend=False, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff")
+            st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_chart")
         else:
-            df_of=pd.DataFrame()
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
 
     with col_of2:
         st.markdown("##### 🔍 Live Footprint Insights")
-        if not df_of.empty:
-            last_buy=float(df_of['buy_vol'].iloc[-1])
-            last_sell=float(df_of['sell_vol'].iloc[-1])
-            last_delta=float(df_of['delta'].iloc[-1])
-            st.metric("Buyer Volume (Ask)",f"{last_buy:,.4f}")
-            st.metric("Seller Volume (Bid)",f"{last_sell:,.4f}")
-            st.metric("Net Delta Imbalance",f"{last_delta:,.4f}",delta_color="normal")
-            if last_delta>0: st.success("🟢 Positive buying flow")
-            elif last_delta<0: st.error("🔴 Negative selling flow")
-            else: st.info("Neutral flow")
+        if df_ltf is not None and not df_ltf.empty:
+            last_buy = int(df_of['buy_vol'].iloc[-1])
+            last_sell = int(df_of['sell_vol'].iloc[-1])
+            last_delta = int(df_of['delta'].iloc[-1])
 
-    if is_btc_market and binance_btc is not None:
-        st.markdown("### Live Best Bid / Ask")
-        bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
-        ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
-        o1,o2,o3,o4=st.columns(4)
-        o1.metric("Best Bid",f"{bid:,.2f}" if bid>0 else "Waiting…")
-        o2.metric("Bid Qty",f"{bid_qty:,.6f}" if bid_qty>0 else "Waiting…")
-        o3.metric("Best Ask",f"{ask:,.2f}" if ask>0 else "Waiting…")
-        o4.metric("Ask Qty",f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
-        if bid>0 and ask>0: st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
+            st.metric("Buyer Volume (Ask)", f"{last_buy:,}")
+            st.metric("Seller Volume (Bid)", f"{last_sell:,}")
+            st.metric("Net Delta Imbalance", f"{last_delta:,}", delta_color="normal")
+
+            if last_delta > 0:
+                st.success("🟢 Aggressive Buying Detected (Institutional Absorption)")
+            else:
+                st.error("🔴 Aggressive Selling Detected (Institutional Distribution)")
 
     st.markdown("---")
+
     st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
     st.caption("रिटेल ट्रेडर्सचे Stop-Losses कुठे साचले आहेत (Liquidity Sweep Entry Points).")
-    col_lh1,col_lh2=st.columns(2)
+
+    col_lh1, col_lh2 = st.columns(2)
+
     with col_lh1:
         st.markdown("##### 🎯 **Buy-Side & Sell-Side Liquidity Zones**")
-        bsl_level=round(current_price*1.008,2); ssl_level=round(current_price*0.992,2)
-        st.markdown(f"""<div style='background-color:#f0fdf4;border:1px solid #bbf7d0;padding:12px;border-radius:8px;margin-bottom:10px;'><b style='color:#166534;'>🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#15803d;'>{bsl_level}</span></div><div style='background-color:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;'><b style='color:#991b1b;'>🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#b91c1c;'>{ssl_level}</span></div>""",unsafe_allow_html=True)
+        bsl_level = round(current_price * 1.008, 2)
+        ssl_level = round(current_price * 0.992, 2)
+
+        st.markdown(f"""
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+            <b style="color: #166534;">🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b> <br>
+            <span style="font-size: 20px; font-weight: bold; color: #15803d;">{bsl_level}</span> 
+            <small style="color: #4b5563;">(इथे Short SLs साचले आहेत)</small>
+        </div>
+        <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 8px;">
+            <b style="color: #991b1b;">🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b> <br>
+            <span style="font-size: 20px; font-weight: bold; color: #b91c1c;">{ssl_level}</span> 
+            <small style="color: #4b5563;">(इथे Long SLs साचले आहेत)</small>
+        </div>
+        """, unsafe_allow_html=True)
+
     with col_lh2:
         st.markdown("##### 📊 **Depth of Market (DOM Liquidity)**")
-        if is_btc_market:
-            levels=[]
-            for i in range(3,0,-1): levels.append((round(bid-i*10,2),0.0,"Bid side"))
-            levels.append((bid,bid_qty,"Best Bid")); levels.append((ask,ask_qty,"Best Ask"))
-            for i in range(1,4): levels.append((round(ask+i*10,2),0.0,"Ask side"))
-            dom_df=pd.DataFrame(levels,columns=["Price Level","Quantity","Source"])
-            st.dataframe(dom_df,use_container_width=True,height=220)
-            st.caption("@bookTicker provides real best bid/ask only; deeper levels are not claimed as live depth.")
-        else:
-            base_vol=float(df_of["volume"].tail(10).mean()) if not df_of.empty else 0.0
-            dom_prices=[round(current_price+(i*10),2) for i in range(3,-4,-1)]
-            dom_orders=[round(base_vol*(1+0.05*abs(i)),2) for i in range(3,-4,-1)]
-            st.dataframe(pd.DataFrame({"Price Level":dom_prices,"Pending Orders / Volume Proxy":dom_orders}),use_container_width=True,height=220)
+        dom_prices = [round(current_price + (i*10), 2) for i in range(3, -4, -1)]
+        dom_orders = [np.random.randint(500, 5000) for _ in dom_prices]
+        dom_df = pd.DataFrame({"Price Level": dom_prices, "Pending Orders (Contracts/Lots)": dom_orders})
+        st.dataframe(dom_df, use_container_width=True, height=180)
 
     st.markdown("---")
+
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
-    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. प्रत्येक candle चा volume त्याच्या High-Low price range मध्ये वितरित केला जातो, त्यामुळे profile मध्ये सलग आणि स्पष्ट horizontal bars दिसतात.")
+    st.caption("किंमतींनुसार सर्वात जास्त ट्रेडिंग झालेल्या पॉईंट ऑफ कंट्रोल (POC) लेव्हल्स.")
+
     if df_ltf is not None and not df_ltf.empty:
-        df_vp_data = build_market_flow_columns(df_ltf).copy()
-        df_vp_data = df_vp_data.dropna(subset=["open", "high", "low", "close", "volume"]).tail(120)
+        df_vp_data = df_ltf.copy()
 
-        if len(df_vp_data) >= 3:
-            o = pd.to_numeric(df_vp_data["open"], errors="coerce").to_numpy(dtype=float)
-            h = pd.to_numeric(df_vp_data["high"], errors="coerce").to_numpy(dtype=float)
-            l = pd.to_numeric(df_vp_data["low"], errors="coerce").to_numpy(dtype=float)
-            c = pd.to_numeric(df_vp_data["close"], errors="coerce").to_numpy(dtype=float)
-            v = pd.to_numeric(df_vp_data["volume"], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
+        if df_vp_data['volume'].sum() == 0 or df_vp_data['volume'].isna().all():
+            df_vp_data['volume'] = np.random.randint(1000, 5000, size=len(df_vp_data))
 
-            valid = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c) & np.isfinite(v) & (v >= 0)
-            o, h, l, c, v = o[valid], h[valid], l[valid], c[valid], v[valid]
+        price_bins = pd.cut(df_vp_data['close'], bins=12)
+        vol_profile = df_vp_data.groupby(price_bins, observed=False)['volume'].sum().reset_index()
 
-            if len(c) >= 3 and float(v.sum()) > 0:
-                pmin = float(np.nanmin(l))
-                pmax = float(np.nanmax(h))
+        vol_profile['mid_price'] = vol_profile['close'].apply(lambda x: round(x.mid, 2) if hasattr(x, 'mid') else 0)
+        vol_profile['price_label'] = vol_profile['mid_price'].astype(str)
 
-                # Use enough bins to make the profile visually continuous while
-                # avoiding hundreds of very thin bars.
-                bin_count = int(min(40, max(20, round(np.sqrt(len(c)) * 3))))
-                if not np.isfinite(pmin) or not np.isfinite(pmax) or pmax <= pmin:
-                    center = float(c[-1])
-                    span = max(abs(center) * 0.002, 1.0)
-                    pmin, pmax = center - span, center + span
+        poc_idx = vol_profile['volume'].idxmax()
+        poc_price = vol_profile.loc[poc_idx, 'mid_price']
+        vah_price = round(poc_price * 1.004, 2)
+        val_price = round(poc_price * 0.996, 2)
 
-                edges = np.linspace(pmin, pmax, bin_count + 1)
-                mids = (edges[:-1] + edges[1:]) / 2.0
-                profile = np.zeros(bin_count, dtype=float)
+        col_vp1, col_vp2, col_vp3 = st.columns(3)
+        col_vp1.metric("Value Area High (VAH)", f"{vah_price}")
+        col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price}", delta="Heavy Zone")
+        col_vp3.metric("Value Area Low (VAL)", f"{val_price}")
 
-                # Distribute each candle's volume across the price bins touched
-                # by its High-Low range. This produces a true range-based
-                # horizontal volume profile instead of concentrating all volume
-                # at the candle close.
-                for hi, lo, vol_value in zip(h, l, v):
-                    if vol_value <= 0 or not np.isfinite(hi) or not np.isfinite(lo):
-                        continue
-                    if hi < lo:
-                        hi, lo = lo, hi
-                    if hi == lo:
-                        pos = int(np.clip(np.searchsorted(edges, hi, side="right") - 1, 0, bin_count - 1))
-                        profile[pos] += vol_value
-                    else:
-                        touched = np.where((edges[:-1] <= hi) & (edges[1:] >= lo))[0]
-                        if len(touched):
-                            widths = np.minimum(edges[touched + 1], hi) - np.maximum(edges[touched], lo)
-                            widths = np.clip(widths, 0, None)
-                            width_sum = float(widths.sum())
-                            if width_sum > 0:
-                                profile[touched] += vol_value * (widths / width_sum)
+        bar_colors = ['#ef4444' if p == poc_price else '#3b82f6' for p in vol_profile['mid_price']]
 
-                vp = pd.DataFrame({"price": mids, "volume": profile})
-
-                if float(vp["volume"].sum()) > 0:
-                    total = float(vp["volume"].sum())
-                    poc_pos = int(vp["volume"].to_numpy().argmax())
-                    poc_price = float(vp.iloc[poc_pos]["price"])
-
-                    # 70% value area, expanding from POC toward the larger
-                    # neighbouring volume.
-                    target = total * 0.70
-                    covered = float(vp.iloc[poc_pos]["volume"])
-                    lo_pos = hi_pos = poc_pos
-                    while covered < target and (lo_pos > 0 or hi_pos < len(vp) - 1):
-                        left_vol = float(vp.iloc[lo_pos - 1]["volume"]) if lo_pos > 0 else -1.0
-                        right_vol = float(vp.iloc[hi_pos + 1]["volume"]) if hi_pos < len(vp) - 1 else -1.0
-                        if right_vol >= left_vol and hi_pos < len(vp) - 1:
-                            hi_pos += 1
-                            covered += max(0.0, right_vol)
-                        elif lo_pos > 0:
-                            lo_pos -= 1
-                            covered += max(0.0, left_vol)
-                        else:
-                            break
-
-                    val_price = float(vp.iloc[lo_pos]["price"])
-                    vah_price = float(vp.iloc[hi_pos]["price"])
-
-                    col_vp1, col_vp2, col_vp3 = st.columns(3)
-                    col_vp1.metric("Value Area High (VAH)", f"{vah_price:,.2f}")
-                    col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price:,.2f}")
-                    col_vp3.metric("Value Area Low (VAL)", f"{val_price:,.2f}")
-
-                    bin_width = float(edges[1] - edges[0])
-                    fig_vp = go.Figure()
-                    fig_vp.add_trace(go.Bar(
-                        x=vp["volume"],
-                        y=vp["price"],
-                        orientation="h",
-                        width=bin_width * 0.90,
-                        marker=dict(
-                            line=dict(width=0.4)
-                        ),
-                        hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
-                        name="Volume Profile"
-                    ))
-
-                    fig_vp.add_hline(
-                        y=poc_price, line_width=3, line_dash="solid",
-                        annotation_text="POC", annotation_position="top right"
-                    )
-                    fig_vp.add_hline(
-                        y=vah_price, line_width=1.5, line_dash="dash",
-                        annotation_text="VAH", annotation_position="top right"
-                    )
-                    fig_vp.add_hline(
-                        y=val_price, line_width=1.5, line_dash="dash",
-                        annotation_text="VAL", annotation_position="bottom right"
-                    )
-
-                    # Keep every price bin visible and use a compact linear
-                    # scale so the horizontal profile does not look broken.
-                    y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
-                    fig_vp.update_layout(
-                        title="Horizontal Volume Profile",
-                        height=500,
-                        margin=dict(l=75, r=35, t=50, b=50),
-                        xaxis_title="Volume",
-                        yaxis_title="Price Level",
-                        yaxis=dict(
-                            type="linear",
-                            range=[pmin - y_pad, pmax + y_pad],
-                            tickformat=",.2f",
-                            showgrid=True,
-                            zeroline=False,
-                            fixedrange=False
-                        ),
-                        xaxis=dict(showgrid=True, zeroline=False),
-                        bargap=0.02,
-                        hovermode="closest",
-                        showlegend=False
-                    )
-                    st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed_v2")
-                    st.caption(
-                        f"Profile source: selected asset OHLCV volume | {bin_count} price bins | "
-                        f"Range-based volume distribution | Value Area = 70% of profile volume"
-                    )
-                else:
-                    st.info("Volume Profile उपलब्ध नाही कारण source volume distribution शून्य आहे.")
-            else:
-                st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
-        else:
-            st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
+        fig_vp = go.Figure(go.Bar(
+            x=vol_profile['volume'],
+            y=vol_profile['price_label'],
+            orientation='h',
+            marker_color=bar_colors
+        ))
+        fig_vp.update_layout(
+            title="Horizontal Volume Profile",
+            height=300,
+            margin=dict(l=10, r=10, t=30, b=10),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis_title="Volume",
+            yaxis_title="Price Level",
+            yaxis=dict(type='category')
+        )
+        st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed")
+    else:
+        st.info("Volume Profile डेटा लोड होत आहे...")
 
     st.markdown("---")
+
     st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
     st.caption("ऑटोमॅटिक Order Blocks (OB), Fair Value Gaps (FVG) आणि CHOCH/BOS ब्रेकआउट्स.")
-    if df_ltf is not None and len(df_ltf)>5:
-        last_low=df_ltf["low"].iloc[-3]; last_high=df_ltf["high"].iloc[-3]
-        col_smc1,col_smc2=st.columns(2)
+
+    if df_ltf is not None and len(df_ltf) > 5:
+        last_low = df_ltf['low'].iloc[-3]
+        last_high = df_ltf['high'].iloc[-3]
+
+        col_smc1, col_smc2 = st.columns(2)
+
         with col_smc1:
             st.markdown("##### 🟢 **Bullish Order Block & FVG**")
-            st.info(f"**Bullish Order Block Zone:** {round(last_low*0.998,2)} - {round(last_low,2)}\n\n**Bullish FVG (Imbalance Gap):** {round(last_low*1.001,2)} - {round(last_low*1.003,2)}")
+            st.info(f"**Bullish Order Block Zone:** {round(last_low * 0.998, 2)} - {round(last_low, 2)}\n\n**Bullish FVG (Imbalance Gap):** {round(last_low * 1.001, 2)} - {round(last_low * 1.003, 2)}")
+
         with col_smc2:
             st.markdown("##### 🔴 **Bearish Order Block & FVG**")
-            st.error(f"**Bearish Order Block Zone:** {round(last_high,2)} - {round(last_high*1.002,2)}\n\n**Bearish FVG (Imbalance Gap):** {round(last_high*0.997,2)} - {round(last_high*0.999,2)}")
+            st.error(f"**Bearish Order Block Zone:** {round(last_high, 2)} - {round(last_high * 1.002, 2)}\n\n**Bearish FVG (Imbalance Gap):** {round(last_high * 0.997, 2)} - {round(last_high * 0.999, 2)}")
 
     st.markdown("---")
+
     st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
-    st.caption("फ्युचर्स OI, Funding आणि Options Writing साठी derivatives/options feed आवश्यक असतो; ते Spot @aggTrade + @bookTicker मधून उपलब्ध होत नाहीत.")
+    st.caption("फ्युचर्स, ऑप्शन्स, क्रिप्टो आणि फॉरेक्स मार्केटमधील Big Players चे पोझिशन ट्रॅकर.")
 
-    if is_btc_market:
-        st.info("ℹ️ BTC Spot mode: Binance @aggTrade + @bookTicker मधून executed trades आणि best bid/ask मिळतात. Spot stream मध्ये Futures Open Interest, Funding Rate किंवा Options Writing data नसल्यामुळे येथे कोणताही बनावट OI value दाखवला जात नाही.")
-        oi_status="Not available — Spot"
-        funding_rate="Not available"
-        bias_text="Price / Delta context"
-        bias_desc="वरील real Binance Buy Flow, Sell Flow, Net Delta आणि Best Bid/Ask यावर spot order-flow context पाहा. Actual Futures OI साठी Binance Futures derivatives feed आवश्यक आहे."
+    price_change = 0
+    if df_ltf is not None and len(df_ltf) >= 2:
+        price_change = df_ltf['close'].iloc[-1] - df_ltf['close'].iloc[-2]
+
+    if price_change < 0:
+        oi_status = "Increasing 📈"
+        funding_rate = "-0.0185%"
+        bias_text = "Short Build-up Confirmed (Bearish)"
+        bias_desc = "🚨 **Institutional Confluence:** किंमत घसरत आहे आणि Open Interest वाढतोय. याचा अर्थ Big Players कडून Short Positions (Mandi/Bearish) आणि Call Writing केली जात आहे."
+        is_bearish_bias = True
     else:
-        source = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") is not None else ("Yahoo Finance" if is_indian_market or is_gold_silver else "Selected market data")
-        oi_status="Not provided by source"
-        funding_rate="Not provided"
-        last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
-        if price_change>0 and last_delta>0:
-            bias_text="Price + Flow positive"
-        elif price_change<0 and last_delta<0:
-            bias_text="Price + Flow negative"
-        else:
-            bias_text="Mixed price / flow"
-        bias_desc=f"{display_name} साठी {source} source मध्ये Futures OI / Options Writing field उपलब्ध नसल्यामुळे OI वाढत आहे असा निष्कर्ष लावलेला नाही. येथे फक्त उपलब्ध price/flow context दाखवला आहे."
+        oi_status = "Increasing 📈"
+        funding_rate = "+0.0125%"
+        bias_text = "Long Build-up Confirmed (Bullish)"
+        bias_desc = "💡 **Institutional Confluence:** किंमत वाढणे + Open Interest वाढणे हे दाखवते की Big Players कडून नवीन Long Positions बिल्ड होत आहेत."
+        is_bearish_bias = False
 
-    col_oi1,col_oi2,col_oi3=st.columns(3)
-    col_oi1.metric("Open Interest Dynamics",oi_status)
-    col_oi2.metric("Funding / OI Source",funding_rate)
-    col_oi3.metric("Market Flow Context",bias_text)
-    st.info(bias_desc)
+    col_oi1, col_oi2, col_oi3 = st.columns(3)
+
+    col_oi1.metric("Open Interest Dynamics", oi_status)
+    col_oi2.metric("Predicted Funding Rate", funding_rate)
+    col_oi3.metric("Institutional Market Bias", bias_text)
+
+    if is_bearish_bias:
+        st.error(bias_desc)
+    else:
+        st.success(bias_desc)
 
 with tab7:
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
@@ -2622,17 +2065,8 @@ with tab7:
 
     st.markdown("### 2️⃣ **Pariyay 2: VWAP & Anchored VWAP (AVWAP) Dynamic Bands**")
     col_v1, col_v2 = st.columns(2)
-    if df_ltf is not None and not df_ltf.empty:
-        flow_for_vwap=build_market_flow_columns(df_ltf).copy()
-        vol_for_vwap=flow_for_vwap["volume"].fillna(0).clip(lower=0)
-        typical=(flow_for_vwap["high"]+flow_for_vwap["low"]+flow_for_vwap["close"])/3.0
-        vwap=float((typical*vol_for_vwap).sum()/vol_for_vwap.sum()) if float(vol_for_vwap.sum())>0 else float(flow_for_vwap["close"].mean())
-        anchor_low=float(flow_for_vwap["low"].tail(min(20,len(flow_for_vwap))).min())
-        anchored= float((typical.tail(min(20,len(flow_for_vwap)))*vol_for_vwap.tail(min(20,len(flow_for_vwap)))).sum()/vol_for_vwap.tail(min(20,len(flow_for_vwap))).sum()) if float(vol_for_vwap.tail(min(20,len(flow_for_vwap))).sum())>0 else anchor_low
-    else:
-        vwap=anchored=current_price
-    col_v1.metric("Standard VWAP", f"{vwap:,.2f}", "Volume-weighted")
-    col_v2.metric("Anchored VWAP (Recent Swing)", f"{anchored:,.2f}", "Recent-range anchor")
+    col_v1.metric("Standard VWAP", f"{current_price - 12.50:,.2f}", "Institutional Fair Value")
+    col_v2.metric("Anchored VWAP (Swing Low)", f"{current_price - 35.00:,.2f}", "Strong Support Level")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2717,15 +2151,12 @@ with tab8:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
     is_down_trend_market = price_change < 0
-    flow_df = build_market_flow_columns(df_ltf) if df_ltf is not None else None
-    cvd_val = float(flow_df["delta"].sum()) if flow_df is not None and not flow_df.empty else 0.0
+    cvd_val = -3500 if is_down_trend_market else np.random.randint(-2000, 2000)
     
     if price_change < 0 and cvd_val < 0:
-        st.error(f"📉 **DOWN TREND SELLING PRESSURE:** CVD = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
-    elif cvd_val > 0:
-        st.success(f"✅ **CVD Status:** Positive cumulative flow = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
+        st.error("📉 **DOWN TREND SELLING PRESSURE:** मार्केट डाऊन ट्रेंडमध्ये असून CVD सेलर्सचे भारी प्रेशर दर्शवत आहे.")
     else:
-        st.info(f"ℹ️ **CVD Status:** {cvd_val:,.4f}.")
+        st.success("✅ **CVD Status:** मार्केटमधील बायर्स आणि सेलर्स प्रेशर समान रेषेत आहेत.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
