@@ -2242,6 +2242,36 @@ elif is_indian_market:
 else:
     current_price = base_price
 
+# ---------------------------------------------------------------------------
+# Shared Indian OI snapshot for Tabs 1 and 3
+# ---------------------------------------------------------------------------
+# Tab 3 previously referenced `oi_live_data` without defining it on the
+# current Streamlit rerun. That single NameError stopped execution of Tabs
+# 3-9, which made the UI look as if every tab had failed. Keep this snapshot
+# available regardless of Angel One connection state. The fetcher already
+# has a safe fallback payload when Angel One is disconnected.
+try:
+    if is_indian_market:
+        oi_live_data = fetch_angel_one_real_oi(current_price, display_name)
+    else:
+        oi_live_data = {
+            "live_ltp": current_price,
+            "high": current_price * 1.01,
+            "low": current_price * 0.99,
+            "change_call_cr": 0.0,
+            "change_put_cr": 0.0,
+            "pcr": 1.0,
+        }
+except Exception:
+    oi_live_data = {
+        "live_ltp": current_price,
+        "high": current_price * 1.01,
+        "low": current_price * 0.99,
+        "change_call_cr": 0.0,
+        "change_put_cr": 0.0,
+        "pcr": 1.0,
+    }
+
 # Shared price-change value used by Tabs 6-9.
 # It must be defined outside Tab 6 so switching to GOLD/SILVER/BTC
 # cannot leave Tabs 7-9 with an undefined variable on a Streamlit rerun.
@@ -2437,6 +2467,7 @@ with tab3:
     st.markdown("<br>", unsafe_allow_html=True)
 
     if is_indian_market:
+        oi_live_data = oi_live_data if isinstance(oi_live_data, dict) else {}
         pcr_val = oi_live_data.get("pcr", 1.0)
         high_val = oi_live_data.get("high", current_price + 20)
         low_val = oi_live_data.get("low", current_price - 180)
