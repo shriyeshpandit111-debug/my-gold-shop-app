@@ -918,7 +918,7 @@ def prepare_orderflow_frame(df, min_rows=20):
         out["delta"] = out["buy_vol"] - out["sell_vol"]
     out["cvd"] = out["delta"].cumsum()
     out["delta_ema"] = out["delta"].ewm(span=8, adjust=False).mean()
-    return out.tail(max(min_rows, min(len(out), 500))).reset_index(drop=True)
+    return out.tail(max(min_rows, min(len(out), 1200))).reset_index(drop=True)
 
 
 def calculate_vwap_bands(df):
@@ -2757,7 +2757,7 @@ with tab6:
                 flow_df = indian_flow
         except Exception:
             pass
-    flow_df = prepare_orderflow_frame(flow_df, min_rows=72)
+    flow_df = prepare_orderflow_frame(flow_df, min_rows=1200)
     if flow_df is not None and not flow_df.empty:
         flow_df = calculate_vwap_bands(flow_df)
 
@@ -2773,7 +2773,12 @@ with tab6:
     st.caption("Layout is fixed as: Candles → Net Delta. BTC uses real executed-trade delta; NIFTY/BANKNIFTY use a clearly-labelled OHLCV candle-flow proxy when Yahoo does not provide aggressor-side trades.")
 
     if flow_df is not None and len(flow_df) >= 2:
-        chart_df = flow_df.tail(96).copy()
+        # Indian indices: show a useful multi-session window and compress
+        # NSE non-trading hours/weekends so candles and delta bars stay together.
+        # BTC keeps the compact recent window because its market is 24x7.
+        chart_bars = 96 if is_btc_market else min(len(flow_df), 420)
+        chart_df = flow_df.tail(chart_bars).copy()
+
         fig_footprint = make_subplots(
             rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.035,
             row_heights=[0.72, 0.28],
@@ -2786,13 +2791,31 @@ with tab6:
             increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
         ), row=1, col=1)
         delta_colors = ["#22c55e" if float(v) >= 0 else "#ef4444" for v in chart_df["delta"]]
+        # Match bar width to the selected timeframe so delta bars do not
+        # collapse into hairline marks on the date axis.
+        delta_width_ms = {
+            "1m": 45_000, "2m": 90_000, "3m": 135_000,
+            "5m": 240_000, "10m": 540_000, "15m": 840_000,
+            "30m": 1_740_000, "1h": 3_540_000
+        }.get(timeframe, 540_000)
+
         fig_footprint.add_trace(go.Bar(
             x=chart_df["timestamp"], y=chart_df["delta"], name="Net Delta",
-            marker_color=delta_colors,
+            marker_color=delta_colors, width=delta_width_ms,
             hovertemplate="%{x|%d-%m %H:%M IST}<br>Delta: %{y:,.2f}<extra></extra>",
         ), row=2, col=1)
         fig_footprint.add_hline(y=0, line_width=1, line_dash="dot", row=2, col=1)
-        fig_footprint.update_xaxes(type="date", row=2, col=1, tickformat="%d-%m %H:%M")
+
+        # NSE cash-market session is 09:15–15:30 IST. Compress overnight,
+        # weekends and holidays are naturally absent from the OHLCV series.
+        xaxis_common = dict(type="date", tickformat="%d-%m %H:%M")
+        if is_indian_market:
+            xaxis_common["rangebreaks"] = [
+                dict(bounds=["sat", "mon"]),
+                dict(bounds=[15.5, 9.25], pattern="hour"),
+            ]
+        fig_footprint.update_xaxes(**xaxis_common, row=1, col=1)
+        fig_footprint.update_xaxes(**xaxis_common, row=2, col=1)
         fig_footprint.update_layout(
             height=620, margin=dict(l=20,r=20,t=50,b=30), showlegend=False,
             hovermode="x unified", xaxis_rangeslider_visible=False,
