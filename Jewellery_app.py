@@ -222,8 +222,12 @@ class BinanceBTCStream:
         self.trade_count = 0
         self.recent_trades = deque(maxlen=5000)
         self.candles_1m = {}
+        # True executed-trade footprint: {1-minute UTC bucket: {price: {buy, sell, trades}}}.
+        # This is populated directly from Binance @aggTrade, not from OHLCV candle estimates.
+        self.footprint_1m = {}
         self._stop = False
         self._load_history(history_limit)
+        self._seed_recent_footprint()
         self._load_book_ticker()
         self._thread = threading.Thread(target=self._run_ws, daemon=True, name="binance-btc-ws")
         self._thread.start()
@@ -357,6 +361,62 @@ class BinanceBTCStream:
 
         return df.tail(max(1, int(days * 1440 / max(1, source_ms / 60_000)) + 20)).reset_index(drop=True)
 
+    def _seed_recent_footprint(self, limit=1000):
+        """Seed recent price-level footprint from Binance executed aggTrades.
+
+        This is intentionally separate from the OHLCV bootstrap because adding these
+        trades to the candle totals would double-count volume. It only builds the
+        price-level Buy/Sell footprint used by Tab 6.
+        """
+        params = urlencode({"symbol": self.symbol, "limit": int(limit)})
+        for base in self.REST_BASES:
+            try:
+                url = f"{base}/api/v3/aggTrades?{params}"
+                req = Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 SMC-PRO-Binance-Footprint",
+                    "Accept": "application/json",
+                })
+                with urlopen(req, timeout=12) as resp:
+                    rows = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(rows, list):
+                    raise RuntimeError("invalid aggTrades response")
+                for row in rows:
+                    self._record_footprint_trade(row, count_trade=False)
+                return
+            except Exception as exc:
+                with self.lock:
+                    self.last_error = f"Binance recent aggTrades seed: {exc}"
+
+    def _record_footprint_trade(self, data, count_trade=True):
+        """Store one Binance executed trade at its exact traded price level."""
+        price = float(data.get("p", data.get("price", 0)) or 0)
+        qty = float(data.get("q", data.get("qty", 0)) or 0)
+        ts_ms = data.get("T", data.get("time"))
+        if price <= 0 or qty <= 0 or ts_ms is None:
+            return
+        ts = pd.Timestamp(int(ts_ms), unit="ms", tz="UTC")
+        bucket = self._minute_bucket(ts)
+        # m=true => buyer is maker => taker/aggressive side is SELL.
+        aggressive_sell = bool(data.get("m", data.get("isBuyerMaker", False)))
+        buy_qty = 0.0 if aggressive_sell else qty
+        sell_qty = qty if aggressive_sell else 0.0
+        with self.lock:
+            levels = self.footprint_1m.setdefault(bucket, {})
+            level = levels.setdefault(price, {"buy": 0.0, "sell": 0.0, "trades": 0})
+            level["buy"] += buy_qty
+            level["sell"] += sell_qty
+            level["trades"] += 1
+            if count_trade:
+                self.last_trade_time = ts
+                self.last_trade_qty = qty
+                self.last_trade_side = "BUY" if buy_qty > 0 else "SELL"
+
+            # Keep memory bounded. Footprint detail is for the most recent live window.
+            if len(self.footprint_1m) > 1800:
+                oldest = sorted(self.footprint_1m.keys())[:len(self.footprint_1m) - 1800]
+                for key in oldest:
+                    self.footprint_1m.pop(key, None)
+
     def _load_book_ticker(self):
         """Load an initial best bid/ask snapshot so Tab 6 is populated immediately.
         The WebSocket then keeps these values live.
@@ -398,6 +458,8 @@ class BinanceBTCStream:
             qty = float(data["q"])
             ts = pd.Timestamp(int(data["T"]), unit="ms", tz="UTC")
             bucket = self._minute_bucket(ts)
+            # First record the exact executed price-level flow for the Footprint.
+            self._record_footprint_trade(data, count_trade=False)
             # Binance: m=true means the buyer is the maker, so the aggressive/taker side is SELL.
             aggressive_sell = bool(data.get("m", False))
             buy_qty = 0.0 if aggressive_sell else qty
@@ -520,6 +582,60 @@ class BinanceBTCStream:
                     break
             if not self._stop:
                 time.sleep(2)
+
+    def footprint_snapshot(self, timeframe="5m", candle_limit=30):
+        """Return exact executed-trade price-level footprint for recent candles.
+
+        Each row is one traded price level with Buy/Taker (Ask-side), Sell/Taker
+        (Bid-side), Delta and imbalance ratio. Levels are aggregated across the
+        selected candle timeframe without inventing historical order-book depth.
+        """
+        rule_map = {
+            "1m":"1min", "2m":"2min", "3m":"3min", "5m":"5min",
+            "10m":"10min", "15m":"15min", "30m":"30min", "1h":"1h",
+            "2h":"2h", "4h":"4h", "1d":"1D"
+        }
+        rule = rule_map.get(timeframe, "5min")
+        with self.lock:
+            source = {k: {float(px): dict(v) for px, v in levels.items()}
+                      for k, levels in self.footprint_1m.items()}
+        if not source:
+            return pd.DataFrame()
+
+        rows = []
+        for minute_ts, levels in source.items():
+            candle_ts = minute_ts.floor(rule)
+            for price, vals in levels.items():
+                rows.append({
+                    "timestamp": candle_ts,
+                    "price": price,
+                    "buy_vol": float(vals.get("buy", 0.0)),
+                    "sell_vol": float(vals.get("sell", 0.0)),
+                    "trades": int(vals.get("trades", 0)),
+                })
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        df = (df.groupby(["timestamp", "price"], as_index=False)
+                .agg(buy_vol=("buy_vol", "sum"),
+                     sell_vol=("sell_vol", "sum"),
+                     trades=("trades", "sum")))
+        df["delta"] = df["buy_vol"] - df["sell_vol"]
+        df["total_vol"] = df["buy_vol"] + df["sell_vol"]
+        df["imbalance_ratio"] = np.where(
+            (df["buy_vol"] > 0) & (df["sell_vol"] > 0),
+            np.maximum(df["buy_vol"] / df["sell_vol"], df["sell_vol"] / df["buy_vol"]),
+            np.inf,
+        )
+        df["imbalance_side"] = np.where(
+            df["buy_vol"] > df["sell_vol"], "BUY",
+            np.where(df["sell_vol"] > df["buy_vol"], "SELL", "NEUTRAL")
+        )
+        # 300% imbalance = 3:1 ratio, matching the requested footprint convention.
+        df["is_imbalance"] = df["imbalance_ratio"] >= 3.0
+        df["timestamp"] = (pd.to_datetime(df["timestamp"], utc=True)
+                           .dt.tz_convert("Asia/Kolkata").dt.tz_localize(None))
+        return df.sort_values(["timestamp", "price"]).tail(max(1, candle_limit * 5000)).reset_index(drop=True)
 
     def snapshot(self, timeframe="5m", limit=300):
         with self.lock:
@@ -2341,7 +2457,8 @@ with tab6:
                 hovermode="x unified",
                 bargap=0.12,
             )
-            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
+            if not is_btc_market:
+                st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
             last=df_of.iloc[-1]
             c1,c2,c3,c4=st.columns(4)
             c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
@@ -2349,6 +2466,58 @@ with tab6:
             c3.metric("Net Delta",f"{last['delta']:,.4f}")
             c4.metric("Live Price",f"{current_price:,.2f}")
             st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
+
+            if is_btc_market and binance_btc is not None:
+                # ------------------------------------------------------------
+                # TRUE BTC PRICE-LEVEL FOOTPRINT
+                # Every Buy/Sell number below comes from Binance @aggTrade
+                # executed trades at the exact traded price. The old green/red
+                # aggregate Delta bars above are intentionally retained.
+                # ------------------------------------------------------------
+                st.markdown("### ₿ BTC Price-Level Footprint + Imbalance")
+                fp = binance_btc.footprint_snapshot(timeframe=timeframe, candle_limit=30)
+                if fp is not None and not fp.empty:
+                    latest_fp_time = fp["timestamp"].max()
+                    current_fp = fp[fp["timestamp"] == latest_fp_time].copy()
+                    current_fp = current_fp.sort_values("price", ascending=False)
+                    current_fp["Delta"] = current_fp["delta"]
+                    current_fp["Ask / Buy"] = current_fp["buy_vol"]
+                    current_fp["Bid / Sell"] = current_fp["sell_vol"]
+                    current_fp["Imbalance"] = np.where(
+                        current_fp["is_imbalance"],
+                        current_fp["imbalance_side"] + " " + current_fp["imbalance_ratio"].replace(np.inf, np.nan).map(lambda x: "∞" if pd.isna(x) else f"{x:.1f}x"),
+                        "—"
+                    )
+                    # Highlight price-wise delta directly on the main price chart.
+                    fp_price = current_fp["price"].to_numpy()
+                    fp_delta = current_fp["delta"].to_numpy()
+                    if len(fp_price):
+                        marker_size = np.clip(np.sqrt(np.abs(fp_delta) + 1.0) * 3.0, 5, 22)
+                        marker_color = ["#22c55e" if d >= 0 else "#ef4444" for d in fp_delta]
+                        fig_footprint.add_trace(
+                            go.Scatter(
+                                x=[latest_fp_time] * len(fp_price), y=fp_price, mode="markers",
+                                marker=dict(size=marker_size, color=marker_color, opacity=0.88,
+                                            line=dict(width=1, color="white")),
+                                customdata=np.column_stack([current_fp["buy_vol"], current_fp["sell_vol"], current_fp["delta"], current_fp["imbalance_ratio"]]),
+                                name="Price-wise Delta",
+                                hovertemplate=("Price: %{y:,.2f}<br>Ask/Buy: %{customdata[0]:,.6f}"
+                                               "<br>Bid/Sell: %{customdata[1]:,.6f}<br>Delta: %{customdata[2]:,.6f}"
+                                               "<br>Imbalance ratio: %{customdata[3]:.2f}x<extra></extra>"),
+                            ), row=1, col=1
+                        )
+                        # Re-render with the added price-wise layer.
+                        st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart_pricewise")
+
+                    st.caption(f"Footprint candle: {latest_fp_time} IST | 3:1+ imbalance threshold | source: Binance executed @aggTrade")
+                    st.dataframe(
+                        current_fp[["price", "Ask / Buy", "Bid / Sell", "Delta", "Imbalance", "trades"]]
+                        .rename(columns={"price":"Price", "trades":"Trades"}),
+                        use_container_width=True, hide_index=True
+                    )
+                    st.caption("Ask/Buy = aggressive buyer (taker) volume; Bid/Sell = aggressive seller (taker) volume. This is executed-trade footprint, not historical resting order-book depth.")
+                else:
+                    st.info("Binance executed trades जमा होत आहेत — Footprint थोड्याच वेळात दिसेल.")
         else:
             df_of=pd.DataFrame()
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
