@@ -2412,35 +2412,155 @@ with tab6:
     st.markdown("---")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
-    st.caption("BTC साठी real Binance executed-trade flow; इतर assets साठी त्यांच्या उपलब्ध OHLCV data वर आधारित candle-flow proxy.")
+    st.caption("Price-side Delta is shown directly on the main price chart. BTC uses exact Binance @aggTrade price-level executed flow; Gold/Silver use the available OHLCV candle-flow delta at the candle close price.")
 
     col_of1, col_of2 = st.columns([3,1])
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
-            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
-            # Keep the Delta panel visually consistent across refreshes. Plotly's
-            # default autoscaling can make the same Delta series look very different
-            # when the latest candles have a smaller/larger absolute Delta.
-            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
+            df_of = build_market_flow_columns(df_ltf).tail(30).copy()
             df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
+
             max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
-            # A stable reference floor gives a chart appearance close to the original
-            # footprint view while still allowing larger real deltas to expand naturally.
             delta_axis_top = max(200.0, max_abs_delta * 1.25)
             delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
 
-            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
-            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
+            fig_footprint = make_subplots(
+                rows=2,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.04,
+                row_heights=[0.72, 0.28],
+            )
+
+            # Main price chart.
+            fig_footprint.add_trace(
+                go.Candlestick(
+                    x=df_of["timestamp"],
+                    open=df_of["open"],
+                    high=df_of["high"],
+                    low=df_of["low"],
+                    close=df_of["close"],
+                    name=display_name,
+                ),
+                row=1,
+                col=1,
+            )
+
+            # ------------------------------------------------------------
+            # PRICE-SIDE DELTA — this is the only new visual layer.
+            # It stays on the main price chart, at the actual price level.
+            # Existing lower green/red Delta bars are retained unchanged.
+            # ------------------------------------------------------------
+            if is_btc_market and binance_btc is not None:
+                # BTC: exact price-level executed-trade footprint from Binance aggTrade.
+                fp = binance_btc.footprint_snapshot(timeframe=timeframe, candle_limit=30)
+                if fp is not None and not fp.empty:
+                    latest_fp_time = fp["timestamp"].max()
+                    current_fp = fp[fp["timestamp"] == latest_fp_time].copy()
+                    current_fp = current_fp.sort_values("price", ascending=False)
+
+                    if not current_fp.empty:
+                        delta_vals = pd.to_numeric(current_fp["delta"], errors="coerce").fillna(0.0).to_numpy()
+                        price_vals = pd.to_numeric(current_fp["price"], errors="coerce").fillna(0.0).to_numpy()
+                        buy_vals = pd.to_numeric(current_fp["buy_vol"], errors="coerce").fillna(0.0).to_numpy()
+                        sell_vals = pd.to_numeric(current_fp["sell_vol"], errors="coerce").fillna(0.0).to_numpy()
+                        ratio_vals = pd.to_numeric(current_fp["imbalance_ratio"], errors="coerce").replace([np.inf, -np.inf], np.nan).to_numpy()
+
+                        marker_size = np.clip(np.sqrt(np.abs(delta_vals) + 1.0) * 3.0, 6, 24)
+                        marker_color = ["#22c55e" if d >= 0 else "#ef4444" for d in delta_vals]
+
+                        fig_footprint.add_trace(
+                            go.Scatter(
+                                x=[latest_fp_time] * len(price_vals),
+                                y=price_vals,
+                                mode="markers+text",
+                                text=[f"{d:+,.2f}" for d in delta_vals],
+                                textposition="middle right",
+                                textfont=dict(size=9),
+                                marker=dict(
+                                    size=marker_size,
+                                    color=marker_color,
+                                    opacity=0.90,
+                                    line=dict(width=1, color="white"),
+                                ),
+                                customdata=np.column_stack([buy_vals, sell_vals, delta_vals, ratio_vals]),
+                                name="Price-wise Delta",
+                                hovertemplate=(
+                                    "Price: %{y:,.2f}<br>"
+                                    "Buy/Taker: %{customdata[0]:,.6f}<br>"
+                                    "Sell/Taker: %{customdata[1]:,.6f}<br>"
+                                    "Delta: %{customdata[2]:+,.6f}<br>"
+                                    "Imbalance: %{customdata[3]:.2f}x<extra></extra>"
+                                ),
+                                cliponaxis=False,
+                            ),
+                            row=1,
+                            col=1,
+                        )
+                        st.caption(
+                            f"₿ BTC exact price-level Delta | {latest_fp_time} IST | "
+                            "Green = positive Delta, Red = negative Delta | source: Binance @aggTrade"
+                        )
+                    else:
+                        st.info("Binance executed trades जमा होत आहेत — price-level Delta थोड्याच वेळात दिसेल.")
+            else:
+                # Gold/Silver/other non-BTC markets do not have Binance executed
+                # trades. Show their available candle-flow Delta directly at the
+                # candle CLOSE price on the main chart; no unrelated data is changed.
+                px = pd.to_numeric(df_of["close"], errors="coerce").fillna(0.0)
+                dv = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
+                marker_color = ["#22c55e" if float(d) >= 0 else "#ef4444" for d in dv]
+                marker_size = np.clip(np.sqrt(np.abs(dv.to_numpy()) + 1.0) * 3.0, 6, 18)
+
+                fig_footprint.add_trace(
+                    go.Scatter(
+                        x=df_of["timestamp"],
+                        y=px,
+                        mode="markers+text",
+                        text=[f"{float(d):+,.2f}" for d in dv],
+                        textposition="middle right",
+                        textfont=dict(size=8),
+                        marker=dict(
+                            size=marker_size,
+                            color=marker_color,
+                            opacity=0.88,
+                            line=dict(width=1, color="white"),
+                        ),
+                        customdata=np.column_stack([
+                            pd.to_numeric(df_of["buy_vol"], errors="coerce").fillna(0.0),
+                            pd.to_numeric(df_of["sell_vol"], errors="coerce").fillna(0.0),
+                            dv,
+                        ]),
+                        name="Price-line Delta",
+                        hovertemplate=(
+                            "Price: %{y:,.2f}<br>"
+                            "Buy Flow: %{customdata[0]:,.4f}<br>"
+                            "Sell Flow: %{customdata[1]:,.4f}<br>"
+                            "Delta: %{customdata[2]:+,.4f}<extra></extra>"
+                        ),
+                        cliponaxis=False,
+                    ),
+                    row=1,
+                    col=1,
+                )
+                st.caption(
+                    f"{display_name} price-line Delta | Green = positive, Red = negative | "
+                    "Gold/Silver source: available OHLCV candle-flow proxy"
+                )
+
+            # Existing lower green/red Delta bars — RETAINED.
             fig_footprint.add_trace(
                 go.Bar(
                     x=df_of["timestamp"],
                     y=df_of["delta"],
-                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
+                    marker_color=["#22c55e" if float(v) >= 0 else "#ef4444" for v in df_of["delta"]],
                     name="Flow Delta",
                     hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
                 ),
-                row=2,col=1,
+                row=2,
+                col=1,
             )
+
             fig_footprint.update_yaxes(
                 range=[delta_axis_bottom, delta_axis_top],
                 zeroline=True,
@@ -2452,74 +2572,26 @@ with tab6:
             )
             fig_footprint.update_layout(
                 height=520,
-                margin=dict(l=10,r=10,t=10,b=10),
+                margin=dict(l=10, r=70, t=10, b=10),
                 showlegend=False,
                 hovermode="x unified",
                 bargap=0.12,
             )
-            if not is_btc_market:
-                st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
-            last=df_of.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
-            c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
-            c3.metric("Net Delta",f"{last['delta']:,.4f}")
-            c4.metric("Live Price",f"{current_price:,.2f}")
-            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
+            st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_chart_pricewise")
 
-            if is_btc_market and binance_btc is not None:
-                # ------------------------------------------------------------
-                # TRUE BTC PRICE-LEVEL FOOTPRINT
-                # Every Buy/Sell number below comes from Binance @aggTrade
-                # executed trades at the exact traded price. The old green/red
-                # aggregate Delta bars above are intentionally retained.
-                # ------------------------------------------------------------
-                st.markdown("### ₿ BTC Price-Level Footprint + Imbalance")
-                fp = binance_btc.footprint_snapshot(timeframe=timeframe, candle_limit=30)
-                if fp is not None and not fp.empty:
-                    latest_fp_time = fp["timestamp"].max()
-                    current_fp = fp[fp["timestamp"] == latest_fp_time].copy()
-                    current_fp = current_fp.sort_values("price", ascending=False)
-                    current_fp["Delta"] = current_fp["delta"]
-                    current_fp["Ask / Buy"] = current_fp["buy_vol"]
-                    current_fp["Bid / Sell"] = current_fp["sell_vol"]
-                    current_fp["Imbalance"] = np.where(
-                        current_fp["is_imbalance"],
-                        current_fp["imbalance_side"] + " " + current_fp["imbalance_ratio"].replace(np.inf, np.nan).map(lambda x: "∞" if pd.isna(x) else f"{x:.1f}x"),
-                        "—"
-                    )
-                    # Highlight price-wise delta directly on the main price chart.
-                    fp_price = current_fp["price"].to_numpy()
-                    fp_delta = current_fp["delta"].to_numpy()
-                    if len(fp_price):
-                        marker_size = np.clip(np.sqrt(np.abs(fp_delta) + 1.0) * 3.0, 5, 22)
-                        marker_color = ["#22c55e" if d >= 0 else "#ef4444" for d in fp_delta]
-                        fig_footprint.add_trace(
-                            go.Scatter(
-                                x=[latest_fp_time] * len(fp_price), y=fp_price, mode="markers",
-                                marker=dict(size=marker_size, color=marker_color, opacity=0.88,
-                                            line=dict(width=1, color="white")),
-                                customdata=np.column_stack([current_fp["buy_vol"], current_fp["sell_vol"], current_fp["delta"], current_fp["imbalance_ratio"]]),
-                                name="Price-wise Delta",
-                                hovertemplate=("Price: %{y:,.2f}<br>Ask/Buy: %{customdata[0]:,.6f}"
-                                               "<br>Bid/Sell: %{customdata[1]:,.6f}<br>Delta: %{customdata[2]:,.6f}"
-                                               "<br>Imbalance ratio: %{customdata[3]:.2f}x<extra></extra>"),
-                            ), row=1, col=1
-                        )
-                        # Re-render with the added price-wise layer.
-                        st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart_pricewise")
-
-                    st.caption(f"Footprint candle: {latest_fp_time} IST | 3:1+ imbalance threshold | source: Binance executed @aggTrade")
-                    st.dataframe(
-                        current_fp[["price", "Ask / Buy", "Bid / Sell", "Delta", "Imbalance", "trades"]]
-                        .rename(columns={"price":"Price", "trades":"Trades"}),
-                        use_container_width=True, hide_index=True
-                    )
-                    st.caption("Ask/Buy = aggressive buyer (taker) volume; Bid/Sell = aggressive seller (taker) volume. This is executed-trade footprint, not historical resting order-book depth.")
-                else:
-                    st.info("Binance executed trades जमा होत आहेत — Footprint थोड्याच वेळात दिसेल.")
+            last = df_of.iloc[-1]
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Buy Flow", f"{last['buy_vol']:,.4f}")
+            c2.metric("Sell Flow", f"{last['sell_vol']:,.4f}")
+            c3.metric("Net Delta", f"{last['delta']:,.4f}")
+            c4.metric("Live Price", f"{current_price:,.2f}")
+            st.caption(
+                "Flow source: Real Binance executed-trade flow"
+                if is_btc_market
+                else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy"
+            )
         else:
-            df_of=pd.DataFrame()
+            df_of = pd.DataFrame()
             st.info("Order Flow डेटा उपलब्ध होत आहे...")
 
     with col_of2:
