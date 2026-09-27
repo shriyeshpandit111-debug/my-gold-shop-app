@@ -1889,14 +1889,22 @@ with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
     st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
-    # Tab 2 uses the same Global Timeframe selected in the sidebar.
-    # No separate Chart Timeframe selector is used here.
+    col_tf1, col_tf2 = st.columns([2, 5])
+    with col_tf1:
+        chart_timeframe = st.selectbox(
+            "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+            index=3,
+            key="custom_chart_tf"
+        )
+    
     chart_period_map = {
-        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d",
+        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
         "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
     }
-    selected_period = chart_period_map.get(timeframe, "20d")
-    df_chart = fetch_and_resample_data(ticker, timeframe, is_indian_market, custom_period=selected_period)
+    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
@@ -2293,125 +2301,48 @@ with tab6:
     col_of1, col_of2 = st.columns([3,1])
     with col_of1:
         if df_ltf is not None and not df_ltf.empty:
-            # ------------------------------------------------------------
-            # TAB 6 DELTA FIX
-            # ------------------------------------------------------------
-            # BTC must use the Binance executed-trade aggregation directly.
-            # Do not reuse a generic/previously scaled dataframe here because
-            # that can make the bars look identical or almost invisible after
-            # a refresh.  Each candle's Delta is always:
-            #     aggressive BUY volume - aggressive SELL volume
-            # and the bar height is the actual value (no artificial multiplier).
-            if is_btc_market and binance_btc is not None:
-                df_of, _tab6_state = binance_btc.snapshot(timeframe, limit=72)
-                df_of = build_market_flow_columns(df_of)
-            else:
-                df_of = build_market_flow_columns(df_ltf)
+            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
+            # Keep the Delta panel visually consistent across refreshes. Plotly's
+            # default autoscaling can make the same Delta series look very different
+            # when the latest candles have a smaller/larger absolute Delta.
+            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
+            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
+            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
+            # A stable reference floor gives a chart appearance close to the original
+            # footprint view while still allowing larger real deltas to expand naturally.
+            delta_axis_top = max(200.0, max_abs_delta * 1.25)
+            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
 
-            df_of = df_of.tail(30).copy()
-            if not df_of.empty:
-                for col in ["open", "high", "low", "close", "buy_vol", "sell_vol", "delta"]:
-                    if col in df_of.columns:
-                        df_of[col] = pd.to_numeric(df_of[col], errors="coerce")
-                df_of = df_of.dropna(subset=["timestamp", "open", "high", "low", "close", "delta"]).copy()
-                df_of["delta"] = df_of["delta"].fillna(0.0)
-                df_of["delta_pos"] = df_of["delta"].clip(lower=0.0)
-                df_of["delta_neg"] = df_of["delta"].clip(upper=0.0)
-
-                # Dynamic symmetric scale keeps small real deltas visible while
-                # preserving proportional magnitude.  The old fixed 200 ceiling
-                # made 10–60 BTC deltas look like flat/vanishing bars.
-                max_abs_delta = float(df_of["delta"].abs().max())
-                if max_abs_delta > 0:
-                    delta_axis_half = max(50.0, max_abs_delta * 1.25)
-                else:
-                    delta_axis_half = 50.0
-
-                fig_footprint = make_subplots(
-                    rows=2,
-                    cols=1,
-                    shared_xaxes=True,
-                    vertical_spacing=0.035,
-                    row_heights=[0.74, 0.26],
-                )
-
-                fig_footprint.add_trace(
-                    go.Candlestick(
-                        x=df_of["timestamp"],
-                        open=df_of["open"],
-                        high=df_of["high"],
-                        low=df_of["low"],
-                        close=df_of["close"],
-                        name=display_name,
-                    ),
-                    row=1,
-                    col=1,
-                )
-
-                # Separate positive/negative traces: this guarantees that every
-                # real positive value is green and every real negative value is
-                # red. Zero stays zero and is intentionally not fabricated.
-                fig_footprint.add_trace(
-                    go.Bar(
-                        x=df_of["timestamp"],
-                        y=df_of["delta_pos"],
-                        name="Positive Delta",
-                        marker_color="#22c55e",
-                        customdata=df_of[["buy_vol", "sell_vol", "delta"]].to_numpy(),
-                        hovertemplate=(
-                            "Time: %{x}<br>"
-                            "Buy: %{customdata[0]:,.6f}<br>"
-                            "Sell: %{customdata[1]:,.6f}<br>"
-                            "Delta: +%{customdata[2]:,.6f}<extra></extra>"
-                        ),
-                    ),
-                    row=2,
-                    col=1,
-                )
-                fig_footprint.add_trace(
-                    go.Bar(
-                        x=df_of["timestamp"],
-                        y=df_of["delta_neg"],
-                        name="Negative Delta",
-                        marker_color="#ef4444",
-                        customdata=df_of[["buy_vol", "sell_vol", "delta"]].to_numpy(),
-                        hovertemplate=(
-                            "Time: %{x}<br>"
-                            "Buy: %{customdata[0]:,.6f}<br>"
-                            "Sell: %{customdata[1]:,.6f}<br>"
-                            "Delta: %{customdata[2]:,.6f}<extra></extra>"
-                        ),
-                    ),
-                    row=2,
-                    col=1,
-                )
-
-                fig_footprint.update_yaxes(
-                    range=[-delta_axis_half, delta_axis_half],
-                    zeroline=True,
-                    zerolinewidth=1,
-                    zerolinecolor="#777777",
-                    showgrid=True,
-                    tickformat=",.0f",
-                    row=2,
-                    col=1,
-                    title_text="Delta",
-                )
-                fig_footprint.update_layout(
-                    height=520,
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    showlegend=False,
-                    hovermode="x unified",
-                    barmode="relative",
-                    bargap=0.12,
-                    uirevision=f"tab6-delta-{timeframe}",
-                )
-                st.plotly_chart(
-                    fig_footprint,
-                    use_container_width=True,
-                    key="of_footprint_chart",
-                )
-                last = df_of.iloc[-1]
+            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
+            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
+            fig_footprint.add_trace(
+                go.Bar(
+                    x=df_of["timestamp"],
+                    y=df_of["delta"],
+                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
+                    name="Flow Delta",
+                    hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
+                ),
+                row=2,col=1,
+            )
+            fig_footprint.update_yaxes(
+                range=[delta_axis_bottom, delta_axis_top],
+                zeroline=True,
+                zerolinewidth=1,
+                showgrid=True,
+                tickformat=",.0f",
+                row=2,
+                col=1,
+            )
+            fig_footprint.update_layout(
+                height=520,
+                margin=dict(l=10,r=10,t=10,b=10),
+                showlegend=False,
+                hovermode="x unified",
+                bargap=0.12,
+            )
+            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
+            last=df_of.iloc[-1]
             c1,c2,c3,c4=st.columns(4)
             c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
             c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
