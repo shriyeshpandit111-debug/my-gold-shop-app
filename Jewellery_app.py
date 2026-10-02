@@ -663,15 +663,15 @@ timeframe = st.session_state["master_timeframe"]
 
 # --- 🏷️ TAB NAME CUSTOMIZATION ---
 DEFAULT_TAB_NAMES = [
-    "⚡ Live Dashboard & OI",
-    "📈 Real-Time Charts",
-    "🔮 3:00-3:20 Gap Predictor",
-    "🎯 Institutional Signals",
-    "📉 Premium Decay (StockMojo)",
-    "💎 Institutional SMC & Order Flow",
-    "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner",
-    "🏛️ ICT CISD & Wyckoff PO3 Strategy",
+    "Tab No 1.⚡ Dashboard & OI",
+    "Tab No 2.📈 Real-Time Charts",
+    "Tab No 3. Gap up Gap down Predictor",
+    "Tab No 4.🎯 Institutional Signals",
+    "Tab No 5.📉 Premium Decay",
+    "Tab No 6.💎 SMC & Order Flow",
+    "Tab No 7.🚀 Market Scanner & Alerts",
+    "Tab No 8.🚀 FVG, CVD & CHOCH",
+    "Tab No 9.🏛️ ICT CISD & Wyckoff",
 ]
 for _i, _default_name in enumerate(DEFAULT_TAB_NAMES, start=1):
     _key = f"tab_name_{_i}"
@@ -863,6 +863,46 @@ def build_market_flow_columns(df):
     return out
 
 
+def _resample_indian_10m_angel_style(df):
+    """Align Indian-market 10-minute candles to the Angel One session anchor.
+
+    Angel One's NSE/BSE intraday 10-minute candles start from the market
+    session anchor (09:15 IST), so the expected buckets are 09:15, 09:25,
+    09:35 ... rather than the generic epoch buckets 09:10, 09:20, 09:30.
+    This helper is only used for Indian 10-minute fallback/resampled data;
+    all other timeframes keep their existing behaviour.
+    """
+    if df is None or df.empty or "timestamp" not in df.columns:
+        return df
+    out = df.copy()
+    out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+    out = out.dropna(subset=["timestamp"]).copy()
+    if out.empty:
+        return out
+
+    # Work in IST. The source dataframe is normally already IST/naive by the
+    # time this helper is called, but preserve timezone-aware inputs safely.
+    if getattr(out["timestamp"].dt, "tz", None) is not None:
+        out["timestamp"] = out["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+
+    # Anchor every trading day at 09:15. Using origin=start_day with a
+    # 15-minute offset produces 09:15/09:25/09:35/... session buckets.
+    out = (
+        out.set_index("timestamp")
+        .resample("10min", origin="start_day", offset="15min", label="left", closed="left")
+        .agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        })
+        .dropna(subset=["open", "high", "low", "close"])
+        .reset_index()
+    )
+    return out
+
+
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
@@ -942,6 +982,8 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
                     columns=["timestamp", "open", "high", "low", "close", "volume"],
                 )
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
+                if target_tf == "10m":
+                    df = _resample_indian_10m_angel_style(df)
                 return df
         except Exception:
             pass
@@ -998,6 +1040,8 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         resample_rule = tf_map.get(target_tf, "1min")
         
         if resample_rule != source_interval:
+            if is_indian and target_tf == "10m":
+                return _resample_indian_10m_angel_style(df)
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1634,7 +1678,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
     if "name_vwap" not in st.session_state:
         st.session_state["name_vwap"] = "VWAP"
     if "name_yt" not in st.session_state:
-        st.session_state["name_yt"] = "🎯 YouTube Strategy Lines"
+        st.session_state["name_yt"] = "🎯 Reversal Lines"
 
     with st.expander("✏️ Customize Feature Names (वैशिष्ट्यांचे नाव बदला)", expanded=False):
         c_n1, c_n2, c_n3 = st.columns(3)
@@ -1646,7 +1690,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             st.session_state["name_choch"] = st.text_input("CHOCH Name", value=st.session_state["name_choch"])
         with c_n3:
             st.session_state["name_vwap"] = st.text_input("VWAP Name", value=st.session_state["name_vwap"])
-            st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
+            st.session_state["name_yt"] = st.text_input("Reversal Lines Name", value=st.session_state["name_yt"])
 
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     
@@ -1759,8 +1803,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
     """ if show_vwap else ""
 
     yt_strategy_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
-    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 Reversal Red Line (Sell): {yt_red_sell}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 Reversal Green Line (Buy): {yt_green_buy}' }});
     """ if show_yt_range else ""
 
     html_code = f"""
@@ -1790,8 +1834,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
         <div class="legend">
             {"<span style='color: #22c55e;'>🟢 Bullish OB: " + str(bullish_ob) + "</span>" if show_ob else ""}
             {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
-            {"<span style='color: #ef4444;'>🎯 YT Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
-            {"<span style='color: #22c55e;'>🎯 YT Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
+            {"<span style='color: #ef4444;'>🎯 Reversal Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
+            {"<span style='color: #22c55e;'>🎯 Reversal Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
             {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
         </div>
         <div id="chart-container"></div>
@@ -2420,9 +2464,19 @@ with tab6:
                     rows=2,
                     cols=1,
                     shared_xaxes=True,
-                    vertical_spacing=0.035,
-                    row_heights=[0.74, 0.26],
+                    vertical_spacing=0.025,
+                    row_heights=[0.68, 0.32],
                 )
+
+                # Explicit candle-width keeps delta columns visible after an
+                # automatic Streamlit rerun; Plotly otherwise may render very
+                # narrow datetime bars until the chart is manually redrawn.
+                if len(df_of) >= 2:
+                    _ts_numeric = pd.to_datetime(df_of["timestamp"]).astype("int64")
+                    _median_step_ms = float(_ts_numeric.diff().dropna().median() / 1_000_000)
+                    _delta_bar_width = max(1000.0, _median_step_ms * 0.72)
+                else:
+                    _delta_bar_width = 60_000.0
 
                 fig_footprint.add_trace(
                     go.Candlestick(
@@ -2446,6 +2500,7 @@ with tab6:
                         y=df_of["delta_pos"],
                         name="Positive Delta",
                         marker_color="#22c55e",
+                        width=_delta_bar_width,
                         customdata=df_of[["buy_vol", "sell_vol", "delta"]].to_numpy(),
                         hovertemplate=(
                             "Time: %{x}<br>"
@@ -2463,6 +2518,7 @@ with tab6:
                         y=df_of["delta_neg"],
                         name="Negative Delta",
                         marker_color="#ef4444",
+                        width=_delta_bar_width,
                         customdata=df_of[["buy_vol", "sell_vol", "delta"]].to_numpy(),
                         hovertemplate=(
                             "Time: %{x}<br>"
@@ -2492,13 +2548,20 @@ with tab6:
                     showlegend=False,
                     hovermode="x unified",
                     barmode="relative",
-                    bargap=0.12,
-                    uirevision=f"tab6-delta-{timeframe}",
+                    bargap=0.03,
+                    bargroupgap=0.0,
+                )
+                # A data-aware key forces Streamlit to mount a fresh Plotly
+                # figure whenever the candle/delta series changes. This fixes
+                # the issue where delta bars appeared only after double-click.
+                _delta_chart_stamp = (
+                    str(timeframe) + "_" + str(len(df_of)) + "_" +
+                    str(int(pd.to_datetime(df_of["timestamp"].iloc[-1]).timestamp()))
                 )
                 st.plotly_chart(
                     fig_footprint,
                     use_container_width=True,
-                    key="of_footprint_chart",
+                    key=f"of_footprint_chart_{_delta_chart_stamp}",
                 )
                 last = df_of.iloc[-1]
             c1,c2,c3,c4=st.columns(4)
