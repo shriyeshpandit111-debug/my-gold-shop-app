@@ -635,22 +635,32 @@ else:
 
 TIMEFRAME_OPTIONS = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
 
+# One shared timeframe state for the complete app.
+# Both timeframe selectors update this same value, so every tab uses the
+# exact timeframe selected from either the sidebar or Tab 2.
 if "global_timeframe" not in st.session_state:
     st.session_state["global_timeframe"] = "5m"
 if "tab2_timeframe" not in st.session_state:
     st.session_state["tab2_timeframe"] = st.session_state["global_timeframe"]
 
-def _sync_timeframe(source_key, target_key):
-    st.session_state[target_key] = st.session_state[source_key]
+def _sync_from_sidebar():
+    selected = st.session_state["global_timeframe"]
+    st.session_state["tab2_timeframe"] = selected
+
+def _sync_from_tab2():
+    selected = st.session_state["tab2_timeframe"]
+    st.session_state["global_timeframe"] = selected
 
 
-timeframe = st.sidebar.selectbox(
+st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Global Timeframe):",
     TIMEFRAME_OPTIONS,
     key="global_timeframe",
-    on_change=_sync_timeframe,
-    args=("global_timeframe", "tab2_timeframe"),
+    on_change=_sync_from_sidebar,
 )
+
+# Always read the active timeframe from the single shared state.
+timeframe = st.session_state["global_timeframe"]
 
 
 # --- 🔊 TEXT TO SPEECH HELPER FUNCTION ---
@@ -1948,10 +1958,12 @@ with tab2:
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
             TIMEFRAME_OPTIONS,
             key="tab2_timeframe",
-            on_change=_sync_timeframe,
-            args=("tab2_timeframe", "global_timeframe"),
+            on_change=_sync_from_tab2,
         )
     
+    # Tab 2 and the sidebar are synchronized; use the shared selection for the chart.
+    chart_timeframe = st.session_state["global_timeframe"]
+
     chart_period_map = {
         "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
         "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
