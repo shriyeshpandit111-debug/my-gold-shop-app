@@ -590,6 +590,7 @@ if market_type == "यादीमधून निवडा":
         [
             "NIFTY 50 (NSE)",
             "BANK NIFTY (NSE)",
+            "SENSEX (BSE)",
             "BTC (Bitcoin)",
             "GOLD (सोने)",
             "SILVER (चांदी)",
@@ -598,13 +599,14 @@ if market_type == "यादीमधून निवडा":
     ticker_map = {
         "NIFTY 50 (NSE)": "^NSEI",
         "BANK NIFTY (NSE)": "^NSEBANK",
+        "SENSEX (BSE)": "^BSESN",
         "BTC (Bitcoin)": "BTC-USD",
         "GOLD (सोने)": "GC=F",
         "SILVER (चांदी)": "SI=F",
     }
     ticker = ticker_map[asset_choice]
     display_name = asset_choice
-    if "NSE" in asset_choice or "NIFTY" in asset_choice:
+    if "NSE" in asset_choice or "NIFTY" in asset_choice or "SENSEX" in asset_choice:
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
@@ -679,6 +681,7 @@ def fetch_live_gift_nifty_change():
 def fetch_angel_one_real_oi(current_price, symbol_name):
     smart_api = st.session_state.get("smart_api_session", None)
     is_bank = "BANK" in symbol_name.upper()
+    is_sensex = "SENSEX" in symbol_name.upper()
 
     price_seed = float(current_price) if current_price else 24000.0
     tick_var = (price_seed % 50) / 50.0
@@ -690,9 +693,15 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
 
     if smart_api:
         try:
-            token = "99926009" if is_bank else "99926000"
+            if is_sensex:
+                token = "99919000"
+                token_exchange = "BSE"
+            else:
+                token = "99926009" if is_bank else "99926000"
+                token_exchange = "NSE"
+
             res = smart_api.getMarketData(
-                "FULL", {"exchangeTokens": {"NSE": [token]}}
+                "FULL", {"exchangeTokens": {token_exchange: [token]}}
             )
 
             if (
@@ -829,7 +838,16 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
 
     if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
         try:
-            token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
+            if "^BSESN" in ticker_symbol:
+                token = "99919000"
+                exchange = "BSE"
+            elif "^NSEI" in ticker_symbol:
+                token = "99926000"
+                exchange = "NSE"
+            else:
+                token = "99926009"
+                exchange = "NSE"
+
             interval_map = {
                 "1m": "ONE_MINUTE",
                 "2m": "THREE_MINUTE",
@@ -848,7 +866,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
             hist_data = smart_api.getCandleData({
-                "exchange": "NSE",
+                "exchange": exchange,
                 "symboltoken": token,
                 "interval": angel_tf,
                 "fromdate": from_date,
@@ -918,13 +936,34 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         
         if resample_rule != source_interval:
             df.set_index("timestamp", inplace=True)
-            resampled_df = df.resample(resample_rule).agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum"
-            }).dropna().reset_index()
+
+            # Indian index 10-minute candles must be aligned to the
+            # exchange session open (09:15 IST): 09:15, 09:25, 09:35, ...
+            # This is intentionally limited to Indian 10m charts so all
+            # other timeframes keep their existing behavior.
+            if is_indian and target_tf == "10m":
+                resampled_df = df.resample(
+                    resample_rule,
+                    origin="start_day",
+                    offset="9h15min",
+                    label="left",
+                    closed="left",
+                ).agg({
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum"
+                }).dropna().reset_index()
+            else:
+                resampled_df = df.resample(resample_rule).agg({
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum"
+                }).dropna().reset_index()
+
             return resampled_df
 
         return df
