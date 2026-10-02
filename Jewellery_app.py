@@ -633,9 +633,23 @@ else:
     display_name = ticker.replace("=X", " / USD")
     is_indian_market = False
 
+TIMEFRAME_OPTIONS = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
+
+if "global_timeframe" not in st.session_state:
+    st.session_state["global_timeframe"] = "5m"
+if "tab2_timeframe" not in st.session_state:
+    st.session_state["tab2_timeframe"] = st.session_state["global_timeframe"]
+
+def _sync_timeframe(source_key, target_key):
+    st.session_state[target_key] = st.session_state[source_key]
+
+
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Global Timeframe):",
-    ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+    TIMEFRAME_OPTIONS,
+    key="global_timeframe",
+    on_change=_sync_timeframe,
+    args=("global_timeframe", "tab2_timeframe"),
 )
 
 
@@ -1932,9 +1946,10 @@ with tab2:
     with col_tf1:
         chart_timeframe = st.selectbox(
             "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
-            index=3,
-            key="custom_chart_tf"
+            TIMEFRAME_OPTIONS,
+            key="tab2_timeframe",
+            on_change=_sync_timeframe,
+            args=("tab2_timeframe", "global_timeframe"),
         )
     
     chart_period_map = {
