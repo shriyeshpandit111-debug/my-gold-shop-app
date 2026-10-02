@@ -1598,13 +1598,373 @@ def render_stockmojo_premium_decay_tab(current_price):
     st.plotly_chart(fig_decay2, use_container_width=True, key="mojo_decay_abs")
 
 
+# --- Persistent Lightweight Charts v2 component ---
+# Streamlit Components v2 render in the main app DOM (not an iframe), so the
+# same Lightweight Charts instance survives normal Streamlit reruns.
+_LIGHTWEIGHT_CHART_COMPONENT = None
+if hasattr(st.components, "v2"):
+    _LIGHTWEIGHT_CHART_COMPONENT = st.components.v2.component(
+        name="smc_pro_persistent_lightweight_chart",
+        html="""
+            <div class="lw-chart-root">
+                <div class="lw-chart-legend" id="lw-chart-legend"></div>
+                <div id="lw-chart-container"></div>
+            </div>
+        """,
+        css="""
+            .lw-chart-root {
+                width: 100%;
+                height: 520px;
+                background: #0e1117;
+                overflow: hidden;
+                position: relative;
+                border-radius: 6px;
+            }
+            #lw-chart-container {
+                width: 100%;
+                height: 500px;
+            }
+            .lw-chart-legend {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                z-index: 10;
+                color: #d1d4dc;
+                font-size: 12px;
+                background: rgba(14, 17, 23, 0.85);
+                padding: 6px 12px;
+                border-radius: 6px;
+                border: 1px solid #374151;
+                pointer-events: none;
+            }
+            .lw-chart-legend span {
+                margin-right: 12px;
+                font-weight: bold;
+            }
+        """,
+        js="""
+            const _lwInstances = new WeakMap();
+            let _lwLibraryPromise = null;
+
+            function _loadLightweightCharts() {
+                if (window.LightweightCharts) {
+                    return Promise.resolve(window.LightweightCharts);
+                }
+                if (_lwLibraryPromise) {
+                    return _lwLibraryPromise;
+                }
+                _lwLibraryPromise = new Promise((resolve, reject) => {
+                    const script = document.createElement("script");
+                    script.src = "https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js";
+                    script.async = true;
+                    script.onload = () => resolve(window.LightweightCharts);
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+                return _lwLibraryPromise;
+            }
+
+            function _sameCandle(a, b) {
+                return a && b &&
+                    a.time === b.time &&
+                    a.open === b.open &&
+                    a.high === b.high &&
+                    a.low === b.low &&
+                    a.close === b.close;
+            }
+
+            function _updateCandles(state, candles) {
+                if (!candles || !candles.length) return;
+
+                const previous = state.candles || [];
+                const canIncrement = previous.length > 0 &&
+                    candles.length >= previous.length &&
+                    candles[0].time === previous[0].time;
+
+                if (!canIncrement) {
+                    // Initial load / timeframe / history change: only this path
+                    // rebuilds the complete series.
+                    state.series.setData(candles);
+                    state.candles = candles.slice();
+                    state.lastTime = candles[candles.length - 1].time;
+                    return;
+                }
+
+                // Normal Streamlit rerun: update only the last existing candle
+                // and append any newly-created candles.
+                let start = Math.max(0, previous.length - 1);
+                for (let i = start; i < candles.length; i++) {
+                    const candle = candles[i];
+                    if (!_sameCandle(previous[i], candle)) {
+                        state.series.update(candle);
+                    }
+                }
+                state.candles = candles.slice();
+                state.lastTime = candles[candles.length - 1].time;
+            }
+
+            function _updateVWAP(state, vwap) {
+                if (!state.vwapSeries) return;
+                if (!vwap || !vwap.length) {
+                    state.vwapSeries.setData([]);
+                    state.vwap = [];
+                    return;
+                }
+
+                const previous = state.vwap || [];
+                const canIncrement = previous.length > 0 &&
+                    vwap.length >= previous.length &&
+                    vwap[0].time === previous[0].time;
+
+                if (!canIncrement) {
+                    state.vwapSeries.setData(vwap);
+                    state.vwap = vwap.slice();
+                    return;
+                }
+
+                const start = Math.max(0, previous.length - 1);
+                for (let i = start; i < vwap.length; i++) {
+                    if (!previous[i] || previous[i].time !== vwap[i].time || previous[i].value !== vwap[i].value) {
+                        state.vwapSeries.update(vwap[i]);
+                    }
+                }
+                state.vwap = vwap.slice();
+            }
+
+            function _clearPriceLines(state) {
+                if (!state.priceLines) return;
+                for (const line of state.priceLines) {
+                    try { state.series.removePriceLine(line); } catch (e) {}
+                }
+                state.priceLines = [];
+            }
+
+            function _addPriceLine(state, cfg) {
+                if (!cfg) return;
+                state.priceLines.push(state.series.createPriceLine(cfg));
+            }
+
+            function _updateOverlays(state, data) {
+                _clearPriceLines(state);
+
+                if (data.show_liq) {
+                    _addPriceLine(state, {
+                        price: data.bsl_price,
+                        color: '#3b82f6',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: '💧 BSL (Liquidity)'
+                    });
+                    _addPriceLine(state, {
+                        price: data.ssl_price,
+                        color: '#f59e0b',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: '💧 SSL (Liquidity)'
+                    });
+                }
+                if (data.show_ob) {
+                    _addPriceLine(state, {
+                        price: data.bullish_ob,
+                        color: '#22c55e',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: '🟢 Bullish OB'
+                    });
+                    _addPriceLine(state, {
+                        price: data.bearish_ob,
+                        color: '#ef4444',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: '🔴 Bearish OB'
+                    });
+                }
+                if (data.show_fvg) {
+                    _addPriceLine(state, {
+                        price: data.bullish_fvg,
+                        color: '#8b5cf6',
+                        lineWidth: 1,
+                        lineStyle: LightweightCharts.LineStyle.LargeDashed,
+                        axisLabelVisible: true,
+                        title: '⚡ Bullish FVG'
+                    });
+                }
+                if (data.show_yt_range) {
+                    _addPriceLine(state, {
+                        price: data.yt_red_sell,
+                        color: '#ef4444',
+                        lineWidth: 3,
+                        lineStyle: LightweightCharts.LineStyle.Dotted,
+                        axisLabelVisible: true,
+                        title: '🎯 YT Red Line (Sell): ' + data.yt_red_sell
+                    });
+                    _addPriceLine(state, {
+                        price: data.yt_green_buy,
+                        color: '#22c55e',
+                        lineWidth: 3,
+                        lineStyle: LightweightCharts.LineStyle.Dotted,
+                        axisLabelVisible: true,
+                        title: '🎯 YT Green Line (Buy): ' + data.yt_green_buy
+                    });
+                }
+            }
+
+            function _updateLegend(state, data) {
+                const legend = state.parent.querySelector('#lw-chart-legend');
+                if (!legend) return;
+                const parts = [];
+                if (data.show_ob) {
+                    parts.push("<span style='color:#22c55e'>🟢 Bullish OB: " + data.bullish_ob + "</span>");
+                    parts.push("<span style='color:#ef4444'>🔴 Bearish OB: " + data.bearish_ob + "</span>");
+                }
+                if (data.show_yt_range) {
+                    parts.push("<span style='color:#ef4444'>🎯 YT Sell: " + data.yt_red_sell + "</span>");
+                    parts.push("<span style='color:#22c55e'>🎯 YT Buy: " + data.yt_green_buy + "</span>");
+                }
+                if (data.show_vwap) {
+                    parts.push("<span style='color:#2962FF'>📈 VWAP</span>");
+                }
+                legend.innerHTML = parts.join("");
+            }
+
+            function _applyData(state, data) {
+                if (!state.ready || !data) return;
+
+                const candles = Array.isArray(data.candles) ? data.candles : [];
+                const timeframe = data.timeframe || '';
+                const firstTime = candles.length ? candles[0].time : null;
+                const historyKey = String(data.asset_title || '') + '|' + timeframe + '|' + String(firstTime);
+
+                if (state.historyKey !== historyKey) {
+                    state.candles = [];
+                    state.vwap = [];
+                    state.historyKey = historyKey;
+                }
+
+                _updateCandles(state, candles);
+
+                if (data.show_vwap) {
+                    if (!state.vwapSeries) {
+                        state.vwapSeries = state.chart.addLineSeries({
+                            color: '#2962FF',
+                            lineWidth: 2,
+                            title: 'VWAP',
+                        });
+                    }
+                    _updateVWAP(state, Array.isArray(data.vwap) ? data.vwap : []);
+                } else if (state.vwapSeries) {
+                    state.vwapSeries.setData([]);
+                    state.vwap = [];
+                }
+
+                // Marker updates are cheap compared with rebuilding candles.
+                state.series.setMarkers(data.show_choch ? (data.markers || []) : []);
+                _updateOverlays(state, data);
+                _updateLegend(state, data);
+            }
+
+            export default function(component) {
+                const { parentElement, data } = component;
+                let state = _lwInstances.get(parentElement);
+
+                if (!state) {
+                    state = {
+                        parent: parentElement,
+                        ready: false,
+                        latestData: data,
+                        chart: null,
+                        series: null,
+                        vwapSeries: null,
+                        priceLines: [],
+                        candles: [],
+                        vwap: [],
+                        historyKey: null,
+                    };
+                    _lwInstances.set(parentElement, state);
+                    state.latestData = data;
+
+                    _loadLightweightCharts().then((LWC) => {
+                        const container = parentElement.querySelector('#lw-chart-container');
+                        if (!container || !LWC) return;
+
+                        state.chart = LWC.createChart(container, {
+                            width: container.clientWidth,
+                            height: 500,
+                            layout: {
+                                backgroundColor: '#0e1117',
+                                textColor: '#d1d4dc',
+                            },
+                            grid: {
+                                vertLines: { color: '#1f2937' },
+                                horzLines: { color: '#1f2937' },
+                            },
+                            crosshair: {
+                                mode: LWC.CrosshairMode.Normal,
+                            },
+                            rightPriceScale: {
+                                borderColor: '#2B2B43',
+                            },
+                            timeScale: {
+                                borderColor: '#2B2B43',
+                                timeVisible: true,
+                                secondsVisible: false,
+                            },
+                        });
+
+                        state.series = state.chart.addCandlestickSeries({
+                            upColor: '#22c55e',
+                            downColor: '#ef4444',
+                            borderDownColor: '#ef4444',
+                            borderUpColor: '#22c55e',
+                            wickDownColor: '#ef4444',
+                            wickUpColor: '#22c55e',
+                        });
+                        state.ready = true;
+                        _applyData(state, state.latestData);
+
+                        state.resizeObserver = new ResizeObserver(() => {
+                            if (state.chart && container.clientWidth > 0) {
+                                state.chart.applyOptions({ width: container.clientWidth });
+                            }
+                        });
+                        state.resizeObserver.observe(container);
+                    }).catch((err) => {
+                        const container = parentElement.querySelector('#lw-chart-container');
+                        if (container) {
+                            container.innerHTML = '<div style="color:#ef4444;padding:12px;font-family:sans-serif">Lightweight Charts load failed.</div>';
+                        }
+                        console.error('Lightweight Charts load failed', err);
+                    });
+                } else {
+                    // Same component instance: do not recreate the chart.
+                    state.latestData = data;
+                    _applyData(state, data);
+                }
+
+                return () => {
+                    // Called only when this component instance is actually unmounted.
+                    if (state.resizeObserver) state.resizeObserver.disconnect();
+                    if (state.chart) {
+                        try { state.chart.remove(); } catch (e) {}
+                    }
+                    _lwInstances.delete(parentElement);
+                };
+            }
+        """,
+    )
+
+
 def render_tradingview_lightweight_chart(df, asset_title):
     if df is None or df.empty:
         st.info("चार्ट डेटा लोड होत आहे...")
         return
 
     st.markdown("### 🎛️ **Chart Overlay Toggles (चार्ट घटक नियंत्रित करा)**")
-    
+
     if "name_ob" not in st.session_state:
         st.session_state["name_ob"] = "Order Blocks (OB)"
     if "name_liq" not in st.session_state:
@@ -1631,7 +1991,6 @@ def render_tradingview_lightweight_chart(df, asset_title):
             st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
 
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
-    
     with col_t1:
         show_ob = st.checkbox(st.session_state["name_ob"], value=True, key="toggle_ob")
     with col_t2:
@@ -1653,7 +2012,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
     df_calc["typical_price"] = (df_calc["high"] + df_calc["low"] + df_calc["close"]) / 3
     df_calc["vwap"] = (df_calc["typical_price"] * df_calc["volume"]).cumsum() / df_calc["volume"].cumsum()
     df_calc["vwap"] = df_calc["vwap"].fillna(df_calc["close"])
-    
+
     for i in range(len(df_calc)):
         r = df_calc.iloc[i]
         try:
@@ -1674,7 +2033,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             if show_choch and i >= 10:
                 prev_highs = df_calc["high"].iloc[i-10:i].max()
                 prev_lows = df_calc["low"].iloc[i-10:i].min()
-                
+
                 if (r["low"] <= prev_lows * 1.001) and (r["close"] > r["open"]):
                     markers.append({
                         "time": time_val,
@@ -1697,13 +2056,13 @@ def render_tradingview_lightweight_chart(df, asset_title):
     lookback_window = min(len(df_calc), 75)
     stable_high = df_calc['high'].iloc[-lookback_window:].max()
     stable_low = df_calc['low'].iloc[-lookback_window:].min()
-    
+
     bsl_price = round(stable_high * 1.002, 2)
     ssl_price = round(stable_low * 0.998, 2)
-    
+
     bullish_ob = round(df_calc['low'].iloc[-lookback_window:].min() * 1.001, 2)
     bearish_ob = round(df_calc['high'].iloc[-lookback_window:].max() * 0.999, 2)
-    
+
     bullish_fvg = round(stable_low * 1.0015, 2)
     bearish_fvg = round(stable_high * 0.9985, 2)
 
@@ -1713,125 +2072,59 @@ def render_tradingview_lightweight_chart(df, asset_title):
     yt_red_sell = round(yt_recent_high * 0.999, 2)
     yt_green_buy = round(yt_recent_low * 1.001, 2)
 
-    candles_json = json.dumps(tv_candles)
-    markers_json = json.dumps(markers) if show_choch else json.dumps([])
-    vwap_json = json.dumps(tv_vwap)
-
-    bsl_line_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }});
-    candlestickSeries.createPriceLine({{ price: {ssl_price}, color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 SSL (Liquidity)' }});
-    """ if show_liq else ""
-
-    ob_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bullish_ob}, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🟢 Bullish OB' }});
-    candlestickSeries.createPriceLine({{ price: {bearish_ob}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 Bearish OB' }});
-    """ if show_ob else ""
-
-    fvg_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});
-    """ if show_fvg else ""
-
-    vwap_series_js = f"""
-    const vwapSeries = chart.addLineSeries({{
-        color: '#2962FF',
-        lineWidth: 2,
-        title: 'VWAP',
-    }});
-    vwapSeries.setData({vwap_json});
-    """ if show_vwap else ""
-
-    yt_strategy_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
-    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
-    """ if show_yt_range else ""
-
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
+    # Streamlit Components v2 keeps this chart instance in the page DOM.
+    # On normal reruns the frontend receives the new data and calls
+    # Lightweight Charts `update()` only for the last/changed candles.
+    if _LIGHTWEIGHT_CHART_COMPONENT is not None:
+        chart_timeframe = st.session_state.get("global_timeframe", "5m")
+        _LIGHTWEIGHT_CHART_COMPONENT(
+            key="persistent_smc_lightweight_chart",
+            data={
+                "asset_title": asset_title,
+                "timeframe": chart_timeframe,
+                "candles": tv_candles,
+                "vwap": tv_vwap,
+                "markers": markers if show_choch else [],
+                "show_ob": show_ob,
+                "show_liq": show_liq,
+                "show_fvg": show_fvg,
+                "show_choch": show_choch,
+                "show_vwap": show_vwap,
+                "show_yt_range": show_yt_range,
+                "bsl_price": bsl_price,
+                "ssl_price": ssl_price,
+                "bullish_ob": bullish_ob,
+                "bearish_ob": bearish_ob,
+                "bullish_fvg": bullish_fvg,
+                "bearish_fvg": bearish_fvg,
+                "yt_red_sell": yt_red_sell,
+                "yt_green_buy": yt_green_buy,
+            },
+        )
+    else:
+        # Compatibility fallback for older Streamlit versions. This preserves
+        # the old rendering behavior but incremental updates require Components v2.
+        candles_json = json.dumps(tv_candles)
+        markers_json = json.dumps(markers) if show_choch else json.dumps([])
+        vwap_json = json.dumps(tv_vwap)
+        bsl_line_js = f"candlestickSeries.createPriceLine({{ price: {bsl_price}, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 BSL (Liquidity)' }}); candlestickSeries.createPriceLine({{ price: {ssl_price}, color: '#f59e0b', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '💧 SSL (Liquidity)' }});" if show_liq else ""
+        ob_lines_js = f"candlestickSeries.createPriceLine({{ price: {bullish_ob}, color: '#22c55e', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🟢 Bullish OB' }}); candlestickSeries.createPriceLine({{ price: {bearish_ob}, color: '#ef4444', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '🔴 Bearish OB' }});" if show_ob else ""
+        fvg_lines_js = f"candlestickSeries.createPriceLine({{ price: {bullish_fvg}, color: '#8b5cf6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.LargeDashed, axisLabelVisible: true, title: '⚡ Bullish FVG' }});" if show_fvg else ""
+        vwap_series_js = f"const vwapSeries = chart.addLineSeries({{ color: '#2962FF', lineWidth: 2, title: 'VWAP' }}); vwapSeries.setData({vwap_json});" if show_vwap else ""
+        yt_strategy_lines_js = f"candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }}); candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});" if show_yt_range else ""
+        html_code = f"""
+        <div id="chart-container" style="width:100%;height:500px;background:#0e1117;"></div>
         <script src="https://unpkg.com/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js"></script>
-        <style>
-            body {{ margin: 0; padding: 0; background-color: #0e1117; overflow: hidden; font-family: sans-serif; }}
-            #chart-container {{ width: 100%; height: 500px; }}
-            .legend {{
-                position: absolute;
-                top: 10px;
-                left: 10px;
-                z-index: 10;
-                color: #d1d4dc;
-                font-size: 12px;
-                background: rgba(14, 17, 23, 0.85);
-                padding: 6px 12px;
-                border-radius: 6px;
-                border: 1px solid #374151;
-            }}
-            .legend span {{ margin-right: 12px; font-weight: bold; }}
-        </style>
-    </head>
-    <body>
-        <div class="legend">
-            {"<span style='color: #22c55e;'>🟢 Bullish OB: " + str(bullish_ob) + "</span>" if show_ob else ""}
-            {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
-            {"<span style='color: #ef4444;'>🎯 YT Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
-            {"<span style='color: #22c55e;'>🎯 YT Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
-            {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
-        </div>
-        <div id="chart-container"></div>
         <script>
-            const container = document.getElementById('chart-container');
-            const chart = LightweightCharts.createChart(container, {{
-                width: container.clientWidth,
-                height: 500,
-                layout: {{
-                    backgroundColor: '#0e1117',
-                    textColor: '#d1d4dc',
-                }},
-                grid: {{
-                    vertLines: {{ color: '#1f2937' }},
-                    horzLines: {{ color: '#1f2937' }},
-                }},
-                crosshair: {{
-                    mode: LightweightCharts.CrosshairMode.Normal,
-                }},
-                rightPriceScale: {{
-                    borderColor: '#2B2B43',
-                }},
-                timeScale: {{
-                    borderColor: '#2B2B43',
-                    timeVisible: true,
-                    secondsVisible: false,
-                }},
-            }});
-
-            const candlestickSeries = chart.addCandlestickSeries({{
-                upColor: '#22c55e',
-                downColor: '#ef4444',
-                borderDownColor: '#ef4444',
-                borderUpColor: '#22c55e',
-                wickDownColor: '#ef4444',
-                wickUpColor: '#22c55e',
-            }});
-
-            const candleData = {candles_json};
-            const markerData = {markers_json};
-            
-            candlestickSeries.setData(candleData);
-            candlestickSeries.setMarkers(markerData);
-
-            {bsl_line_js}
-            {ob_lines_js}
-            {fvg_lines_js}
-            {vwap_series_js}
-            {yt_strategy_lines_js}
-
-            window.addEventListener('resize', () => {{
-                chart.applyOptions({{ width: container.clientWidth }});
-            }});
+        const container=document.getElementById('chart-container');
+        const chart=LightweightCharts.createChart(container,{{width:container.clientWidth,height:500,layout:{{backgroundColor:'#0e1117',textColor:'#d1d4dc'}},grid:{{vertLines:{{color:'#1f2937'}},horzLines:{{color:'#1f2937'}}}},timeScale:{{timeVisible:true,secondsVisible:false}}}});
+        const candlestickSeries=chart.addCandlestickSeries({{upColor:'#22c55e',downColor:'#ef4444',borderDownColor:'#ef4444',borderUpColor:'#22c55e',wickDownColor:'#ef4444',wickUpColor:'#22c55e'}});
+        candlestickSeries.setData({candles_json});
+        candlestickSeries.setMarkers({markers_json});
+        {bsl_line_js}{ob_lines_js}{fvg_lines_js}{vwap_series_js}{yt_strategy_lines_js}
         </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=520, scrolling=False)
+        """
+        components.html(html_code, height=520, scrolling=False)
 
 
 # --- TradingView Widget function for other assets ---
