@@ -70,6 +70,11 @@ chosen_interval = refresh_map[refresh_choice]
 st_autorefresh(interval=chosen_interval, key="datarefresh")
 
 st.sidebar.markdown("---")
+# 🔊 VOICE ALERTS SYSTEM CONFIGURATION
+st.sidebar.header("🔊 Voice & Audio Alerts")
+enable_voice = st.sidebar.checkbox("🔊 Enable Voice Alerts", value=True)
+
+st.sidebar.markdown("---")
 st.sidebar.header("📉 Premium Decay Timeframe")
 decay_tf_choice = st.sidebar.selectbox(
     "Premium Decay Chart Interval:",
@@ -585,7 +590,6 @@ if market_type == "यादीमधून निवडा":
         [
             "NIFTY 50 (NSE)",
             "BANK NIFTY (NSE)",
-            "SENSEX (BSE)",
             "BTC (Bitcoin)",
             "GOLD (सोने)",
             "SILVER (चांदी)",
@@ -594,14 +598,13 @@ if market_type == "यादीमधून निवडा":
     ticker_map = {
         "NIFTY 50 (NSE)": "^NSEI",
         "BANK NIFTY (NSE)": "^NSEBANK",
-        "SENSEX (BSE)": "^BSESN",
         "BTC (Bitcoin)": "BTC-USD",
         "GOLD (सोने)": "GC=F",
         "SILVER (चांदी)": "SI=F",
     }
     ticker = ticker_map[asset_choice]
     display_name = asset_choice
-    if "NSE" in asset_choice or "NIFTY" in asset_choice or "BSE" in asset_choice or "SENSEX" in asset_choice:
+    if "NSE" in asset_choice or "NIFTY" in asset_choice:
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
@@ -614,7 +617,7 @@ elif market_type == "मॅन्युअली नाव टाईप कर�
     )
     ticker = manual_ticker.strip().upper()
     display_name = ticker
-    if ".NS" in ticker or ".BO" in ticker or "NSE" in ticker or "BSE" in ticker or "SENSEX" in ticker:
+    if ".NS" in ticker or "NSE" in ticker:
         is_indian_market = True
     if "BTC" in ticker:
         is_btc_market = True
@@ -628,75 +631,28 @@ else:
     display_name = ticker.replace("=X", " / USD")
     is_indian_market = False
 
-# --- ⏱️ SHARED TIMEFRAME CONTROLLER ---
-# Global Timeframe and Tab-2 Chart Timeframe are two controls for the same
-# master timeframe. Changing either one automatically synchronizes the other,
-# and every tab reads the same master value on the next Streamlit rerun.
-TIMEFRAME_OPTIONS = ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"]
-
-if "master_timeframe" not in st.session_state:
-    st.session_state["master_timeframe"] = "1m"
-if "global_timeframe" not in st.session_state:
-    st.session_state["global_timeframe"] = st.session_state["master_timeframe"]
-if "chart_timeframe" not in st.session_state:
-    st.session_state["chart_timeframe"] = st.session_state["master_timeframe"]
-
-def _sync_timeframe_from_global():
-    value = st.session_state["global_timeframe"]
-    st.session_state["master_timeframe"] = value
-    st.session_state["chart_timeframe"] = value
-
-def _sync_timeframe_from_chart():
-    value = st.session_state["chart_timeframe"]
-    st.session_state["master_timeframe"] = value
-    st.session_state["global_timeframe"] = value
-
-# Sidebar master control. It remains available on every tab.
-st.sidebar.markdown("---")
 timeframe = st.sidebar.selectbox(
     "टाईमफ्रेम निवडा (Global Timeframe):",
-    TIMEFRAME_OPTIONS,
-    key="global_timeframe",
-    on_change=_sync_timeframe_from_global,
+    ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
 )
-timeframe = st.session_state["master_timeframe"]
-
-# --- 🏷️ TAB NAME CUSTOMIZATION ---
-DEFAULT_TAB_NAMES = [
-    "Tab No 1.⚡ Dashboard & OI",
-    "Tab No 2.📈 Real-Time Charts",
-    "Tab No 3. Gap up Gap down Predictor",
-    "Tab No 4.🎯 Institutional Signals",
-    "Tab No 5.📉 Premium Decay",
-    "Tab No 6.💎 SMC & Order Flow",
-    "Tab No 7.🚀 Market Scanner & Alerts",
-    "Tab No 8.🚀 FVG, CVD & CHOCH",
-    "Tab No 9.🏛️ ICT CISD & Wyckoff",
-]
-for _i, _default_name in enumerate(DEFAULT_TAB_NAMES, start=1):
-    _key = f"tab_name_{_i}"
-    if _key not in st.session_state:
-        st.session_state[_key] = _default_name
-
-st.sidebar.info("🔇 Audio alerts बंद आहेत — app आता कोणताही browser/mobile sound trigger करत नाही. फोन Vibrate/Silent वर असल्यास या app कडून आवाज पाठवला जाणार नाही.")
-
-with st.sidebar.expander("🏷️ सर्व Tabs ची नावे बदला", expanded=False):
-    st.caption("इथे बदललेले tab names लगेच लागू होतील. बाकी tab functionality जसाची तशी ठेवली आहे.")
-    for _i in range(1, 10):
-        st.session_state[f"tab_name_{_i}"] = st.text_input(
-            f"Tab {_i} Name",
-            value=st.session_state[f"tab_name_{_i}"],
-            key=f"tab_name_input_{_i}",
-        )
-
-tab_names = [st.session_state[f"tab_name_{_i}"] for _i in range(1, 10)]
 
 
-# --- 🔇 Voice alert compatibility helper ---
-# The Voice & Audio Alerts sidebar option has been removed. Existing signal
-# code can still call this helper safely, but no browser audio is generated.
+# --- 🔊 TEXT TO SPEECH HELPER FUNCTION ---
 def trigger_voice_alert(text_msg):
-    return None
+    if enable_voice:
+        js_speech_code = f"""
+        <script>
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                var msg = new SpeechSynthesisUtterance('{text_msg}');
+                msg.rate = 0.95;
+                msg.pitch = 1.0;
+                msg.lang = 'en-US';
+                window.speechSynthesis.speak(msg);
+            }}
+        </script>
+        """
+        components.html(js_speech_code, height=0, width=0)
 
 
 # --- 🌐 LIVE GIFT NIFTY FETCH FUNCTION ---
@@ -722,9 +678,7 @@ def fetch_live_gift_nifty_change():
 # --- ⚡ 1-Sec Live Price & Angel One Direct Real-Time Fetcher ---
 def fetch_angel_one_real_oi(current_price, symbol_name):
     smart_api = st.session_state.get("smart_api_session", None)
-    symbol_upper = str(symbol_name).upper()
-    is_sensex = "SENSEX" in symbol_upper
-    is_bank = "BANK" in symbol_upper
+    is_bank = "BANK" in symbol_name.upper()
 
     price_seed = float(current_price) if current_price else 24000.0
     tick_var = (price_seed % 50) / 50.0
@@ -736,17 +690,9 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
 
     if smart_api:
         try:
-            if is_sensex:
-                exchange = "BSE"
-                token = "99919000"
-            elif is_bank:
-                exchange = "NSE"
-                token = "99926009"
-            else:
-                exchange = "NSE"
-                token = "99926000"
+            token = "99926009" if is_bank else "99926000"
             res = smart_api.getMarketData(
-                "FULL", {"exchangeTokens": {exchange: [token]}}
+                "FULL", {"exchangeTokens": {"NSE": [token]}}
             )
 
             if (
@@ -863,280 +809,6 @@ def build_market_flow_columns(df):
     return out
 
 
-def data_quality_report(df, source_name=""):
-    """Return a safe, display-ready quality summary for the selected flow dataframe.
-
-    This helper is intentionally non-blocking: a quality-report failure must never
-    stop the Streamlit app or hide the other tabs.
-    """
-    report = {
-        "status": "No data",
-        "rows": 0,
-        "duplicates": 0,
-        "gaps": 0,
-        "last_age_min": None,
-    }
-    if df is None or df.empty:
-        return report
-
-    try:
-        out = df.copy()
-        report["rows"] = int(len(out))
-
-        if "timestamp" not in out.columns:
-            report["status"] = "Data available"
-            return report
-
-        ts = pd.to_datetime(out["timestamp"], errors="coerce")
-        valid_ts = ts.dropna()
-
-        if valid_ts.empty:
-            report["status"] = "Data available"
-            return report
-
-        # Duplicate timestamp count before de-duplication.
-        report["duplicates"] = int(valid_ts.duplicated().sum())
-
-        # Count unusually large gaps relative to the median candle interval.
-        ordered = valid_ts.sort_values()
-        diffs = ordered.diff().dropna().dt.total_seconds().div(60.0)
-        positive_diffs = diffs[diffs > 0]
-        if not positive_diffs.empty:
-            median_gap = float(positive_diffs.median())
-            # A gap > 3x the normal interval is reported, while avoiding
-            # flagging ordinary overnight/weekend gaps as candle defects.
-            report["gaps"] = int((positive_diffs > max(median_gap * 3.0, median_gap + 5.0)).sum())
-
-        # Current UTC time, with timezone handling for both naive and aware data.
-        last_ts = valid_ts.iloc[-1]
-        if getattr(last_ts, "tzinfo", None) is None:
-            last_ts = last_ts.tz_localize("UTC")
-        else:
-            last_ts = last_ts.tz_convert("UTC")
-        now_utc = pd.Timestamp.now(tz="UTC")
-        age_min = (now_utc - last_ts).total_seconds() / 60.0
-        report["last_age_min"] = max(0.0, float(age_min))
-
-        if report["duplicates"] > 0:
-            report["status"] = "Check duplicates"
-        elif report["gaps"] > 0:
-            report["status"] = "Minor gaps"
-        else:
-            report["status"] = "Healthy"
-
-        return report
-    except Exception:
-        # Never let an informational diagnostic break any dashboard tab.
-        report["status"] = "Data available"
-        return report
-
-
-def prepare_orderflow_frame(df, min_rows=20):
-    """Prepare deterministic candle + delta + volume data for Tab 6."""
-    if df is None or df.empty:
-        return None
-    out = df.copy().sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
-    for c in ["open", "high", "low", "close", "volume"]:
-        if c not in out.columns:
-            out[c] = 0.0
-        out[c] = pd.to_numeric(out[c], errors="coerce")
-    out = out.dropna(subset=["timestamp", "open", "high", "low", "close"]).copy()
-    out["volume"] = out["volume"].fillna(0.0).clip(lower=0.0)
-    real_trade_flow = all(c in out.columns for c in ["buy_vol", "sell_vol", "delta"]) and (
-        pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0).abs().sum() > 0 or
-        pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0).abs().sum() > 0
-    )
-    if real_trade_flow:
-        out["flow_source"] = "REAL_EXECUTED_TRADES"
-        out["buy_vol"] = pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0.0).clip(lower=0.0)
-        out["sell_vol"] = pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0.0).clip(lower=0.0)
-        out["delta"] = out["buy_vol"] - out["sell_vol"]
-        out["display_volume"] = out["volume"]
-        out["volume_label"] = "Exchange Volume"
-    else:
-        out["flow_source"] = "OHLCV_PROXY"
-        rng = (out["high"] - out["low"]).clip(lower=0.0)
-        body = out["close"] - out["open"]
-        signed_ratio = (body / rng.replace(0, np.nan)).replace([np.inf, -np.inf], 0).fillna(0).clip(-1, 1)
-        zero_volume = float(out["volume"].abs().sum()) <= 0
-        if zero_volume:
-            # NSE index feeds commonly report zero volume because an index is
-            # not itself an exchange-traded security. Build a stable *activity
-            # proxy* from candle range/body so the delta panel is still useful.
-            # It is intentionally normalized around 100, which keeps the bars
-            # visible like the BTC panel without pretending these are true
-            # exchange trade quantities.
-            typical_range = float(rng.replace(0, np.nan).median())
-            typical_range = max(typical_range, 1e-9)
-            range_factor = (rng / typical_range).replace([np.inf, -np.inf], np.nan).fillna(0).clip(0, 4)
-            body_factor = (body.abs() / rng.replace(0, np.nan)).replace([np.inf, -np.inf], 0).fillna(0).clip(0, 1)
-            activity = (70.0 + 30.0 * range_factor + 40.0 * body_factor).clip(lower=1.0)
-            out["display_volume"] = activity
-            out["volume_label"] = "OHLCV Activity Proxy (Index)"
-        else:
-            out["display_volume"] = out["volume"]
-            out["volume_label"] = "Yahoo/Angel Volume"
-        out["buy_vol"] = (out["display_volume"] * (1.0 + signed_ratio) / 2.0).clip(lower=0.0)
-        out["sell_vol"] = (out["display_volume"] * (1.0 - signed_ratio) / 2.0).clip(lower=0.0)
-        out["delta"] = out["buy_vol"] - out["sell_vol"]
-    out["cvd"] = out["delta"].cumsum()
-    out["delta_ema"] = out["delta"].ewm(span=8, adjust=False).mean()
-    return out.tail(max(min_rows, min(len(out), 1200))).reset_index(drop=True)
-
-
-def detect_structure_events(df, swing=3):
-    """Detect simple close-confirmed market-structure events without blocking the UI.
-
-    A confirmed swing high/low is formed only when the candle has `swing` bars
-    on both sides. A close above the latest confirmed swing high is BOS bullish;
-    a close below the latest confirmed swing low is BOS bearish. Repeated events
-    at the same level are de-duplicated.
-    """
-    columns = ["timestamp", "type", "level"]
-    if df is None or df.empty or len(df) < max(2 * swing + 3, 9):
-        return pd.DataFrame(columns=columns)
-
-    try:
-        work = df[["timestamp", "high", "low", "close"]].copy()
-        for c in ["high", "low", "close"]:
-            work[c] = pd.to_numeric(work[c], errors="coerce")
-        work = work.dropna(subset=["timestamp", "high", "low", "close"]).reset_index(drop=True)
-        if len(work) < max(2 * swing + 3, 9):
-            return pd.DataFrame(columns=columns)
-
-        highs = work["high"].to_numpy(float)
-        lows = work["low"].to_numpy(float)
-        closes = work["close"].to_numpy(float)
-        events = []
-        last_high = None
-        last_low = None
-        broken_high = None
-        broken_low = None
-
-        # Confirmed swing points become available only after `swing` bars to
-        # their right, so there is no look-ahead in the reported event itself.
-        for i in range(swing, len(work) - swing):
-            left_h = highs[i - swing:i]
-            right_h = highs[i + 1:i + 1 + swing]
-            left_l = lows[i - swing:i]
-            right_l = lows[i + 1:i + 1 + swing]
-
-            is_swing_high = highs[i] >= np.max(left_h) and highs[i] >= np.max(right_h)
-            is_swing_low = lows[i] <= np.min(left_l) and lows[i] <= np.min(right_l)
-
-            if is_swing_high:
-                last_high = float(highs[i])
-            if is_swing_low:
-                last_low = float(lows[i])
-
-            # Use the first close after the swing confirmation point.
-            check_i = i + swing
-            if check_i >= len(work):
-                continue
-            close_now = float(closes[check_i])
-            ts_now = work["timestamp"].iloc[check_i]
-
-            if last_high is not None and close_now > last_high:
-                if broken_high is None or abs(broken_high - last_high) > 1e-12:
-                    events.append({"timestamp": ts_now, "type": "Bullish BOS", "level": last_high})
-                    broken_high = last_high
-
-            if last_low is not None and close_now < last_low:
-                if broken_low is None or abs(broken_low - last_low) > 1e-12:
-                    events.append({"timestamp": ts_now, "type": "Bearish BOS", "level": last_low})
-                    broken_low = last_low
-
-        if not events:
-            return pd.DataFrame(columns=columns)
-        return pd.DataFrame(events, columns=columns).drop_duplicates(
-            subset=["timestamp", "type", "level"]
-        ).reset_index(drop=True)
-    except Exception:
-        return pd.DataFrame(columns=columns)
-
-
-def calculate_vwap_bands(df):
-    """Session/weekly VWAP and volume-weighted 1/2 sigma bands."""
-    if df is None or df.empty:
-        return df
-    out = df.copy()
-    vol = pd.to_numeric(out.get("display_volume", out.get("volume", 0)), errors="coerce").fillna(0.0).clip(lower=0.0)
-    tp = (out["high"] + out["low"] + out["close"]) / 3.0
-    session_key = out["timestamp"].dt.date
-    week_key = out["timestamp"].dt.to_period("W").astype(str)
-    for key, prefix in [(session_key, "session"), (week_key, "weekly")]:
-        pv = (tp * vol).groupby(key).cumsum()
-        vv = vol.groupby(key).cumsum()
-        out[f"{prefix}_vwap"] = (pv / vv.replace(0, np.nan)).fillna(out["close"])
-    dev = ((tp - out["session_vwap"]) ** 2 * vol).groupby(session_key).cumsum() / vol.groupby(session_key).cumsum().replace(0, np.nan)
-    sigma = np.sqrt(dev.clip(lower=0)).fillna(0.0)
-    out["vwap_upper_1"] = out["session_vwap"] + sigma
-    out["vwap_lower_1"] = out["session_vwap"] - sigma
-    out["vwap_upper_2"] = out["session_vwap"] + 2 * sigma
-    out["vwap_lower_2"] = out["session_vwap"] - 2 * sigma
-    return out
-
-
-def detect_smart_money_zones(df):
-    """Detect actual 3-candle FVGs and displacement-based Order Blocks."""
-    if df is None or len(df) < 5:
-        return {"bull_fvg": None, "bear_fvg": None, "bull_ob": None, "bear_ob": None}
-    x = df.copy().reset_index(drop=True)
-    atr = (x["high"] - x["low"]).rolling(14).mean().bfill()
-    bull_fvg = bear_fvg = bull_ob = bear_ob = None
-    for i in range(2, len(x)):
-        if float(x.loc[i, "low"]) > float(x.loc[i-2, "high"]):
-            bull_fvg = {"low": float(x.loc[i-2, "high"]), "high": float(x.loc[i, "low"]), "index": i}
-        if float(x.loc[i, "high"]) < float(x.loc[i-2, "low"]):
-            bear_fvg = {"low": float(x.loc[i, "high"]), "high": float(x.loc[i-2, "low"]), "index": i}
-        disp = float(x.loc[i, "close"] - x.loc[i, "open"])
-        if disp > 1.2 * float(atr.iloc[i]) and float(x.loc[i-1, "close"]) < float(x.loc[i-1, "open"]):
-            bull_ob = {"low": float(x.loc[i-1, "low"]), "high": float(x.loc[i-1, "high"]), "index": i-1}
-        if disp < -1.2 * float(atr.iloc[i]) and float(x.loc[i-1, "close"]) > float(x.loc[i-1, "open"]):
-            bear_ob = {"low": float(x.loc[i-1, "low"]), "high": float(x.loc[i-1, "high"]), "index": i-1}
-    return {"bull_fvg": bull_fvg, "bear_fvg": bear_fvg, "bull_ob": bull_ob, "bear_ob": bear_ob}
-
-
-def _resample_indian_10m_angel_style(df):
-    """Align Indian-market 10-minute candles to the Angel One session anchor.
-
-    Angel One's NSE/BSE intraday 10-minute candles start from the market
-    session anchor (09:15 IST), so the expected buckets are 09:15, 09:25,
-    09:35 ... rather than the generic epoch buckets 09:10, 09:20, 09:30.
-    This helper is only used for Indian 10-minute fallback/resampled data;
-    all other timeframes keep their existing behaviour.
-    """
-    if df is None or df.empty or "timestamp" not in df.columns:
-        return df
-    out = df.copy()
-    out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
-    out = out.dropna(subset=["timestamp"]).copy()
-    if out.empty:
-        return out
-
-    # Work in IST. The source dataframe is normally already IST/naive by the
-    # time this helper is called, but preserve timezone-aware inputs safely.
-    if getattr(out["timestamp"].dt, "tz", None) is not None:
-        out["timestamp"] = out["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-
-    # Anchor the resampling grid explicitly to the Indian cash-market open.
-    # This produces 09:15, 09:25, 09:35, ... instead of generic 09:10/09:20.
-    out = (
-        out.set_index("timestamp")
-        .resample("10min", origin="start_day", offset="9h15min", label="left", closed="left")
-        .agg({
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        })
-        .dropna(subset=["open", "high", "low", "close"])
-        .reset_index()
-    )
-    return out
-
-
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
@@ -1157,17 +829,7 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
 
     if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
         try:
-            # Angel One index tokens / exchanges. Sensex is a BSE index.
-            if "^BSESN" in ticker_symbol or "SENSEX" in str(ticker_symbol).upper():
-                exchange = "BSE"
-                token = "99919000"
-            elif "^NSEI" in ticker_symbol:
-                exchange = "NSE"
-                token = "99926000"
-            else:
-                exchange = "NSE"
-                token = "99926009"
-
+            token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
             interval_map = {
                 "1m": "ONE_MINUTE",
                 "2m": "THREE_MINUTE",
@@ -1179,31 +841,14 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             }
             angel_tf = interval_map.get(target_tf, "ONE_MINUTE")
 
-            # Respect the requested chart window. For Tab-2's 20d chart,
-            # Angel One can provide up to 30 days for 1-minute candles.
-            _period_days_map = {
-                "20d": 20, "30d": 30, "60d": 60, "90d": 90,
-                "120d": 120, "1y": 365, "2y": 730, "max": 2000,
-            }
-            days_back = _period_days_map.get(str(custom_period), 5)
-            if target_tf == "1m":
-                days_back = min(days_back, 30)
-            elif target_tf in {"2m", "3m"}:
-                days_back = min(days_back, 60)
-            elif target_tf in {"5m", "10m", "15m", "30m"}:
-                days_back = min(days_back, 200)
-            elif target_tf == "1h":
-                days_back = min(days_back, 400)
-            elif target_tf == "1d":
-                days_back = min(days_back, 2000)
-
+            days_back = 30 if "mo" in custom_period or "y" in custom_period else 5
             from_date = (datetime.now() - timedelta(days=days_back)).strftime(
                 "%Y-%m-%d %H:%M"
             )
             to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
             hist_data = smart_api.getCandleData({
-                "exchange": exchange,
+                "exchange": "NSE",
                 "symboltoken": token,
                 "interval": angel_tf,
                 "fromdate": from_date,
@@ -1215,20 +860,8 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
                     hist_data["data"],
                     columns=["timestamp", "open", "high", "low", "close", "volume"],
                 )
-                df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-                df = df.dropna(subset=["timestamp"]).copy()
-
-                # Angel One's native TEN_MINUTE endpoint already returns
-                # session-aligned 09:15, 09:25, 09:35... candles. Do not
-                # resample those candles a second time (that can regroup OHLC
-                # values and create different-looking bars). Keep its native
-                # buckets and only normalize timestamps for consistent charts.
-                if getattr(df["timestamp"].dt, "tz", None) is not None:
-                    df["timestamp"] = (
-                        df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-                    )
-                df = df.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
-                return df.reset_index(drop=True)
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                return df
         except Exception:
             pass
 
@@ -1284,8 +917,6 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
         resample_rule = tf_map.get(target_tf, "1min")
         
         if resample_rule != source_interval:
-            if is_indian and target_tf == "10m":
-                return _resample_indian_10m_angel_style(df)
             df.set_index("timestamp", inplace=True)
             resampled_df = df.resample(resample_rule).agg({
                 "open": "first",
@@ -1922,7 +1553,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
     if "name_vwap" not in st.session_state:
         st.session_state["name_vwap"] = "VWAP"
     if "name_yt" not in st.session_state:
-        st.session_state["name_yt"] = "🎯 Reversal Lines"
+        st.session_state["name_yt"] = "🎯 YouTube Strategy Lines"
 
     with st.expander("✏️ Customize Feature Names (वैशिष्ट्यांचे नाव बदला)", expanded=False):
         c_n1, c_n2, c_n3 = st.columns(3)
@@ -1934,7 +1565,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             st.session_state["name_choch"] = st.text_input("CHOCH Name", value=st.session_state["name_choch"])
         with c_n3:
             st.session_state["name_vwap"] = st.text_input("VWAP Name", value=st.session_state["name_vwap"])
-            st.session_state["name_yt"] = st.text_input("Reversal Lines Name", value=st.session_state["name_yt"])
+            st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
 
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     
@@ -2047,8 +1678,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
     """ if show_vwap else ""
 
     yt_strategy_lines_js = f"""
-    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 Reversal Red Line (Sell): {yt_red_sell}' }});
-    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 Reversal Green Line (Buy): {yt_green_buy}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_red_sell}, color: '#ef4444', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Red Line (Sell): {yt_red_sell}' }});
+    candlestickSeries.createPriceLine({{ price: {yt_green_buy}, color: '#22c55e', lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: '🎯 YT Green Line (Buy): {yt_green_buy}' }});
     """ if show_yt_range else ""
 
     html_code = f"""
@@ -2078,8 +1709,8 @@ def render_tradingview_lightweight_chart(df, asset_title):
         <div class="legend">
             {"<span style='color: #22c55e;'>🟢 Bullish OB: " + str(bullish_ob) + "</span>" if show_ob else ""}
             {"<span style='color: #ef4444;'>🔴 Bearish OB: " + str(bearish_ob) + "</span>" if show_ob else ""}
-            {"<span style='color: #ef4444;'>🎯 Reversal Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
-            {"<span style='color: #22c55e;'>🎯 Reversal Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
+            {"<span style='color: #ef4444;'>🎯 YT Sell: " + str(yt_red_sell) + "</span>" if show_yt_range else ""}
+            {"<span style='color: #22c55e;'>🎯 YT Buy: " + str(yt_green_buy) + "</span>" if show_yt_range else ""}
             {"<span style='color: #2962FF;'>📈 VWAP</span>" if show_vwap else ""}
         </div>
         <div id="chart-container"></div>
@@ -2234,7 +1865,17 @@ with col_t2:
 st.markdown("---")
 
 # 🌟 TAB NAVIGATION
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(tab_names)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    "⚡ Live Dashboard & OI",
+    "📈 Real-Time Charts",
+    "🔮 3:00-3:20 Gap Predictor",
+    "🎯 Institutional Signals",
+    "📉 Premium Decay (StockMojo)",
+    "💎 Institutional SMC & Order Flow",
+    "🚀 Advanced Market Scanner & Alerts",
+    "🚀 FVG, CVD & CHOCH Scanner",
+    "🏛️ ICT CISD & Wyckoff PO3 Strategy"
+])
 
 with tab1:
     if is_indian_market:
@@ -2246,28 +1887,24 @@ with tab1:
 
 with tab2:
     st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
-
-    # Tab 2 has its own timeframe control, but it is synchronized with the
-    # sidebar Global Timeframe. Changing either control changes ALL tabs.
-    chart_timeframe = st.selectbox(
-        "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
-        TIMEFRAME_OPTIONS,
-        key="chart_timeframe",
-        on_change=_sync_timeframe_from_chart,
-    )
-    timeframe = st.session_state["master_timeframe"]
-    st.caption(
-        f"मागील २० दिवसांचा कॅन्डलस्टिक डेटा — {timeframe} timeframe नुसार. BTC आणि Indian indices साठी उपलब्ध historical source मधून पूर्ण २० दिवस fetch केले जातात. "
-        "Sidebar Global Timeframe आणि Tab-2 Chart Timeframe एकमेकांशी synchronized आहेत; "
-        "एकात बदल केल्यावर सर्व tabs त्याच timeframe वर update होतील."
-    )
-
+    st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
+    
+    col_tf1, col_tf2 = st.columns([2, 5])
+    with col_tf1:
+        chart_timeframe = st.selectbox(
+            "⏱️ चार्ट टाईमफ्रेम निवडा (Chart Timeframe):",
+            ["1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "4h", "1d"],
+            index=3,
+            key="custom_chart_tf"
+        )
+    
     chart_period_map = {
-        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d",
+        "1m": "20d", "2m": "20d", "3m": "20d", "5m": "20d", "10m": "20d", "15m": "20d", "30m": "30d", 
         "1h": "60d", "2h": "90d", "4h": "120d", "1d": "1y"
     }
-    selected_period = chart_period_map.get(timeframe, "20d")
-    df_chart = fetch_and_resample_data(ticker, timeframe, is_indian_market, custom_period=selected_period)
+    selected_period = chart_period_map.get(chart_timeframe, "20d")
+    
+    df_chart = fetch_and_resample_data(ticker, chart_timeframe, is_indian_market, custom_period=selected_period)
     render_tradingview_lightweight_chart(df_chart if df_chart is not None else df_ltf, display_name)
 
     st.markdown("---")
@@ -2283,12 +1920,6 @@ with tab2:
         render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
     with c4:
         render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
-
-    c5, c6 = st.columns(2)
-    with c5:
-        render_tv_widget("BSE:SENSEX", "Sensex (BSE) Live Chart")
-    with c6:
-        st.empty()
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
@@ -2653,238 +2284,311 @@ with tab6:
 
     if is_btc_market:
         st.success("🟢 Binance Spot WebSocket LIVE — @aggTrade + @bookTicker")
-        st.caption("BTC Delta = aggressive buy volume − aggressive sell volume from real Binance executed trades. Closed candles are frozen; only the current candle updates.")
-        st.caption(f"Endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | Trades received: {int(btc_stream_state.get('trade_count') or 0):,}")
-        flow_source_name = "Binance Spot aggTrade"
+        st.caption("Delta = aggressive buy volume − aggressive sell volume from Binance executed trades. Closed Binance candles are immutable; only the current candle updates.")
+        st.caption(f"Market-data endpoint: {btc_stream_state.get('endpoint') or btc_stream_state.get('rest_endpoint') or 'connecting'} | WebSocket trades received: {int(btc_stream_state.get('trade_count') or 0):,}")
     elif is_indian_market:
-        flow_source_name = "Yahoo Finance OHLCV + WebSocket live quote"
-        ws_state = yahoo_live_state.get("connected")
-        st.info(f"{display_name} साठी Yahoo Finance historical OHLCV + WebSocket live quote वापरला जात आहे. WebSocket live price देते; exchange aggressor-side BUY/SELL trades उपलब्ध नसल्यामुळे delta हा clearly-labelled OHLCV candle-flow proxy आहे. WebSocket: {'Connected' if ws_state else 'Fallback/Connecting'}")
+        source="Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance"
+        st.info(f"{display_name} साठी {source} market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
     else:
-        flow_source_name = "Yahoo Finance OHLCV"
-        st.info(f"{display_name} साठी Yahoo Finance OHLCV वापरला जात आहे. Yahoo OHLCV feed मध्ये exchange aggressor-side trades नसल्यामुळे delta हा proxy आहे; chart WebSocket/live refresh असला तरी source field नसल्यास real bid/ask delta म्हणून तो दाखवला जाणार नाही.")
+        st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे. Binance trade/order-book data फक्त BTC साठी वापरले जाते.")
 
-    st.caption("Deterministic flow engine: one selected timeframe, one sorted/deduplicated dataframe, same candle used for candle + delta + volume + CVD.")
+    st.caption("इन्स्टिट्यूशनल प्लेयर्स, लिक्विडिटी स्विप्स, वॉल्यूम प्रोफाईल आणि ऑर्डर ब्लॉक ट्रॅकिंगचे प्रगत टूल्स.")
     st.markdown("---")
-
-    flow_df = df_ltf.copy() if df_ltf is not None else None
-    if is_gold_silver:
-        try:
-            fresh = fetch_and_resample_data(ticker, timeframe, False, custom_period="7d")
-            if fresh is not None and not fresh.empty:
-                flow_df = fresh
-        except Exception:
-            pass
-    # Re-fetch Indian Tab-6 history independently from the global dataframe so
-    # the footprint panel is never limited to a single latest-session request.
-    if is_indian_market:
-        try:
-            indian_flow = fetch_and_resample_data(ticker, timeframe, True, custom_period="20d")
-            if indian_flow is not None and not indian_flow.empty:
-                flow_df = indian_flow
-        except Exception:
-            pass
-    flow_df = prepare_orderflow_frame(flow_df, min_rows=1200)
-    if flow_df is not None and not flow_df.empty:
-        flow_df = calculate_vwap_bands(flow_df)
-
-    quality = data_quality_report(flow_df, flow_source_name)
-    q1,q2,q3,q4,q5 = st.columns(5)
-    q1.metric("Data Status", quality["status"])
-    q2.metric("Bars", f"{quality['rows']:,}")
-    q3.metric("Duplicate Timestamps", f"{quality['duplicates']}")
-    q4.metric("Large Gaps", f"{quality['gaps']}")
-    q5.metric("Last Bar Age", "—" if quality["last_age_min"] is None else f"{quality['last_age_min']:.1f} min")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
-    st.caption("Layout is fixed as: Candles → Net Delta. BTC uses real executed-trade delta; NIFTY/BANKNIFTY use a clearly-labelled OHLCV candle-flow proxy when Yahoo does not provide aggressor-side trades.")
+    st.caption("BTC साठी real Binance executed-trade flow; इतर assets साठी त्यांच्या उपलब्ध OHLCV data वर आधारित candle-flow proxy.")
 
-    if flow_df is not None and len(flow_df) >= 2:
-        # Indian indices: show a useful multi-session window and compress
-        # NSE non-trading hours/weekends so candles and delta bars stay together.
-        # BTC keeps the compact recent window because its market is 24x7.
-        chart_bars = 96 if is_btc_market else min(len(flow_df), 420)
-        chart_df = flow_df.tail(chart_bars).copy()
+    col_of1, col_of2 = st.columns([3,1])
+    with col_of1:
+        if df_ltf is not None and not df_ltf.empty:
+            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
+            # Keep the Delta panel visually consistent across refreshes. Plotly's
+            # default autoscaling can make the same Delta series look very different
+            # when the latest candles have a smaller/larger absolute Delta.
+            # The bars remain the REAL delta values; only the y-axis display range is stabilized.
+            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
+            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
+            # A stable reference floor gives a chart appearance close to the original
+            # footprint view while still allowing larger real deltas to expand naturally.
+            delta_axis_top = max(200.0, max_abs_delta * 1.25)
+            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
 
-        fig_footprint = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.035,
-            row_heights=[0.72, 0.28],
-            subplot_titles=("Price / Candles", "Net Delta (Buy − Sell)"),
-        )
-        fig_footprint.add_trace(go.Candlestick(
-            x=chart_df["timestamp"], open=chart_df["open"], high=chart_df["high"],
-            low=chart_df["low"], close=chart_df["close"], name="Candles",
-            increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
-            increasing_fillcolor="#22c55e", decreasing_fillcolor="#ef4444",
-        ), row=1, col=1)
-        delta_colors = ["#22c55e" if float(v) >= 0 else "#ef4444" for v in chart_df["delta"]]
-        # Match bar width to the selected timeframe so delta bars do not
-        # collapse into hairline marks on the date axis.
-        delta_width_ms = {
-            "1m": 45_000, "2m": 90_000, "3m": 135_000,
-            "5m": 240_000, "10m": 540_000, "15m": 840_000,
-            "30m": 1_740_000, "1h": 3_540_000
-        }.get(timeframe, 540_000)
-
-        fig_footprint.add_trace(go.Bar(
-            x=chart_df["timestamp"], y=chart_df["delta"], name="Net Delta",
-            marker_color=delta_colors, width=delta_width_ms,
-            hovertemplate="%{x|%d-%m %H:%M IST}<br>Delta: %{y:,.2f}<extra></extra>",
-        ), row=2, col=1)
-        fig_footprint.add_hline(y=0, line_width=1, line_dash="dot", row=2, col=1)
-
-        # NSE cash-market session is 09:15–15:30 IST. Compress overnight,
-        # weekends and holidays are naturally absent from the OHLCV series.
-        xaxis_common = dict(type="date", tickformat="%d-%m %H:%M")
-        if is_indian_market:
-            xaxis_common["rangebreaks"] = [
-                dict(bounds=["sat", "mon"]),
-                dict(bounds=[15.5, 9.25], pattern="hour"),
-            ]
-        fig_footprint.update_xaxes(**xaxis_common, row=1, col=1)
-        fig_footprint.update_xaxes(**xaxis_common, row=2, col=1)
-        fig_footprint.update_layout(
-            height=620, margin=dict(l=20,r=20,t=50,b=30), showlegend=False,
-            hovermode="x unified", xaxis_rangeslider_visible=False,
-            uirevision=f"tab6-{display_name}-{timeframe}",
-            bargap=0.08,
-        )
-        fig_footprint.update_yaxes(title_text="Price", row=1, col=1, fixedrange=False)
-        fig_footprint.update_yaxes(title_text="Delta", row=2, col=1, zeroline=True, rangemode="normal")
-        st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_2pane_v4")
-
-        last = flow_df.iloc[-1]
-        prev = flow_df.iloc[-2]
-        m1,m2,m3,m4,m5 = st.columns(5)
-        m1.metric("Buy Flow Proxy" if flow_df["flow_source"].iloc[-1] != "REAL_EXECUTED_TRADES" else "Buy Flow", f"{float(last['buy_vol']):,.2f}")
-        m2.metric("Sell Flow Proxy" if flow_df["flow_source"].iloc[-1] != "REAL_EXECUTED_TRADES" else "Sell Flow", f"{float(last['sell_vol']):,.2f}")
-        m3.metric("Net Delta Proxy" if flow_df["flow_source"].iloc[-1] != "REAL_EXECUTED_TRADES" else "Net Delta", f"{float(last['delta']):,.2f}", delta=f"{float(last['delta']-prev['delta']):,.2f}")
-        m4.metric("CVD Proxy" if flow_df["flow_source"].iloc[-1] != "REAL_EXECUTED_TRADES" else "CVD", f"{float(last['cvd']):,.2f}")
-        m5.metric("Live Price", f"{current_price:,.2f}")
-        st.caption(f"Flow source: {flow_source_name} | Delta source: {last['flow_source']} | Volume basis: {last['volume_label']} | Timestamp: IST")
-
-        st.markdown("#### 📊 CVD / Delta Divergence")
-        recent = flow_df.tail(60).copy()
-        price_change_lookback = float(recent["close"].iloc[-1] - recent["close"].iloc[0])
-        cvd_change = float(recent["cvd"].iloc[-1] - recent["cvd"].iloc[0])
-        div_a, div_b, div_c = st.columns(3)
-        div_a.metric("Price Change", f"{price_change_lookback:,.2f}")
-        div_b.metric("CVD Change", f"{cvd_change:,.4f}")
-        if price_change_lookback > 0 and cvd_change < 0:
-            divergence = "Bearish delta divergence"
-        elif price_change_lookback < 0 and cvd_change > 0:
-            divergence = "Bullish delta divergence"
+            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
+            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
+            fig_footprint.add_trace(
+                go.Bar(
+                    x=df_of["timestamp"],
+                    y=df_of["delta"],
+                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
+                    name="Flow Delta",
+                    hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
+                ),
+                row=2,col=1,
+            )
+            fig_footprint.update_yaxes(
+                range=[delta_axis_bottom, delta_axis_top],
+                zeroline=True,
+                zerolinewidth=1,
+                showgrid=True,
+                tickformat=",.0f",
+                row=2,
+                col=1,
+            )
+            fig_footprint.update_layout(
+                height=520,
+                margin=dict(l=10,r=10,t=10,b=10),
+                showlegend=False,
+                hovermode="x unified",
+                bargap=0.12,
+            )
+            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
+            last=df_of.iloc[-1]
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
+            c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
+            c3.metric("Net Delta",f"{last['delta']:,.4f}")
+            c4.metric("Live Price",f"{current_price:,.2f}")
+            st.caption("Flow source: Real Binance executed-trade flow" if is_btc_market else "Flow source: Angel One / Yahoo Finance OHLCV candle-flow proxy")
         else:
-            divergence = "No clear price/CVD divergence"
-        div_c.metric("Divergence State", divergence)
-    else:
-        st.warning("Order Flow chart साठी पुरेसा OHLCV data उपलब्ध नाही. Live source येताच chart पुन्हा भरला जाईल.")
-        flow_df = pd.DataFrame()
+            df_of=pd.DataFrame()
+            st.info("Order Flow डेटा उपलब्ध होत आहे...")
 
-    with st.expander("🔍 Live Footprint / Bid-Ask Details", expanded=True):
-        if is_btc_market and binance_btc is not None:
-            bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
-            ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
-            o1,o2,o3,o4 = st.columns(4)
-            o1.metric("Best Bid", f"{bid:,.2f}" if bid>0 else "Waiting…")
-            o2.metric("Bid Qty", f"{bid_qty:,.6f}" if bid_qty>0 else "Waiting…")
-            o3.metric("Best Ask", f"{ask:,.2f}" if ask>0 else "Waiting…")
-            o4.metric("Ask Qty", f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
-            if bid>0 and ask>0:
-                st.caption(f"Spread: {ask-bid:,.2f} USDT | Source: Binance @bookTicker")
-        elif not flow_df.empty:
-            z = flow_df.iloc[-1]
-            o1,o2,o3 = st.columns(3)
-            label_suffix = "" if z.get("flow_source") == "REAL_EXECUTED_TRADES" else " Proxy"
-            o1.metric(f"Buy Flow{label_suffix}", f"{float(z['buy_vol']):,.2f}")
-            o2.metric(f"Sell Flow{label_suffix}", f"{float(z['sell_vol']):,.2f}")
-            o3.metric(f"Delta{label_suffix}", f"{float(z['delta']):,.2f}")
-            st.caption("NIFTY/BANKNIFTY: Yahoo Finance does not expose exchange aggressor-side BUY/SELL trades for the index. The displayed delta is an OHLCV candle-flow activity proxy, while the live price can come from Yahoo WebSocket.")
+    with col_of2:
+        st.markdown("##### 🔍 Live Footprint Insights")
+        if not df_of.empty:
+            last_buy=float(df_of['buy_vol'].iloc[-1])
+            last_sell=float(df_of['sell_vol'].iloc[-1])
+            last_delta=float(df_of['delta'].iloc[-1])
+            st.metric("Buyer Volume (Ask)",f"{last_buy:,.4f}")
+            st.metric("Seller Volume (Bid)",f"{last_sell:,.4f}")
+            st.metric("Net Delta Imbalance",f"{last_delta:,.4f}",delta_color="normal")
+            if last_delta>0: st.success("🟢 Positive buying flow")
+            elif last_delta<0: st.error("🔴 Negative selling flow")
+            else: st.info("Neutral flow")
+
+    if is_btc_market and binance_btc is not None:
+        st.markdown("### Live Best Bid / Ask")
+        bid=float(btc_stream_state.get("best_bid") or 0.0); bid_qty=float(btc_stream_state.get("best_bid_qty") or 0.0)
+        ask=float(btc_stream_state.get("best_ask") or 0.0); ask_qty=float(btc_stream_state.get("best_ask_qty") or 0.0)
+        o1,o2,o3,o4=st.columns(4)
+        o1.metric("Best Bid",f"{bid:,.2f}" if bid>0 else "Waiting…")
+        o2.metric("Bid Qty",f"{bid_qty:,.6f}" if bid_qty>0 else "Waiting…")
+        o3.metric("Best Ask",f"{ask:,.2f}" if ask>0 else "Waiting…")
+        o4.metric("Ask Qty",f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
+        if bid>0 and ask>0: st.caption(f"Live spread: {ask-bid:,.2f} USDT | Order-book source: Binance @bookTicker")
 
     st.markdown("---")
-    st.markdown("### 2️⃣ **VWAP + Sigma Bands / Structure**")
-    if not flow_df.empty:
-        z=flow_df.iloc[-1]
-        v1,v2,v3,v4 = st.columns(4)
-        v1.metric("Session VWAP", f"{float(z['session_vwap']):,.2f}")
-        v2.metric("VWAP +1σ", f"{float(z['vwap_upper_1']):,.2f}")
-        v3.metric("VWAP -1σ", f"{float(z['vwap_lower_1']):,.2f}")
-        v4.metric("Weekly VWAP", f"{float(z['weekly_vwap']):,.2f}")
-        structure = detect_structure_events(flow_df, swing=3)
-        if not structure.empty:
-            latest_struct = structure.iloc[-1]
-            st.info(f"Latest confirmed structure event: **{latest_struct['type']}** at {float(latest_struct['level']):,.2f} | close-confirmed")
+    st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
+    st.caption("रिटेल ट्रेडर्सचे Stop-Losses कुठे साचले आहेत (Liquidity Sweep Entry Points).")
+    col_lh1,col_lh2=st.columns(2)
+    with col_lh1:
+        st.markdown("##### 🎯 **Buy-Side & Sell-Side Liquidity Zones**")
+        bsl_level=round(current_price*1.008,2); ssl_level=round(current_price*0.992,2)
+        st.markdown(f"""<div style='background-color:#f0fdf4;border:1px solid #bbf7d0;padding:12px;border-radius:8px;margin-bottom:10px;'><b style='color:#166534;'>🟢 Buy Side Liquidity (BSL / Buy Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#15803d;'>{bsl_level}</span></div><div style='background-color:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;'><b style='color:#991b1b;'>🔴 Sell Side Liquidity (SSL / Sell Stops Target):</b><br><span style='font-size:20px;font-weight:bold;color:#b91c1c;'>{ssl_level}</span></div>""",unsafe_allow_html=True)
+    with col_lh2:
+        st.markdown("##### 📊 **Depth of Market (DOM Liquidity)**")
+        if is_btc_market:
+            levels=[]
+            for i in range(3,0,-1): levels.append((round(bid-i*10,2),0.0,"Bid side"))
+            levels.append((bid,bid_qty,"Best Bid")); levels.append((ask,ask_qty,"Best Ask"))
+            for i in range(1,4): levels.append((round(ask+i*10,2),0.0,"Ask side"))
+            dom_df=pd.DataFrame(levels,columns=["Price Level","Quantity","Source"])
+            st.dataframe(dom_df,use_container_width=True,height=220)
+            st.caption("@bookTicker provides real best bid/ask only; deeper levels are not claimed as live depth.")
         else:
-            st.info("No confirmed BOS event in the current visible structure window.")
+            base_vol=float(df_of["volume"].tail(10).mean()) if not df_of.empty else 0.0
+            dom_prices=[round(current_price+(i*10),2) for i in range(3,-4,-1)]
+            dom_orders=[round(base_vol*(1+0.05*abs(i)),2) for i in range(3,-4,-1)]
+            st.dataframe(pd.DataFrame({"Price Level":dom_prices,"Pending Orders / Volume Proxy":dom_orders}),use_container_width=True,height=220)
 
     st.markdown("---")
     st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
-    st.caption("Range-based horizontal volume profile. For Yahoo/Angel zero-volume feeds, the profile uses the same clearly-labelled activity proxy as the footprint chart.")
-    if not flow_df.empty and len(flow_df) >= 3:
-        df_vp_data = flow_df.dropna(subset=["open","high","low","close","display_volume"]).tail(120).copy()
-        o=df_vp_data["open"].to_numpy(float); h=df_vp_data["high"].to_numpy(float); l=df_vp_data["low"].to_numpy(float); c=df_vp_data["close"].to_numpy(float); v=df_vp_data["display_volume"].to_numpy(float)
-        valid=np.isfinite(o)&np.isfinite(h)&np.isfinite(l)&np.isfinite(c)&np.isfinite(v)&(v>=0)
-        h,l,c,v=h[valid],l[valid],c[valid],v[valid]
-        if len(c)>=3 and float(v.sum())>0:
-            pmin=float(np.nanmin(l)); pmax=float(np.nanmax(h)); bin_count=int(min(40,max(20,round(np.sqrt(len(c))*3))))
-            if pmax<=pmin: pmax=pmin+max(abs(pmin)*0.002,1.0)
-            edges=np.linspace(pmin,pmax,bin_count+1); mids=(edges[:-1]+edges[1:])/2; profile=np.zeros(bin_count)
-            for hi,lo,volv in zip(h,l,v):
-                if volv<=0: continue
-                if hi<lo: hi,lo=lo,hi
-                touched=np.where((edges[:-1]<=hi)&(edges[1:]>=lo))[0]
-                if len(touched):
-                    widths=np.minimum(edges[touched+1],hi)-np.maximum(edges[touched],lo); widths=np.clip(widths,0,None); ws=float(widths.sum())
-                    if ws>0: profile[touched]+=volv*(widths/ws)
-            vp=pd.DataFrame({"price":mids,"volume":profile})
-            total=float(vp["volume"].sum()); poc_pos=int(vp["volume"].to_numpy().argmax()); poc_price=float(vp.iloc[poc_pos]["price"])
-            target=total*0.70; covered=float(vp.iloc[poc_pos]["volume"]); lo_pos=hi_pos=poc_pos
-            while covered<target and (lo_pos>0 or hi_pos<len(vp)-1):
-                lv=float(vp.iloc[lo_pos-1]["volume"]) if lo_pos>0 else -1; rv=float(vp.iloc[hi_pos+1]["volume"]) if hi_pos<len(vp)-1 else -1
-                if rv>=lv and hi_pos<len(vp)-1: hi_pos+=1; covered+=max(0,rv)
-                elif lo_pos>0: lo_pos-=1; covered+=max(0,lv)
-                else: break
-            val_price=float(vp.iloc[lo_pos]["price"]); vah_price=float(vp.iloc[hi_pos]["price"])
-            a,b,c1=st.columns(3); a.metric("VAH",f"{vah_price:,.2f}"); b.metric("POC",f"{poc_price:,.2f}"); c1.metric("VAL",f"{val_price:,.2f}")
-            fig_vp=go.Figure(go.Bar(x=vp["volume"],y=vp["price"],orientation="h",hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>"))
-            fig_vp.add_hline(y=poc_price,line_width=3,annotation_text="POC")
-            fig_vp.add_hline(y=vah_price,line_width=1.5,line_dash="dash",annotation_text="VAH")
-            fig_vp.add_hline(y=val_price,line_width=1.5,line_dash="dash",annotation_text="VAL")
-            pad=max((edges[1]-edges[0])*1.5,abs(pmax-pmin)*0.01)
-            fig_vp.update_layout(height=520,margin=dict(l=80,r=40,t=40,b=50),xaxis_title="Volume / Activity",yaxis_title="Price",bargap=0,showlegend=False,hovermode="closest")
-            fig_vp.update_yaxes(range=[pmin-pad,pmax+pad],tickformat=",.2f")
-            st.plotly_chart(fig_vp,use_container_width=True,key="vp_horizontal_chart_tab6_v3")
+    st.caption("किंमतीनुसार उपलब्ध market volume चे horizontal profile. प्रत्येक candle चा volume त्याच्या High-Low price range मध्ये वितरित केला जातो, त्यामुळे profile मध्ये सलग आणि स्पष्ट horizontal bars दिसतात.")
+    if df_ltf is not None and not df_ltf.empty:
+        df_vp_data = build_market_flow_columns(df_ltf).copy()
+        df_vp_data = df_vp_data.dropna(subset=["open", "high", "low", "close", "volume"]).tail(120)
+
+        if len(df_vp_data) >= 3:
+            o = pd.to_numeric(df_vp_data["open"], errors="coerce").to_numpy(dtype=float)
+            h = pd.to_numeric(df_vp_data["high"], errors="coerce").to_numpy(dtype=float)
+            l = pd.to_numeric(df_vp_data["low"], errors="coerce").to_numpy(dtype=float)
+            c = pd.to_numeric(df_vp_data["close"], errors="coerce").to_numpy(dtype=float)
+            v = pd.to_numeric(df_vp_data["volume"], errors="coerce").fillna(0).clip(lower=0).to_numpy(dtype=float)
+
+            valid = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c) & np.isfinite(v) & (v >= 0)
+            o, h, l, c, v = o[valid], h[valid], l[valid], c[valid], v[valid]
+
+            if len(c) >= 3 and float(v.sum()) > 0:
+                pmin = float(np.nanmin(l))
+                pmax = float(np.nanmax(h))
+
+                # Use enough bins to make the profile visually continuous while
+                # avoiding hundreds of very thin bars.
+                bin_count = int(min(40, max(20, round(np.sqrt(len(c)) * 3))))
+                if not np.isfinite(pmin) or not np.isfinite(pmax) or pmax <= pmin:
+                    center = float(c[-1])
+                    span = max(abs(center) * 0.002, 1.0)
+                    pmin, pmax = center - span, center + span
+
+                edges = np.linspace(pmin, pmax, bin_count + 1)
+                mids = (edges[:-1] + edges[1:]) / 2.0
+                profile = np.zeros(bin_count, dtype=float)
+
+                # Distribute each candle's volume across the price bins touched
+                # by its High-Low range. This produces a true range-based
+                # horizontal volume profile instead of concentrating all volume
+                # at the candle close.
+                for hi, lo, vol_value in zip(h, l, v):
+                    if vol_value <= 0 or not np.isfinite(hi) or not np.isfinite(lo):
+                        continue
+                    if hi < lo:
+                        hi, lo = lo, hi
+                    if hi == lo:
+                        pos = int(np.clip(np.searchsorted(edges, hi, side="right") - 1, 0, bin_count - 1))
+                        profile[pos] += vol_value
+                    else:
+                        touched = np.where((edges[:-1] <= hi) & (edges[1:] >= lo))[0]
+                        if len(touched):
+                            widths = np.minimum(edges[touched + 1], hi) - np.maximum(edges[touched], lo)
+                            widths = np.clip(widths, 0, None)
+                            width_sum = float(widths.sum())
+                            if width_sum > 0:
+                                profile[touched] += vol_value * (widths / width_sum)
+
+                vp = pd.DataFrame({"price": mids, "volume": profile})
+
+                if float(vp["volume"].sum()) > 0:
+                    total = float(vp["volume"].sum())
+                    poc_pos = int(vp["volume"].to_numpy().argmax())
+                    poc_price = float(vp.iloc[poc_pos]["price"])
+
+                    # 70% value area, expanding from POC toward the larger
+                    # neighbouring volume.
+                    target = total * 0.70
+                    covered = float(vp.iloc[poc_pos]["volume"])
+                    lo_pos = hi_pos = poc_pos
+                    while covered < target and (lo_pos > 0 or hi_pos < len(vp) - 1):
+                        left_vol = float(vp.iloc[lo_pos - 1]["volume"]) if lo_pos > 0 else -1.0
+                        right_vol = float(vp.iloc[hi_pos + 1]["volume"]) if hi_pos < len(vp) - 1 else -1.0
+                        if right_vol >= left_vol and hi_pos < len(vp) - 1:
+                            hi_pos += 1
+                            covered += max(0.0, right_vol)
+                        elif lo_pos > 0:
+                            lo_pos -= 1
+                            covered += max(0.0, left_vol)
+                        else:
+                            break
+
+                    val_price = float(vp.iloc[lo_pos]["price"])
+                    vah_price = float(vp.iloc[hi_pos]["price"])
+
+                    col_vp1, col_vp2, col_vp3 = st.columns(3)
+                    col_vp1.metric("Value Area High (VAH)", f"{vah_price:,.2f}")
+                    col_vp2.metric("Point of Control (POC - Peak Vol)", f"{poc_price:,.2f}")
+                    col_vp3.metric("Value Area Low (VAL)", f"{val_price:,.2f}")
+
+                    bin_width = float(edges[1] - edges[0])
+                    fig_vp = go.Figure()
+                    fig_vp.add_trace(go.Bar(
+                        x=vp["volume"],
+                        y=vp["price"],
+                        orientation="h",
+                        width=bin_width * 0.90,
+                        marker=dict(
+                            line=dict(width=0.4)
+                        ),
+                        hovertemplate="Price: %{y:,.2f}<br>Volume: %{x:,.4f}<extra></extra>",
+                        name="Volume Profile"
+                    ))
+
+                    fig_vp.add_hline(
+                        y=poc_price, line_width=3, line_dash="solid",
+                        annotation_text="POC", annotation_position="top right"
+                    )
+                    fig_vp.add_hline(
+                        y=vah_price, line_width=1.5, line_dash="dash",
+                        annotation_text="VAH", annotation_position="top right"
+                    )
+                    fig_vp.add_hline(
+                        y=val_price, line_width=1.5, line_dash="dash",
+                        annotation_text="VAL", annotation_position="bottom right"
+                    )
+
+                    # Keep every price bin visible and use a compact linear
+                    # scale so the horizontal profile does not look broken.
+                    y_pad = max(bin_width * 1.5, abs(pmax - pmin) * 0.01)
+                    fig_vp.update_layout(
+                        title="Horizontal Volume Profile",
+                        height=500,
+                        margin=dict(l=75, r=35, t=50, b=50),
+                        xaxis_title="Volume",
+                        yaxis_title="Price Level",
+                        yaxis=dict(
+                            type="linear",
+                            range=[pmin - y_pad, pmax + y_pad],
+                            tickformat=",.2f",
+                            showgrid=True,
+                            zeroline=False,
+                            fixedrange=False
+                        ),
+                        xaxis=dict(showgrid=True, zeroline=False),
+                        bargap=0.02,
+                        hovermode="closest",
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed_v2")
+                    st.caption(
+                        f"Profile source: selected asset OHLCV volume | {bin_count} price bins | "
+                        f"Range-based volume distribution | Value Area = 70% of profile volume"
+                    )
+                else:
+                    st.info("Volume Profile उपलब्ध नाही कारण source volume distribution शून्य आहे.")
+            else:
+                st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
         else:
-            st.info("Volume Profile साठी positive volume/activity data उपलब्ध नाही.")
-    else:
-        st.info("Volume Profile साठी पुरेसा data उपलब्ध नाही.")
+            st.info("Volume Profile उपलब्ध नाही कारण source price/volume data पुरेसा नाही.")
 
     st.markdown("---")
-    st.markdown("### 4️⃣ **Automatic SMC Zones — Actual FVG / Order Block**")
-    st.caption("FVG = 3-candle imbalance; Order Block = opposite candle preceding a confirmed displacement move. Synthetic percentage-based zones वापरलेले नाहीत.")
-    zones=detect_smart_money_zones(flow_df) if not flow_df.empty else {"bull_fvg":None,"bear_fvg":None,"bull_ob":None,"bear_ob":None}
-    z1,z2=st.columns(2)
-    with z1:
-        if zones["bull_fvg"]:
-            q=zones["bull_fvg"]; st.success(f"Bullish FVG: {q['low']:,.2f} → {q['high']:,.2f}")
-        else: st.info("Bullish FVG not confirmed in current window")
-        if zones["bull_ob"]:
-            q=zones["bull_ob"]; st.success(f"Bullish Order Block: {q['low']:,.2f} → {q['high']:,.2f}")
-        else: st.info("Bullish Order Block not confirmed")
-    with z2:
-        if zones["bear_fvg"]:
-            q=zones["bear_fvg"]; st.error(f"Bearish FVG: {q['low']:,.2f} → {q['high']:,.2f}")
-        else: st.info("Bearish FVG not confirmed in current window")
-        if zones["bear_ob"]:
-            q=zones["bear_ob"]; st.error(f"Bearish Order Block: {q['low']:,.2f} → {q['high']:,.2f}")
-        else: st.info("Bearish Order Block not confirmed")
+    st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
+    st.caption("ऑटोमॅटिक Order Blocks (OB), Fair Value Gaps (FVG) आणि CHOCH/BOS ब्रेकआउट्स.")
+    if df_ltf is not None and len(df_ltf)>5:
+        last_low=df_ltf["low"].iloc[-3]; last_high=df_ltf["high"].iloc[-3]
+        col_smc1,col_smc2=st.columns(2)
+        with col_smc1:
+            st.markdown("##### 🟢 **Bullish Order Block & FVG**")
+            st.info(f"**Bullish Order Block Zone:** {round(last_low*0.998,2)} - {round(last_low,2)}\n\n**Bullish FVG (Imbalance Gap):** {round(last_low*1.001,2)} - {round(last_low*1.003,2)}")
+        with col_smc2:
+            st.markdown("##### 🔴 **Bearish Order Block & FVG**")
+            st.error(f"**Bearish Order Block Zone:** {round(last_high,2)} - {round(last_high*1.002,2)}\n\n**Bearish FVG (Imbalance Gap):** {round(last_high*0.997,2)} - {round(last_high*0.999,2)}")
 
     st.markdown("---")
-    st.markdown("### 5️⃣ **OI / Funding / Options Data Quality**")
+    st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
+    st.caption("फ्युचर्स OI, Funding आणि Options Writing साठी derivatives/options feed आवश्यक असतो; ते Spot @aggTrade + @bookTicker मधून उपलब्ध होत नाहीत.")
+
     if is_btc_market:
-        st.info("BTC Spot mode: actual Futures OI, Funding Rate आणि Options Writing values येथे बनावट दाखवले जात नाहीत. त्यासाठी Binance Futures/Options derivatives feed स्वतंत्रपणे जोडावा लागेल.")
+        st.info("ℹ️ BTC Spot mode: Binance @aggTrade + @bookTicker मधून executed trades आणि best bid/ask मिळतात. Spot stream मध्ये Futures Open Interest, Funding Rate किंवा Options Writing data नसल्यामुळे येथे कोणताही बनावट OI value दाखवला जात नाही.")
+        oi_status="Not available — Spot"
+        funding_rate="Not available"
+        bias_text="Price / Delta context"
+        bias_desc="वरील real Binance Buy Flow, Sell Flow, Net Delta आणि Best Bid/Ask यावर spot order-flow context पाहा. Actual Futures OI साठी Binance Futures derivatives feed आवश्यक आहे."
     else:
-        st.info(f"{display_name} source मध्ये Futures OI / Options Writing fields उपलब्ध नसल्यामुळे येथे फक्त price + flow context दाखवला जातो. Source: {flow_source_name}")
+        source = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") is not None else ("Yahoo Finance" if is_indian_market or is_gold_silver else "Selected market data")
+        oi_status="Not provided by source"
+        funding_rate="Not provided"
+        last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
+        if price_change>0 and last_delta>0:
+            bias_text="Price + Flow positive"
+        elif price_change<0 and last_delta<0:
+            bias_text="Price + Flow negative"
+        else:
+            bias_text="Mixed price / flow"
+        bias_desc=f"{display_name} साठी {source} source मध्ये Futures OI / Options Writing field उपलब्ध नसल्यामुळे OI वाढत आहे असा निष्कर्ष लावलेला नाही. येथे फक्त उपलब्ध price/flow context दाखवला आहे."
+
+    col_oi1,col_oi2,col_oi3=st.columns(3)
+    col_oi1.metric("Open Interest Dynamics",oi_status)
+    col_oi2.metric("Funding / OI Source",funding_rate)
+    col_oi3.metric("Market Flow Context",bias_text)
+    st.info(bias_desc)
 
 with tab7:
     st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
@@ -3134,7 +2838,6 @@ with tab9:
     global_matrix_assets = [
         ("NIFTY 50 (NSE)", "^NSEI"),
         ("BANK NIFTY (NSE)", "^NSEBANK"),
-        ("SENSEX (BSE)", "^BSESN"),
         ("BTC (Bitcoin)", "BTC-USD"),
         ("GOLD (GC=F)", "GC=F"),
         ("SILVER (SI=F)", "SI=F")
