@@ -863,6 +863,74 @@ def build_market_flow_columns(df):
     return out
 
 
+def data_quality_report(df, source_name=""):
+    """Return a safe, display-ready quality summary for the selected flow dataframe.
+
+    This helper is intentionally non-blocking: a quality-report failure must never
+    stop the Streamlit app or hide the other tabs.
+    """
+    report = {
+        "status": "No data",
+        "rows": 0,
+        "duplicates": 0,
+        "gaps": 0,
+        "last_age_min": None,
+    }
+    if df is None or df.empty:
+        return report
+
+    try:
+        out = df.copy()
+        report["rows"] = int(len(out))
+
+        if "timestamp" not in out.columns:
+            report["status"] = "Data available"
+            return report
+
+        ts = pd.to_datetime(out["timestamp"], errors="coerce")
+        valid_ts = ts.dropna()
+
+        if valid_ts.empty:
+            report["status"] = "Data available"
+            return report
+
+        # Duplicate timestamp count before de-duplication.
+        report["duplicates"] = int(valid_ts.duplicated().sum())
+
+        # Count unusually large gaps relative to the median candle interval.
+        ordered = valid_ts.sort_values()
+        diffs = ordered.diff().dropna().dt.total_seconds().div(60.0)
+        positive_diffs = diffs[diffs > 0]
+        if not positive_diffs.empty:
+            median_gap = float(positive_diffs.median())
+            # A gap > 3x the normal interval is reported, while avoiding
+            # flagging ordinary overnight/weekend gaps as candle defects.
+            report["gaps"] = int((positive_diffs > max(median_gap * 3.0, median_gap + 5.0)).sum())
+
+        # Current UTC time, with timezone handling for both naive and aware data.
+        last_ts = valid_ts.iloc[-1]
+        if getattr(last_ts, "tzinfo", None) is None:
+            last_ts = last_ts.tz_localize("UTC")
+        else:
+            last_ts = last_ts.tz_convert("UTC")
+        now_utc = pd.Timestamp.now(tz="UTC")
+        age_min = (now_utc - last_ts).total_seconds() / 60.0
+        report["last_age_min"] = max(0.0, float(age_min))
+
+        if report["duplicates"] > 0:
+            report["status"] = "Check duplicates"
+        elif report["gaps"] > 0:
+            report["status"] = "Minor gaps"
+        else:
+            report["status"] = "Healthy"
+
+        return report
+    except Exception:
+        # Never let an informational diagnostic break any dashboard tab.
+        report["status"] = "Data available"
+        return report
+
+
 def prepare_orderflow_frame(df, min_rows=20):
     """Prepare deterministic candle + delta + volume data for Tab 6."""
     if df is None or df.empty:
@@ -914,6 +982,77 @@ def prepare_orderflow_frame(df, min_rows=20):
     out["cvd"] = out["delta"].cumsum()
     out["delta_ema"] = out["delta"].ewm(span=8, adjust=False).mean()
     return out.tail(max(min_rows, min(len(out), 1200))).reset_index(drop=True)
+
+
+def detect_structure_events(df, swing=3):
+    """Detect simple close-confirmed market-structure events without blocking the UI.
+
+    A confirmed swing high/low is formed only when the candle has `swing` bars
+    on both sides. A close above the latest confirmed swing high is BOS bullish;
+    a close below the latest confirmed swing low is BOS bearish. Repeated events
+    at the same level are de-duplicated.
+    """
+    columns = ["timestamp", "type", "level"]
+    if df is None or df.empty or len(df) < max(2 * swing + 3, 9):
+        return pd.DataFrame(columns=columns)
+
+    try:
+        work = df[["timestamp", "high", "low", "close"]].copy()
+        for c in ["high", "low", "close"]:
+            work[c] = pd.to_numeric(work[c], errors="coerce")
+        work = work.dropna(subset=["timestamp", "high", "low", "close"]).reset_index(drop=True)
+        if len(work) < max(2 * swing + 3, 9):
+            return pd.DataFrame(columns=columns)
+
+        highs = work["high"].to_numpy(float)
+        lows = work["low"].to_numpy(float)
+        closes = work["close"].to_numpy(float)
+        events = []
+        last_high = None
+        last_low = None
+        broken_high = None
+        broken_low = None
+
+        # Confirmed swing points become available only after `swing` bars to
+        # their right, so there is no look-ahead in the reported event itself.
+        for i in range(swing, len(work) - swing):
+            left_h = highs[i - swing:i]
+            right_h = highs[i + 1:i + 1 + swing]
+            left_l = lows[i - swing:i]
+            right_l = lows[i + 1:i + 1 + swing]
+
+            is_swing_high = highs[i] >= np.max(left_h) and highs[i] >= np.max(right_h)
+            is_swing_low = lows[i] <= np.min(left_l) and lows[i] <= np.min(right_l)
+
+            if is_swing_high:
+                last_high = float(highs[i])
+            if is_swing_low:
+                last_low = float(lows[i])
+
+            # Use the first close after the swing confirmation point.
+            check_i = i + swing
+            if check_i >= len(work):
+                continue
+            close_now = float(closes[check_i])
+            ts_now = work["timestamp"].iloc[check_i]
+
+            if last_high is not None and close_now > last_high:
+                if broken_high is None or abs(broken_high - last_high) > 1e-12:
+                    events.append({"timestamp": ts_now, "type": "Bullish BOS", "level": last_high})
+                    broken_high = last_high
+
+            if last_low is not None and close_now < last_low:
+                if broken_low is None or abs(broken_low - last_low) > 1e-12:
+                    events.append({"timestamp": ts_now, "type": "Bearish BOS", "level": last_low})
+                    broken_low = last_low
+
+        if not events:
+            return pd.DataFrame(columns=columns)
+        return pd.DataFrame(events, columns=columns).drop_duplicates(
+            subset=["timestamp", "type", "level"]
+        ).reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=columns)
 
 
 def calculate_vwap_bands(df):
