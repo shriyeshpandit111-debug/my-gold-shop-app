@@ -585,6 +585,7 @@ if market_type == "यादीमधून निवडा":
         [
             "NIFTY 50 (NSE)",
             "BANK NIFTY (NSE)",
+            "SENSEX (BSE)",
             "BTC (Bitcoin)",
             "GOLD (सोने)",
             "SILVER (चांदी)",
@@ -593,13 +594,14 @@ if market_type == "यादीमधून निवडा":
     ticker_map = {
         "NIFTY 50 (NSE)": "^NSEI",
         "BANK NIFTY (NSE)": "^NSEBANK",
+        "SENSEX (BSE)": "^BSESN",
         "BTC (Bitcoin)": "BTC-USD",
         "GOLD (सोने)": "GC=F",
         "SILVER (चांदी)": "SI=F",
     }
     ticker = ticker_map[asset_choice]
     display_name = asset_choice
-    if "NSE" in asset_choice or "NIFTY" in asset_choice:
+    if "NSE" in asset_choice or "NIFTY" in asset_choice or "BSE" in asset_choice or "SENSEX" in asset_choice:
         is_indian_market = True
     if "BTC" in asset_choice:
         is_btc_market = True
@@ -612,7 +614,7 @@ elif market_type == "मॅन्युअली नाव टाईप कर�
     )
     ticker = manual_ticker.strip().upper()
     display_name = ticker
-    if ".NS" in ticker or "NSE" in ticker:
+    if ".NS" in ticker or ".BO" in ticker or "NSE" in ticker or "BSE" in ticker or "SENSEX" in ticker:
         is_indian_market = True
     if "BTC" in ticker:
         is_btc_market = True
@@ -676,6 +678,8 @@ for _i, _default_name in enumerate(DEFAULT_TAB_NAMES, start=1):
     if _key not in st.session_state:
         st.session_state[_key] = _default_name
 
+st.sidebar.info("🔇 Audio alerts बंद आहेत — app आता कोणताही browser/mobile sound trigger करत नाही. फोन Vibrate/Silent वर असल्यास या app कडून आवाज पाठवला जाणार नाही.")
+
 with st.sidebar.expander("🏷️ सर्व Tabs ची नावे बदला", expanded=False):
     st.caption("इथे बदललेले tab names लगेच लागू होतील. बाकी tab functionality जसाची तशी ठेवली आहे.")
     for _i in range(1, 10):
@@ -718,7 +722,9 @@ def fetch_live_gift_nifty_change():
 # --- ⚡ 1-Sec Live Price & Angel One Direct Real-Time Fetcher ---
 def fetch_angel_one_real_oi(current_price, symbol_name):
     smart_api = st.session_state.get("smart_api_session", None)
-    is_bank = "BANK" in symbol_name.upper()
+    symbol_upper = str(symbol_name).upper()
+    is_sensex = "SENSEX" in symbol_upper
+    is_bank = "BANK" in symbol_upper
 
     price_seed = float(current_price) if current_price else 24000.0
     tick_var = (price_seed % 50) / 50.0
@@ -730,9 +736,17 @@ def fetch_angel_one_real_oi(current_price, symbol_name):
 
     if smart_api:
         try:
-            token = "99926009" if is_bank else "99926000"
+            if is_sensex:
+                exchange = "BSE"
+                token = "99919000"
+            elif is_bank:
+                exchange = "NSE"
+                token = "99926009"
+            else:
+                exchange = "NSE"
+                token = "99926000"
             res = smart_api.getMarketData(
-                "FULL", {"exchangeTokens": {"NSE": [token]}}
+                "FULL", {"exchangeTokens": {exchange: [token]}}
             )
 
             if (
@@ -869,7 +883,17 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
 
     if is_indian and smart_api and target_tf not in ["1h", "2h", "4h", "1d"]:
         try:
-            token = "99926000" if "^NSEI" in ticker_symbol else "99926009"
+            # Angel One index tokens / exchanges. Sensex is a BSE index.
+            if "^BSESN" in ticker_symbol or "SENSEX" in str(ticker_symbol).upper():
+                exchange = "BSE"
+                token = "99919000"
+            elif "^NSEI" in ticker_symbol:
+                exchange = "NSE"
+                token = "99926000"
+            else:
+                exchange = "NSE"
+                token = "99926009"
+
             interval_map = {
                 "1m": "ONE_MINUTE",
                 "2m": "THREE_MINUTE",
@@ -881,14 +905,31 @@ def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_pe
             }
             angel_tf = interval_map.get(target_tf, "ONE_MINUTE")
 
-            days_back = 30 if "mo" in custom_period or "y" in custom_period else 5
+            # Respect the requested chart window. For Tab-2's 20d chart,
+            # Angel One can provide up to 30 days for 1-minute candles.
+            _period_days_map = {
+                "20d": 20, "30d": 30, "60d": 60, "90d": 90,
+                "120d": 120, "1y": 365, "2y": 730, "max": 2000,
+            }
+            days_back = _period_days_map.get(str(custom_period), 5)
+            if target_tf == "1m":
+                days_back = min(days_back, 30)
+            elif target_tf in {"2m", "3m"}:
+                days_back = min(days_back, 60)
+            elif target_tf in {"5m", "10m", "15m", "30m"}:
+                days_back = min(days_back, 200)
+            elif target_tf == "1h":
+                days_back = min(days_back, 400)
+            elif target_tf == "1d":
+                days_back = min(days_back, 2000)
+
             from_date = (datetime.now() - timedelta(days=days_back)).strftime(
                 "%Y-%m-%d %H:%M"
             )
             to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
             hist_data = smart_api.getCandleData({
-                "exchange": "NSE",
+                "exchange": exchange,
                 "symboltoken": token,
                 "interval": angel_tf,
                 "fromdate": from_date,
@@ -1928,7 +1969,7 @@ with tab2:
     )
     timeframe = st.session_state["master_timeframe"]
     st.caption(
-        f"मागील २० दिवसांचा कॅन्डलस्टिक डेटा — {timeframe} timeframe नुसार. "
+        f"मागील २० दिवसांचा कॅन्डलस्टिक डेटा — {timeframe} timeframe नुसार. BTC आणि Indian indices साठी उपलब्ध historical source मधून पूर्ण २० दिवस fetch केले जातात. "
         "Sidebar Global Timeframe आणि Tab-2 Chart Timeframe एकमेकांशी synchronized आहेत; "
         "एकात बदल केल्यावर सर्व tabs त्याच timeframe वर update होतील."
     )
@@ -1954,6 +1995,12 @@ with tab2:
         render_tv_widget("BINANCE:BTCUSDT", "Bitcoin (BTC/USDT) Live Chart")
     with c4:
         render_tv_widget("NSE:NIFTY", "Nifty 50 Live Chart")
+
+    c5, c6 = st.columns(2)
+    with c5:
+        render_tv_widget("BSE:SENSEX", "Sensex (BSE) Live Chart")
+    with c6:
+        st.empty()
 
     st.markdown("---")
     if is_indian_market and "oi_history" in st.session_state and len(st.session_state["oi_history"]) > 0:
@@ -2949,6 +2996,7 @@ with tab9:
     global_matrix_assets = [
         ("NIFTY 50 (NSE)", "^NSEI"),
         ("BANK NIFTY (NSE)", "^NSEBANK"),
+        ("SENSEX (BSE)", "^BSESN"),
         ("BTC (Bitcoin)", "BTC-USD"),
         ("GOLD (GC=F)", "GC=F"),
         ("SILVER (SI=F)", "SI=F")
