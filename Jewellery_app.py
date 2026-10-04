@@ -3075,16 +3075,83 @@ with tab8:
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    is_down_trend_market = price_change < 0
+
+    # CVD-only correction: keep the existing data source untouched, but add
+    # proper price-vs-CVD divergence detection inside Tab 8.
     flow_df = build_market_flow_columns(df_ltf) if df_ltf is not None else None
-    cvd_val = float(flow_df["delta"].sum()) if flow_df is not None and not flow_df.empty else 0.0
-    
-    if price_change < 0 and cvd_val < 0:
-        st.error(f"📉 **DOWN TREND SELLING PRESSURE:** CVD = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
-    elif cvd_val > 0:
-        st.success(f"✅ **CVD Status:** Positive cumulative flow = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
+
+    if flow_df is not None and not flow_df.empty and len(flow_df) >= 8:
+        cvd_work = flow_df.copy()
+        cvd_work["close"] = pd.to_numeric(cvd_work["close"], errors="coerce")
+        cvd_work["delta"] = pd.to_numeric(cvd_work["delta"], errors="coerce").fillna(0.0)
+        cvd_work = cvd_work.dropna(subset=["close"]).copy()
+
+        # CVD is calculated cumulatively from the same delta source already
+        # used by the application.  BTC = real Binance executed-trade delta;
+        # other assets = the existing OHLCV flow proxy.
+        cvd_work["cvd"] = cvd_work["delta"].cumsum()
+        cvd_val = float(cvd_work["cvd"].iloc[-1])
+
+        # Use two recent windows rather than future-looking pivots.  This keeps
+        # the alert suitable for real-time use and avoids changing other logic.
+        div_window = min(12, len(cvd_work) // 2)
+        recent = cvd_work.tail(div_window)
+        previous = cvd_work.iloc[-2 * div_window:-div_window]
+
+        recent_price_low = float(recent["close"].min())
+        previous_price_low = float(previous["close"].min())
+        recent_price_high = float(recent["close"].max())
+        previous_price_high = float(previous["close"].max())
+        recent_cvd_low = float(recent["cvd"].min())
+        previous_cvd_low = float(previous["cvd"].min())
+        recent_cvd_high = float(recent["cvd"].max())
+        previous_cvd_high = float(previous["cvd"].max())
+
+        bullish_divergence = (
+            recent_price_low < previous_price_low
+            and recent_cvd_low > previous_cvd_low
+        )
+        bearish_divergence = (
+            recent_price_high > previous_price_high
+            and recent_cvd_high < previous_cvd_high
+        )
+
+        latest_delta = float(cvd_work["delta"].iloc[-1])
+        cvd_slope = float(cvd_work["cvd"].iloc[-1] - cvd_work["cvd"].iloc[-div_window])
+        source_label = "Binance executed-trade delta" if is_btc_market else "OHLCV flow proxy"
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("CVD", f"{cvd_val:,.4f}")
+        c2.metric("Latest Delta", f"{latest_delta:,.4f}")
+        c3.metric("CVD Direction", "BULLISH 🟢" if cvd_slope > 0 else "BEARISH 🔴" if cvd_slope < 0 else "NEUTRAL ➡️")
+        c4.metric("Divergence", "BULLISH 🟢" if bullish_divergence else "BEARISH 🔴" if bearish_divergence else "NONE ➡️")
+
+        if bullish_divergence:
+            st.success(
+                f"🟢 **BULLISH CVD DIVERGENCE:** Price ने Lower Low केला पण CVD ने Higher Low केला → buying absorption/reversal pressure दिसत आहे. CVD = {cvd_val:,.4f}."
+            )
+        elif bearish_divergence:
+            st.error(
+                f"🔴 **BEARISH CVD DIVERGENCE:** Price ने Higher High केला पण CVD ने Lower High केला → buying pressure कमजोर/absorption दिसत आहे. CVD = {cvd_val:,.4f}."
+            )
+        elif price_change < 0 and cvd_val < 0:
+            st.warning(
+                f"📉 **SELLING PRESSURE:** Price आणि CVD दोन्ही कमजोर आहेत. CVD = {cvd_val:,.4f}."
+            )
+        elif price_change > 0 and cvd_val > 0:
+            st.success(
+                f"📈 **BUYING PRESSURE:** Price आणि CVD दोन्ही मजबूत आहेत. CVD = {cvd_val:,.4f}."
+            )
+        else:
+            st.info(
+                f"ℹ️ **CVD NEUTRAL / MIXED:** Price आणि CVD मध्ये स्पष्ट confirmation नाही. CVD = {cvd_val:,.4f}."
+            )
+
+        st.caption(
+            f"CVD source: {source_label}. Divergence uses the latest {div_window} candles versus the preceding {div_window} candles."
+        )
     else:
-        st.info(f"ℹ️ **CVD Status:** {cvd_val:,.4f}.")
+        st.info("ℹ️ CVD divergence साठी पुरेसा market-flow data उपलब्ध नाही.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
