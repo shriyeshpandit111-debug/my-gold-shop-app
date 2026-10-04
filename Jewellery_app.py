@@ -1162,94 +1162,154 @@ def analyze_smc_pro_v2(df, daily_trend):
     return pd.DataFrame()
 
 
-# --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (INTRADAY SENSITIVE) ---
+# --- 🏛️ ENHANCED ICT CISD & WYCKOFF STRATEGY ENGINE (RULE-BASED) ---
 def analyze_cisd_and_wyckoff(df):
-    if df is None or len(df) < 10:
+    """Rule-based ICT CISD + Wyckoff PO3 engine.
+
+    Signal chain (closed candles only):
+    1) Previous range liquidity is defined.
+    2) A manipulation candle sweeps that liquidity and closes back inside the range.
+    3) The next candle must confirm CISD by closing beyond the manipulation candle.
+    4) That confirmation completes the PO3 reversal sequence.
+    5) Entry = confirmation close, SL = sweep extreme, TP = 2R.
+
+    No signal is emitted unless the complete chain is confirmed.
+    """
+    if df is None or len(df) < 25:
         return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
-    
-    df_calc = df.copy()
+
+    d = df.copy()
+    required = ["open", "high", "low", "close"]
+    if any(c not in d.columns for c in required):
+        return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
+
+    for c in required:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    d = d.dropna(subset=required).reset_index(drop=True)
+    if len(d) < 25:
+        return pd.DataFrame(), pd.DataFrame(), "UNKNOWN"
+
+    lookback = 10
+    # Liquidity levels are based only on candles BEFORE the candidate sweep.
+    d["liq_high"] = d["high"].rolling(lookback).max().shift(1)
+    d["liq_low"] = d["low"].rolling(lookback).min().shift(1)
+
     cisd_signals = []
     wyckoff_phases = []
 
-    # Responsive 3 to 5-period dynamic rolling lookback for intraday micro-sweeps
-    df_calc['swing_high_5'] = df_calc['high'].rolling(5).max().shift(1)
-    df_calc['swing_low_5'] = df_calc['low'].rolling(5).min().shift(1)
-    df_calc['swing_high_3'] = df_calc['high'].rolling(3).max().shift(1)
-    df_calc['swing_low_3'] = df_calc['low'].rolling(3).min().shift(1)
+    def tstamp(row):
+        ts = row.get("timestamp", "")
+        return ts.strftime("%Y-%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
 
-    for i in range(5, len(df_calc)):
-        row = df_calc.iloc[i]
-        prev1 = df_calc.iloc[i-1]
-        
-        t_str = row['timestamp'].strftime("%Y-%m-%d %H:%M") if hasattr(row['timestamp'], 'strftime') else str(row['timestamp'])
-        
-        # 1. BULLISH CISD (Shift from Selling Delivery to Buying Delivery)
-        swept_low = (row['low'] < prev1['low']) or (prev1['low'] < df_calc['swing_low_5'].iloc[i-1]) or (row['low'] < df_calc['swing_low_3'].iloc[i])
-        bullish_close_shift = (row['close'] > max(prev1['open'], prev1['close'])) and (row['close'] > row['open'])
+    # We need i-1 as the manipulation/sweep candle and i as the CISD confirmation.
+    for i in range(lookback + 1, len(d)):
+        sweep = d.iloc[i - 1]
+        confirm = d.iloc[i]
+        prior_high = d["liq_high"].iloc[i - 1]
+        prior_low = d["liq_low"].iloc[i - 1]
 
-        if swept_low and bullish_close_shift:
-            cisd_signals.append({
-                "Time": t_str,
-                "Type": "🟢 BULLISH CISD (Shift to Buying)",
-                "Price": round(float(row['close']), 2),
-                "Liquidity Swept": f"Low Swept ({round(float(min(row['low'], prev1['low'])), 2)})",
-                "Confirmation": f"Closed above Prev High/Body ({round(float(max(prev1['high'], prev1['open'])), 2)})",
-                "Action": "Target Next FVG / High for Long Entry"
-            })
+        if pd.isna(prior_high) or pd.isna(prior_low):
+            continue
 
-        # 2. BEARISH CISD (Shift from Buying Delivery to Selling Delivery)
-        swept_high = (row['high'] > prev1['high']) or (prev1['high'] > df_calc['swing_high_5'].iloc[i-1]) or (row['high'] > df_calc['swing_high_3'].iloc[i])
-        bearish_close_shift = (row['close'] < min(prev1['open'], prev1['close'])) and (row['close'] < row['open'])
+        # -------------------------
+        # BULLISH: sell-side sweep -> bullish CISD -> PO3 markup
+        # -------------------------
+        bullish_sweep = (
+            float(sweep["low"]) < float(prior_low)
+            and float(sweep["close"]) > float(prior_low)
+        )
+        bullish_cisd = (
+            bullish_sweep
+            and float(confirm["close"]) > float(sweep["high"])
+            and float(confirm["close"]) > float(confirm["open"])
+        )
 
-        if swept_high and bearish_close_shift:
-            cisd_signals.append({
-                "Time": t_str,
-                "Type": "🔴 BEARISH CISD (Shift to Selling)",
-                "Price": round(float(row['close']), 2),
-                "Liquidity Swept": f"High Swept ({round(float(max(row['high'], prev1['high'])), 2)})",
-                "Confirmation": f"Closed below Prev Low/Body ({round(float(min(prev1['low'], prev1['open'])), 2)})",
-                "Action": "Target Next FVG / Low for Short Entry"
-            })
-
-        # 3. Wyckoff PO3 / AMD (Power of 3 Analysis)
-        range_lookback = min(i, 15)
-        range_high = df_calc['high'].iloc[i-range_lookback:i].max()
-        range_low = df_calc['low'].iloc[i-range_lookback:i].min()
-
-        is_spring = (row['low'] < range_low) and (row['close'] > range_low)
-        is_upthrust = (row['high'] > range_high) and (row['close'] < range_high)
-
-        if is_spring:
+        if bullish_sweep:
             wyckoff_phases.append({
-                "Time": t_str,
-                "Phase": "⚡ WYCKOFF ACCUMULATION -> SPRING (Judas Swing)",
-                "Status": "🟢 MANIPULATION COMPLETE -> MARKUP EXPECTED",
-                "Key Level": f"Range Low Swept: {round(float(range_low), 2)}",
-                "Smart Money Intent": "Institutional Accumulation / Stop Loss Hunt"
+                "Time": tstamp(sweep),
+                "Phase": "🟢 PO3 ACCUMULATION → MANIPULATION (SPRING)",
+                "Status": "CISD confirmation pending" if not bullish_cisd else "CISD confirmed",
+                "Key Level": f"Sell-side liquidity swept: {float(prior_low):.2f}",
+                "Sweep Low": round(float(sweep["low"]), 2),
+                "PO3": "Markup expected only after CISD"
             })
-        elif is_upthrust:
+
+        if bullish_cisd:
+            entry = float(confirm["close"])
+            sl = float(sweep["low"])
+            risk = entry - sl
+            if risk > 0:
+                tp = entry + (2.0 * risk)
+                cisd_signals.append({
+                    "Time": tstamp(confirm),
+                    "Type": "🟢 REAL BUY — CISD + SPRING + PO3 CONFIRMED",
+                    "Price": round(entry, 2),
+                    "Liquidity Sweep": f"SELL-SIDE swept {float(prior_low):.2f}",
+                    "CISD": f"Close > Spring High {float(sweep['high']):.2f}",
+                    "PO3": "Accumulation → Manipulation → Markup",
+                    "Entry": round(entry, 2),
+                    "Stop Loss": round(sl, 2),
+                    "Take Profit": round(tp, 2),
+                    "R:R": "1:2"
+                })
+
+        # -------------------------
+        # BEARISH: buy-side sweep -> bearish CISD -> PO3 markdown
+        # -------------------------
+        bearish_sweep = (
+            float(sweep["high"]) > float(prior_high)
+            and float(sweep["close"]) < float(prior_high)
+        )
+        bearish_cisd = (
+            bearish_sweep
+            and float(confirm["close"]) < float(sweep["low"])
+            and float(confirm["close"]) < float(confirm["open"])
+        )
+
+        if bearish_sweep:
             wyckoff_phases.append({
-                "Time": t_str,
-                "Phase": "⚡ WYCKOFF DISTRIBUTION -> UPTHRUST (UTAD)",
-                "Status": "🔴 MANIPULATION COMPLETE -> MARKDOWN EXPECTED",
-                "Key Level": f"Range High Swept: {round(float(range_high), 2)}",
-                "Smart Money Intent": "Institutional Distribution / Retail Liquidity Trap"
+                "Time": tstamp(sweep),
+                "Phase": "🔴 PO3 DISTRIBUTION → MANIPULATION (UPTHRUST)",
+                "Status": "CISD confirmation pending" if not bearish_cisd else "CISD confirmed",
+                "Key Level": f"Buy-side liquidity swept: {float(prior_high):.2f}",
+                "Sweep High": round(float(sweep["high"]), 2),
+                "PO3": "Markdown expected only after CISD"
             })
 
-    # Determine Current Wyckoff Phase Status
-    latest_close = df_calc['close'].iloc[-1]
-    recent_high = df_calc['high'].tail(15).max()
-    recent_low = df_calc['low'].tail(15).min()
-    sma15 = df_calc['close'].tail(15).mean()
+        if bearish_cisd:
+            entry = float(confirm["close"])
+            sl = float(sweep["high"])
+            risk = sl - entry
+            if risk > 0:
+                tp = entry - (2.0 * risk)
+                cisd_signals.append({
+                    "Time": tstamp(confirm),
+                    "Type": "🔴 REAL SELL — CISD + UPTHRUST + PO3 CONFIRMED",
+                    "Price": round(entry, 2),
+                    "Liquidity Sweep": f"BUY-SIDE swept {float(prior_high):.2f}",
+                    "CISD": f"Close < Upthrust Low {float(sweep['low']):.2f}",
+                    "PO3": "Distribution → Manipulation → Markdown",
+                    "Entry": round(entry, 2),
+                    "Stop Loss": round(sl, 2),
+                    "Take Profit": round(tp, 2),
+                    "R:R": "1:2"
+                })
 
-    if latest_close > recent_high * 0.998:
+    # Current phase is descriptive only; it is NOT itself a trade signal.
+    recent = d.tail(20)
+    last_close = float(d["close"].iloc[-1])
+    range_high = float(recent["high"].max())
+    range_low = float(recent["low"].min())
+    midpoint = (range_high + range_low) / 2.0
+
+    if last_close >= range_high * 0.998:
         current_market_phase = "MARKUP (अपट्रेंड) 📈"
-    elif latest_close < recent_low * 1.002:
+    elif last_close <= range_low * 1.002:
         current_market_phase = "MARKDOWN (डाउनट्रेंड) 📉"
-    elif latest_close >= sma15:
-        current_market_phase = "ACCUMULATION (एकत्रीकरण) 🟢"
+    elif last_close >= midpoint:
+        current_market_phase = "ACCUMULATION / RE-ACCUMULATION 🟢"
     else:
-        current_market_phase = "DISTRIBUTION (वितरण) 🔴"
+        current_market_phase = "DISTRIBUTION / RE-DISTRIBUTION 🔴"
 
     return pd.DataFrame(cisd_signals), pd.DataFrame(wyckoff_phases), current_market_phase
 
@@ -3075,83 +3135,16 @@ with tab8:
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-
-    # CVD-only correction: keep the existing data source untouched, but add
-    # proper price-vs-CVD divergence detection inside Tab 8.
+    is_down_trend_market = price_change < 0
     flow_df = build_market_flow_columns(df_ltf) if df_ltf is not None else None
-
-    if flow_df is not None and not flow_df.empty and len(flow_df) >= 8:
-        cvd_work = flow_df.copy()
-        cvd_work["close"] = pd.to_numeric(cvd_work["close"], errors="coerce")
-        cvd_work["delta"] = pd.to_numeric(cvd_work["delta"], errors="coerce").fillna(0.0)
-        cvd_work = cvd_work.dropna(subset=["close"]).copy()
-
-        # CVD is calculated cumulatively from the same delta source already
-        # used by the application.  BTC = real Binance executed-trade delta;
-        # other assets = the existing OHLCV flow proxy.
-        cvd_work["cvd"] = cvd_work["delta"].cumsum()
-        cvd_val = float(cvd_work["cvd"].iloc[-1])
-
-        # Use two recent windows rather than future-looking pivots.  This keeps
-        # the alert suitable for real-time use and avoids changing other logic.
-        div_window = min(12, len(cvd_work) // 2)
-        recent = cvd_work.tail(div_window)
-        previous = cvd_work.iloc[-2 * div_window:-div_window]
-
-        recent_price_low = float(recent["close"].min())
-        previous_price_low = float(previous["close"].min())
-        recent_price_high = float(recent["close"].max())
-        previous_price_high = float(previous["close"].max())
-        recent_cvd_low = float(recent["cvd"].min())
-        previous_cvd_low = float(previous["cvd"].min())
-        recent_cvd_high = float(recent["cvd"].max())
-        previous_cvd_high = float(previous["cvd"].max())
-
-        bullish_divergence = (
-            recent_price_low < previous_price_low
-            and recent_cvd_low > previous_cvd_low
-        )
-        bearish_divergence = (
-            recent_price_high > previous_price_high
-            and recent_cvd_high < previous_cvd_high
-        )
-
-        latest_delta = float(cvd_work["delta"].iloc[-1])
-        cvd_slope = float(cvd_work["cvd"].iloc[-1] - cvd_work["cvd"].iloc[-div_window])
-        source_label = "Binance executed-trade delta" if is_btc_market else "OHLCV flow proxy"
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("CVD", f"{cvd_val:,.4f}")
-        c2.metric("Latest Delta", f"{latest_delta:,.4f}")
-        c3.metric("CVD Direction", "BULLISH 🟢" if cvd_slope > 0 else "BEARISH 🔴" if cvd_slope < 0 else "NEUTRAL ➡️")
-        c4.metric("Divergence", "BULLISH 🟢" if bullish_divergence else "BEARISH 🔴" if bearish_divergence else "NONE ➡️")
-
-        if bullish_divergence:
-            st.success(
-                f"🟢 **BULLISH CVD DIVERGENCE:** Price ने Lower Low केला पण CVD ने Higher Low केला → buying absorption/reversal pressure दिसत आहे. CVD = {cvd_val:,.4f}."
-            )
-        elif bearish_divergence:
-            st.error(
-                f"🔴 **BEARISH CVD DIVERGENCE:** Price ने Higher High केला पण CVD ने Lower High केला → buying pressure कमजोर/absorption दिसत आहे. CVD = {cvd_val:,.4f}."
-            )
-        elif price_change < 0 and cvd_val < 0:
-            st.warning(
-                f"📉 **SELLING PRESSURE:** Price आणि CVD दोन्ही कमजोर आहेत. CVD = {cvd_val:,.4f}."
-            )
-        elif price_change > 0 and cvd_val > 0:
-            st.success(
-                f"📈 **BUYING PRESSURE:** Price आणि CVD दोन्ही मजबूत आहेत. CVD = {cvd_val:,.4f}."
-            )
-        else:
-            st.info(
-                f"ℹ️ **CVD NEUTRAL / MIXED:** Price आणि CVD मध्ये स्पष्ट confirmation नाही. CVD = {cvd_val:,.4f}."
-            )
-
-        st.caption(
-            f"CVD source: {source_label}. Divergence uses the latest {div_window} candles versus the preceding {div_window} candles."
-        )
+    cvd_val = float(flow_df["delta"].sum()) if flow_df is not None and not flow_df.empty else 0.0
+    
+    if price_change < 0 and cvd_val < 0:
+        st.error(f"📉 **DOWN TREND SELLING PRESSURE:** CVD = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
+    elif cvd_val > 0:
+        st.success(f"✅ **CVD Status:** Positive cumulative flow = {cvd_val:,.4f} ({'Binance executed-trade delta' if is_btc_market else 'OHLCV flow proxy'}).")
     else:
-        st.info("ℹ️ CVD divergence साठी पुरेसा market-flow data उपलब्ध नाही.")
+        st.info(f"ℹ️ **CVD Status:** {cvd_val:,.4f}.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
@@ -3258,9 +3251,10 @@ with tab9:
 
     st.markdown("---")
 
-    # 4. Multi-Asset CISD & Wyckoff Global Scanner (Dynamic real-time evaluation for Gold & all assets)
-    st.markdown("### 🌐 **Multi-Asset Wyckoff & CISD Live Matrix**")
-    
+    # 4. Multi-Asset CISD & Wyckoff Global Scanner
+    # IMPORTANT: a trend direction alone is never treated as CISD/PO3 confirmation.
+    st.markdown("### 🌐 **Multi-Asset Rule-Based CISD & Wyckoff PO3 Scanner**")
+
     global_matrix_assets = [
         ("NIFTY 50 (NSE)", "^NSEI"),
         ("BANK NIFTY (NSE)", "^NSEBANK"),
@@ -3268,29 +3262,62 @@ with tab9:
         ("GOLD (GC=F)", "GC=F"),
         ("SILVER (SI=F)", "SI=F")
     ]
-    
+
     matrix_rows = []
     for g_label, g_sym in global_matrix_assets:
-        if g_sym == ticker:
-            is_bull_g = price_change >= 0
-        else:
-            is_bull_g, _ = fetch_quick_asset_status(g_sym)
-            
-        if is_bull_g:
+        try:
+            if g_sym == ticker and df_ltf is not None and not df_ltf.empty:
+                asset_df = df_ltf.copy()
+            else:
+                asset_df = yf.download(g_sym, period="5d", interval="15m", progress=False, timeout=8)
+                if asset_df is not None and not asset_df.empty:
+                    asset_df = asset_df.reset_index()
+                    asset_df.columns = [c[0] if isinstance(c, tuple) else c for c in asset_df.columns]
+                    rename_map = {"Open":"open", "High":"high", "Low":"low", "Close":"close", "Volume":"volume", "Datetime":"timestamp", "Date":"timestamp"}
+                    asset_df = asset_df.rename(columns=rename_map)
+
+            if asset_df is None or asset_df.empty:
+                raise ValueError("No market data")
+
+            asset_cisd, asset_wyckoff, asset_phase = analyze_cisd_and_wyckoff(asset_df)
+            confirmed = asset_cisd[asset_cisd["Type"].astype(str).str.contains("REAL BUY|REAL SELL", regex=True)] if not asset_cisd.empty else pd.DataFrame()
+
+            if not confirmed.empty:
+                latest = confirmed.iloc[-1]
+                is_buy = "REAL BUY" in str(latest["Type"])
+                matrix_rows.append({
+                    "Asset Name": g_label,
+                    "Wyckoff Phase": asset_phase,
+                    "CISD Status": "🟢 Bullish CISD Confirmed" if is_buy else "🔴 Bearish CISD Confirmed",
+                    "PO3 Trigger": "Spring + Markup" if is_buy else "Upthrust + Markdown",
+                    "Entry": latest["Entry"],
+                    "SL": latest["Stop Loss"],
+                    "TP": latest["Take Profit"],
+                    "Action Signal": latest["Type"]
+                })
+            else:
+                matrix_rows.append({
+                    "Asset Name": g_label,
+                    "Wyckoff Phase": asset_phase,
+                    "CISD Status": "WAIT — no confirmed CISD",
+                    "PO3 Trigger": "WAITING FOR LIQUIDITY SWEEP",
+                    "Entry": "—",
+                    "SL": "—",
+                    "TP": "—",
+                    "Action Signal": "⏳ NO TRADE"
+                })
+        except Exception as exc:
             matrix_rows.append({
                 "Asset Name": g_label,
-                "Wyckoff Phase": "Markup Phase 🚀",
-                "CISD Status": "Bullish CISD Confirmed",
-                "PO3 Trap Trigger": "Spring Sweep Completed",
-                "Action Signal": "🟢 BUY (Expansion Entry)"
-            })
-        else:
-            matrix_rows.append({
-                "Asset Name": g_label,
-                "Wyckoff Phase": "Markdown Phase 📉",
-                "CISD Status": "Bearish CISD Active",
-                "PO3 Trap Trigger": "Upthrust Trap Active",
-                "Action Signal": "🔴 SELL (Distribution Dump)"
+                "Wyckoff Phase": "DATA UNAVAILABLE",
+                "CISD Status": "—",
+                "PO3 Trigger": "—",
+                "Entry": "—",
+                "SL": "—",
+                "TP": "—",
+                "Action Signal": "⚪ NO DATA"
             })
 
     st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True)
+    st.caption("⚠️ REAL BUY/SELL फक्त पूर्ण Liquidity Sweep → CISD → Spring/Upthrust → PO3 confirmation झाल्यावर दिसेल. Trend direction एकट्याने signal तयार करत नाही. Entry/SL/TP हे rule-based आहेत; profitability ची हमी नाही.")
+
