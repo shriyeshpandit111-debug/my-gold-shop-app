@@ -3270,25 +3270,66 @@ with tab9:
     st.markdown("### 📊 **Live Rule-Based Setup — Selected Asset**")
     df_cisd_cisd, df_wyckoff_po3, market_phase = analyze_cisd_and_wyckoff(df_ltf)
 
-    col_wp1, col_wp2, col_wp3, col_wp4 = st.columns(4)
-    is_acc = "ACCUMULATION" in market_phase
-    is_markup = "MARKUP" in market_phase
-    is_dist = "DISTRIBUTION" in market_phase
-    is_markdown = "MARKDOWN" in market_phase
-    col_wp1.metric("Accumulation / Spring", "Active 🟢" if is_acc else "Waiting ⚪")
-    col_wp2.metric("Markup / BUY", "Confirmed 🚀" if is_markup else "Waiting ⚪")
-    col_wp3.metric("Distribution / Upthrust", "Active 🔴" if is_dist else "Waiting ⚪")
-    col_wp4.metric("Markdown / SELL", "Confirmed 📉" if is_markdown else "Waiting ⚪")
+    # Stage-wise status is derived ONLY from the actual rule-engine output.
+    # No stage is marked confirmed merely because price is bullish/bearish.
+    latest_signal = df_cisd_cisd.iloc[-1] if not df_cisd_cisd.empty else None
+    latest_sweep = df_wyckoff_po3.iloc[-1] if not df_wyckoff_po3.empty else None
 
-    st.info(f"🎯 **Current Rule-Based Wyckoff Status ({display_name}):** **{market_phase}**")
+    if latest_signal is not None:
+        sweep_status = "CONFIRMED 🟢"
+        wyckoff_status = f"{latest_signal['Wyckoff Pattern']} CONFIRMED 🟢"
+        cisd_status = "CONFIRMED 🟢"
+        po3_status = "CONFIRMED 🟢"
+        final_status = str(latest_signal["Signal"])
+        stage_note = "पूर्ण chain confirmed: Liquidity Sweep → Wyckoff → CISD → PO3 → Entry → SL → TP"
+    elif latest_sweep is not None:
+        sweep_status = "CONFIRMED 🟢"
+        wyckoff_status = f"{latest_sweep['Wyckoff Pattern']} CONFIRMED 🟢"
+        cisd_status = "WAITING ⚪"
+        po3_status = "WAITING ⚪"
+        final_status = "⏳ NO TRADE / WAIT"
+        stage_note = "Liquidity Sweep + Wyckoff मिळाले; पुढील valid CISD close confirmation ची प्रतीक्षा आहे."
+    else:
+        sweep_status = "WAITING ⚪"
+        wyckoff_status = "WAITING ⚪"
+        cisd_status = "WAITING ⚪"
+        po3_status = "WAITING ⚪"
+        final_status = "⏳ NO TRADE / WAIT"
+        stage_note = "अजून valid Liquidity Sweep सापडलेला नाही; त्यामुळे पुढील stages evaluate झालेले नाहीत."
 
-    if not df_cisd_cisd.empty:
+    st.markdown("#### 🔎 **Stage-wise Confirmation Status**")
+    st.caption("प्रत्येक stage स्वतंत्र rule पूर्ण झाल्यावरच CONFIRMED होतो. अपूर्ण chain = NO TRADE.")
+    stage_cols = st.columns(8)
+    stage_cols[0].metric("1. Liquidity Sweep", sweep_status)
+    stage_cols[1].metric("2. Wyckoff", wyckoff_status)
+    stage_cols[2].metric("3. CISD", cisd_status)
+    stage_cols[3].metric("4. PO3", po3_status)
+
+    if latest_signal is not None:
+        stage_cols[4].metric("5. Entry", f"{latest_signal['Entry']}")
+        stage_cols[5].metric("6. SL", f"{latest_signal['Stop Loss']}")
+        stage_cols[6].metric("7. TP", f"{latest_signal['Take Profit']}")
+        stage_cols[7].metric("8. FINAL", final_status)
+    else:
+        for idx, label in zip(range(4, 8), ["5. Entry", "6. SL", "7. TP", "8. FINAL"]):
+            stage_cols[idx].metric(label, "—" if idx < 7 else final_status)
+
+    if latest_signal is not None:
+        st.success(f"✅ {stage_note}")
+    elif latest_sweep is not None:
+        st.warning(f"🟡 {stage_note}")
+    else:
+        st.info(f"⚪ {stage_note}")
+
+    st.markdown("#### 📌 **Current Rule-Based Phase**")
+    st.info(f"🎯 **{display_name}:** **{market_phase}**")
+
+    if latest_signal is not None:
         st.markdown("### 🟢🔴 **REAL BUY / SELL — Full Confirmation Chain**")
         st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
-        latest = df_cisd_cisd.iloc[-1]
-        st.success(f"Latest confirmed signal: {latest['Signal']} | Entry: {latest['Entry']} | SL: {latest['Stop Loss']} | TP: {latest['Take Profit']} | R:R {latest['R:R']}")
+        st.success(f"Latest confirmed signal: {latest_signal['Signal']} | Entry: {latest_signal['Entry']} | SL: {latest_signal['Stop Loss']} | TP: {latest_signal['Take Profit']} | R:R {latest_signal['R:R']}")
     else:
-        st.warning("⏳ **NO TRADE / WAIT** — Liquidity Sweep → Wyckoff → CISD → PO3 पूर्ण chain अजून confirm झालेली नाही.")
+        st.warning("⏳ **NO TRADE / WAIT** — Full Liquidity Sweep → Wyckoff → CISD → PO3 chain अजून complete झालेली नाही.")
 
     st.markdown("### 🌀 **Liquidity Sweep & Wyckoff Manipulation Log**")
     if not df_wyckoff_po3.empty:
