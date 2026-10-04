@@ -3297,22 +3297,67 @@ with tab9:
         final_status = "⏳ NO TRADE / WAIT"
         stage_note = "अजून valid Liquidity Sweep सापडलेला नाही; त्यामुळे पुढील stages evaluate झालेले नाहीत."
 
-    st.markdown("#### 🔎 **Stage-wise Confirmation Status**")
-    st.caption("प्रत्येक stage स्वतंत्र rule पूर्ण झाल्यावरच CONFIRMED होतो. अपूर्ण chain = NO TRADE.")
-    stage_cols = st.columns(8)
-    stage_cols[0].metric("1. Liquidity Sweep", sweep_status)
-    stage_cols[1].metric("2. Wyckoff", wyckoff_status)
-    stage_cols[2].metric("3. CISD", cisd_status)
-    stage_cols[3].metric("4. PO3", po3_status)
+    # Streamlit metric cards become too narrow when 8 cards are placed in one row.
+    # Use 4 + 4 responsive cards so every stage name/status is readable.
+    def _stage_card(title, value, detail="", tone="neutral"):
+        tone_map = {
+            "ok": ("#ecfdf5", "#16a34a", "#166534"),
+            "wait": ("#fffbeb", "#d97706", "#92400e"),
+            "danger": ("#fef2f2", "#dc2626", "#991b1b"),
+            "neutral": ("#f8fafc", "#64748b", "#334155"),
+        }
+        bg, border, textc = tone_map.get(tone, tone_map["neutral"])
+        st.markdown(
+            f"""
+            <div style="background:{bg};border:2px solid {border};border-radius:12px;
+                        padding:12px 14px;min-height:112px;margin-bottom:12px;
+                        box-sizing:border-box;overflow:visible;">
+                <div style="font-size:14px;font-weight:700;color:#334155;line-height:1.25;">{title}</div>
+                <div style="font-size:19px;font-weight:800;color:{textc};margin-top:8px;
+                            line-height:1.25;white-space:normal;overflow-wrap:anywhere;">{value}</div>
+                <div style="font-size:12px;color:#64748b;margin-top:7px;line-height:1.25;
+                            white-space:normal;overflow-wrap:anywhere;">{detail}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+    st.markdown("#### 🔎 **Stage-wise Confirmation Status**")
+    st.caption("प्रत्येक stage स्वतंत्र rule पूर्ण झाल्यावरच CONFIRMED होतो. 8 stages आता 4+4 layout मध्ये स्पष्ट दिसतील.")
+
+    # Status/tone helpers keep the UI truthful to the actual rule-engine result.
+    sweep_tone = "ok" if latest_sweep is not None else "wait"
+    wyckoff_tone = "ok" if latest_sweep is not None else "wait"
+    cisd_tone = "ok" if latest_signal is not None else "wait"
+    po3_tone = "ok" if latest_signal is not None else "wait"
+    final_tone = "ok" if latest_signal is not None and "BUY" in final_status else ("danger" if latest_signal is not None else "wait")
+
+    row1 = st.columns(4)
+    with row1[0]:
+        _stage_card("1. Liquidity Sweep", sweep_status, "Liquidity level sweep + rejection", sweep_tone)
+    with row1[1]:
+        _stage_card("2. Wyckoff", wyckoff_status, "Spring / Upthrust pattern", wyckoff_tone)
+    with row1[2]:
+        _stage_card("3. CISD", cisd_status, "Close confirmation after sweep", cisd_tone)
+    with row1[3]:
+        _stage_card("4. PO3", po3_status, "Manipulation → Delivery", po3_tone)
+
+    row2 = st.columns(4)
     if latest_signal is not None:
-        stage_cols[4].metric("5. Entry", f"{latest_signal['Entry']}")
-        stage_cols[5].metric("6. SL", f"{latest_signal['Stop Loss']}")
-        stage_cols[6].metric("7. TP", f"{latest_signal['Take Profit']}")
-        stage_cols[7].metric("8. FINAL", final_status)
+        entry_value = f"{latest_signal['Entry']}"
+        sl_value = f"{latest_signal['Stop Loss']}"
+        tp_value = f"{latest_signal['Take Profit']}"
     else:
-        for idx, label in zip(range(4, 8), ["5. Entry", "6. SL", "7. TP", "8. FINAL"]):
-            stage_cols[idx].metric(label, "—" if idx < 7 else final_status)
+        entry_value = sl_value = tp_value = "WAITING ⚪"
+
+    with row2[0]:
+        _stage_card("5. Entry", entry_value, "Entry only after full confirmation", "ok" if latest_signal is not None else "wait")
+    with row2[1]:
+        _stage_card("6. Stop Loss", sl_value, "ATR / sweep-extreme based", "ok" if latest_signal is not None else "wait")
+    with row2[2]:
+        _stage_card("7. Take Profit", tp_value, "Target = 1:2 Risk / Reward", "ok" if latest_signal is not None else "wait")
+    with row2[3]:
+        _stage_card("8. FINAL SIGNAL", final_status, "REAL BUY / REAL SELL only", final_tone)
 
     if latest_signal is not None:
         st.success(f"✅ {stage_note}")
