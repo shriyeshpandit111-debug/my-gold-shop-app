@@ -3271,17 +3271,95 @@ with tab9:
     df_cisd_cisd, df_wyckoff_po3, market_phase = analyze_cisd_and_wyckoff(df_ltf)
 
     # Stage-wise status is derived ONLY from the actual rule-engine output.
-    # No stage is marked confirmed merely because price is bullish/bearish.
+    # A historical REAL BUY/SELL must NOT remain "active" after its SL/TP is hit.
+    # We therefore evaluate the candles after the signal candle and determine the
+    # first reached target/stop. A fresh signal automatically becomes the new latest
+    # signal on the next rerun.
     latest_signal = df_cisd_cisd.iloc[-1] if not df_cisd_cisd.empty else None
     latest_sweep = df_wyckoff_po3.iloc[-1] if not df_wyckoff_po3.empty else None
+
+    def _trade_outcome(signal_row):
+        """Return ACTIVE / SL HIT / TP HIT using candles after the signal candle."""
+        if signal_row is None or df_ltf is None or df_ltf.empty:
+            return "ACTIVE", ""
+        try:
+            signal_time = pd.to_datetime(signal_row["Time"], errors="coerce")
+            if pd.isna(signal_time):
+                return "ACTIVE", ""
+
+            work = df_ltf.copy()
+            if "timestamp" not in work.columns:
+                work = work.reset_index()
+                if "timestamp" not in work.columns and "index" in work.columns:
+                    work = work.rename(columns={"index": "timestamp"})
+            if "timestamp" not in work.columns:
+                return "ACTIVE", ""
+
+            work["_ts"] = pd.to_datetime(work["timestamp"], errors="coerce")
+            # Make timezone-aware timestamps comparable without changing the displayed time.
+            try:
+                if getattr(signal_time, "tzinfo", None) is not None:
+                    signal_time = signal_time.tz_localize(None) if signal_time.tzinfo else signal_time
+                if getattr(work["_ts"].dt, "tz", None) is not None:
+                    work["_ts"] = work["_ts"].dt.tz_localize(None)
+            except Exception:
+                pass
+
+            after = work[work["_ts"] > signal_time].copy()
+            if after.empty:
+                return "ACTIVE", ""
+
+            direction = "BUY" if "BUY" in str(signal_row["Signal"]) else "SELL"
+            sl = float(signal_row["Stop Loss"])
+            tp = float(signal_row["Take Profit"])
+
+            for _, candle in after.iterrows():
+                high = float(candle["high"])
+                low = float(candle["low"])
+                candle_time = candle["_ts"]
+                shown_time = candle_time.strftime("%Y-%m-%d %H:%M") if hasattr(candle_time, "strftime") else str(candle_time)
+
+                if direction == "BUY":
+                    # Conservative tie handling: if both are touched in one candle,
+                    # treat SL as first/unknown rather than falsely claiming TP.
+                    if low <= sl and high >= tp:
+                        return "SL HIT", shown_time
+                    if low <= sl:
+                        return "SL HIT", shown_time
+                    if high >= tp:
+                        return "TP HIT", shown_time
+                else:
+                    if high >= sl and low <= tp:
+                        return "SL HIT", shown_time
+                    if high >= sl:
+                        return "SL HIT", shown_time
+                    if low <= tp:
+                        return "TP HIT", shown_time
+
+            return "ACTIVE", ""
+        except Exception:
+            return "ACTIVE", ""
+
+    trade_outcome, outcome_time = _trade_outcome(latest_signal)
+    signal_time_text = str(latest_signal["Time"]) if latest_signal is not None else "—"
 
     if latest_signal is not None:
         sweep_status = "CONFIRMED 🟢"
         wyckoff_status = f"{latest_signal['Wyckoff Pattern']} CONFIRMED 🟢"
         cisd_status = "CONFIRMED 🟢"
         po3_status = "CONFIRMED 🟢"
-        final_status = str(latest_signal["Signal"])
-        stage_note = "पूर्ण chain confirmed: Liquidity Sweep → Wyckoff → CISD → PO3 → Entry → SL → TP"
+        raw_signal = str(latest_signal["Signal"])
+        direction_label = "REAL BUY" if "BUY" in raw_signal else "REAL SELL"
+
+        if trade_outcome == "SL HIT":
+            final_status = f"{direction_label} — SL HIT 🔴"
+            stage_note = f"{direction_label} signal {signal_time_text} ला activate झाला होता. SL {outcome_time} ला hit झाला. आता नवीन confirmation येईपर्यंत NO TRADE."
+        elif trade_outcome == "TP HIT":
+            final_status = f"{direction_label} — TP HIT 🟢"
+            stage_note = f"{direction_label} signal {signal_time_text} ला activate झाला होता. TP {outcome_time} ला hit झाला. हा trade complete आहे; नवीन setup ची प्रतीक्षा."
+        else:
+            final_status = f"{direction_label} — ACTIVE 🟢"
+            stage_note = f"{direction_label} signal {signal_time_text} ला activate झाला. SL/TP अजून hit झालेले नाहीत; trade ACTIVE आहे."
     elif latest_sweep is not None:
         sweep_status = "CONFIRMED 🟢"
         wyckoff_status = f"{latest_sweep['Wyckoff Pattern']} CONFIRMED 🟢"
@@ -3330,7 +3408,12 @@ with tab9:
     wyckoff_tone = "ok" if latest_sweep is not None else "wait"
     cisd_tone = "ok" if latest_signal is not None else "wait"
     po3_tone = "ok" if latest_signal is not None else "wait"
-    final_tone = "ok" if latest_signal is not None and "BUY" in final_status else ("danger" if latest_signal is not None else "wait")
+    if latest_signal is None:
+        final_tone = "wait"
+    elif trade_outcome == "SL HIT":
+        final_tone = "danger"
+    else:
+        final_tone = "ok"
 
     row1 = st.columns(4)
     with row1[0]:
@@ -3357,7 +3440,12 @@ with tab9:
     with row2[2]:
         _stage_card("7. Take Profit", tp_value, "Target = 1:2 Risk / Reward", "ok" if latest_signal is not None else "wait")
     with row2[3]:
-        _stage_card("8. FINAL SIGNAL", final_status, "REAL BUY / REAL SELL only", final_tone)
+        final_detail = (
+            f"Signal Time: {signal_time_text} IST | Status: {trade_outcome}"
+            if latest_signal is not None
+            else "REAL BUY / REAL SELL only"
+        )
+        _stage_card("8. FINAL SIGNAL", final_status, final_detail, final_tone)
 
     if latest_signal is not None:
         st.success(f"✅ {stage_note}")
@@ -3366,13 +3454,21 @@ with tab9:
     else:
         st.info(f"⚪ {stage_note}")
 
+    if latest_signal is not None:
+        if trade_outcome == "SL HIT":
+            st.error(f"🛑 **Trade Closed — SL HIT** | {direction_label} | Signal Time: {signal_time_text} IST | SL Hit Time: {outcome_time} IST | नवीन signal अजून confirm झालेला नाही.")
+        elif trade_outcome == "TP HIT":
+            st.success(f"🎯 **Trade Completed — TP HIT** | {direction_label} | Signal Time: {signal_time_text} IST | TP Hit Time: {outcome_time} IST | नवीन setup ची प्रतीक्षा.")
+        else:
+            st.info(f"🟢 **Trade ACTIVE** | {direction_label} | Signal Time: {signal_time_text} IST | Entry: {latest_signal['Entry']} | SL: {latest_signal['Stop Loss']} | TP: {latest_signal['Take Profit']}")
+
     st.markdown("#### 📌 **Current Rule-Based Phase**")
     st.info(f"🎯 **{display_name}:** **{market_phase}**")
 
     if latest_signal is not None:
         st.markdown("### 🟢🔴 **REAL BUY / SELL — Full Confirmation Chain**")
         st.dataframe(df_cisd_cisd.iloc[::-1], use_container_width=True)
-        st.success(f"Latest confirmed signal: {latest_signal['Signal']} | Entry: {latest_signal['Entry']} | SL: {latest_signal['Stop Loss']} | TP: {latest_signal['Take Profit']} | R:R {latest_signal['R:R']}")
+        st.success(f"Latest signal: {latest_signal['Signal']} | Time: {signal_time_text} IST | Status: {trade_outcome} | Entry: {latest_signal['Entry']} | SL: {latest_signal['Stop Loss']} | TP: {latest_signal['Take Profit']} | R:R {latest_signal['R:R']}")
     else:
         st.warning("⏳ **NO TRADE / WAIT** — Full Liquidity Sweep → Wyckoff → CISD → PO3 chain अजून complete झालेली नाही.")
 
