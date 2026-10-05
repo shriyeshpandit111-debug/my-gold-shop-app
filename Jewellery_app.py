@@ -842,6 +842,124 @@ def build_market_flow_columns(df):
     return out
 
 
+class YahooLiveStream:
+    """Yahoo Finance WebSocket quote fallback.
+
+    Historical candles still come from Yahoo Finance chart data. The WebSocket
+    supplies the newest quote so the current forming candle can be updated even
+    when Angel One is disconnected. It is a quote stream, not an exchange order
+    feed, so the strategy only confirms signals on completed candles.
+    """
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.lock = threading.Lock()
+        self.latest = {}
+        self.connected = False
+        self.started = False
+        self.last_error = ""
+
+    def _handler(self, msg):
+        try:
+            price = msg.get("price") or msg.get("regularMarketPrice")
+            if price is None:
+                return
+            ts = msg.get("time") or msg.get("timestamp")
+            if ts is not None:
+                ts = float(ts)
+                if ts > 10_000_000_000:
+                    ts /= 1000.0
+                stamp = datetime.fromtimestamp(ts, tz=timezone.utc)
+            else:
+                stamp = datetime.now(timezone.utc)
+            with self.lock:
+                self.latest = {
+                    "price": float(price),
+                    "timestamp": stamp,
+                    "volume": float(msg.get("dayVolume") or msg.get("volume") or 0),
+                }
+        except Exception as exc:
+            self.last_error = str(exc)
+
+    def _run(self):
+        try:
+            ws = yf.WebSocket(verbose=False)
+            ws.subscribe([self.symbol])
+            self.connected = True
+            ws.listen(self._handler)
+        except Exception as exc:
+            self.connected = False
+            self.last_error = str(exc)
+
+    def start(self):
+        if self.started:
+            return
+        self.started = True
+        threading.Thread(target=self._run, daemon=True, name=f"YahooWS-{self.symbol}").start()
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.latest)
+
+
+@st.cache_resource(show_spinner=False)
+def get_yahoo_live_stream(symbol):
+    stream = YahooLiveStream(symbol)
+    stream.start()
+    return stream
+
+
+def _apply_yahoo_live_tick(df, stream, target_tf, is_indian=False):
+    """Merge the latest Yahoo WebSocket quote into the current forming candle."""
+    if df is None or df.empty or stream is None:
+        return df
+    tick = stream.snapshot()
+    if not tick or not tick.get("price"):
+        return df
+    try:
+        price = float(tick["price"])
+        ts = pd.Timestamp(tick["timestamp"]).tz_convert("Asia/Kolkata").tz_localize(None)
+        if is_indian and not (ts.hour > 9 or (ts.hour == 9 and ts.minute >= 15)):
+            return df
+        if is_indian and (ts.hour > 15 or (ts.hour == 15 and ts.minute > 30)):
+            return df
+
+        rule = {"1m":"1min","2m":"2min","3m":"3min","5m":"5min",
+                "10m":"10min","15m":"15min","30m":"30min","1h":"1h",
+                "2h":"2h","4h":"4h"}.get(target_tf, "1min")
+        if is_indian and target_tf == "10m":
+            # Align 10-minute NSE/BSE candles to 09:15, 09:25, 09:35, ...
+            minutes_from_open = (ts.hour * 60 + ts.minute) - (9 * 60 + 15)
+            if minutes_from_open >= 0:
+                bucket_min = 9 * 60 + 15 + (minutes_from_open // 10) * 10
+                bucket = ts.normalize() + pd.Timedelta(minutes=bucket_min)
+            else:
+                return df
+        else:
+            bucket = ts.floor(rule)
+
+        out = df.copy()
+        out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce")
+        last_ts = out["timestamp"].iloc[-1]
+        # If the historical source already contains this forming candle, update it.
+        if pd.notna(last_ts) and bucket <= last_ts:
+            if bucket == last_ts:
+                idx = out.index[-1]
+                out.at[idx, "high"] = max(float(out.at[idx, "high"]), price)
+                out.at[idx, "low"] = min(float(out.at[idx, "low"]), price)
+                out.at[idx, "close"] = price
+                return out
+            return out
+
+        # New forming candle. Keep volume conservative because Yahoo quote volume
+        # is day volume, not candle volume.
+        new_row = {"timestamp": bucket,
+                   "open": price, "high": price, "low": price, "close": price,
+                   "volume": 0.0}
+        return pd.concat([out, pd.DataFrame([new_row])], ignore_index=True)
+    except Exception:
+        return df
+
+
 def fetch_and_resample_data(ticker_symbol, target_tf, is_indian=False, custom_period="7d"):
     if str(ticker_symbol).upper() in {"BTC-USD", "BTCUSDT", "BTC/USD"} and "binance_btc" in globals():
         try:
@@ -1242,7 +1360,7 @@ def analyze_cisd_and_wyckoff(df):
         for j in range(i + 1, min(i + 1 + max_confirm_bars, last_closed + 1)):
             c = d.iloc[j]
             c_atr = float(c["atr"]) if pd.notna(c["atr"]) and float(c["atr"]) > 0 else atr
-            displacement = float(c["body"]) >= max(float(c["body_med"]) * 0.80 if pd.notna(c["body_med"]) else 0.0, c_atr * 0.15)
+            displacement = float(c["body"]) >= max(float(c["body_med"]) * 1.00 if pd.notna(c["body_med"]) else 0.0, c_atr * 0.35)
 
             if bullish_sweep:
                 # CISD = bullish close back above the sweep candle high with real body expansion.
@@ -1250,7 +1368,7 @@ def analyze_cisd_and_wyckoff(df):
                 if not cisd_ok:
                     continue
                 entry = float(c["close"])
-                sl = sweep_extreme - max(c_atr * 0.10, entry * 0.0001)
+                sl = sweep_extreme - max(c_atr * 0.25, entry * 0.0002)
                 rr_risk = entry - sl
                 tp = entry + 2.0 * rr_risk
                 cisd_name = "Bullish CISD Confirmed"
@@ -1260,7 +1378,7 @@ def analyze_cisd_and_wyckoff(df):
                 if not cisd_ok:
                     continue
                 entry = float(c["close"])
-                sl = sweep_extreme + max(c_atr * 0.10, entry * 0.0001)
+                sl = sweep_extreme + max(c_atr * 0.25, entry * 0.0002)
                 rr_risk = sl - entry
                 tp = entry - 2.0 * rr_risk
                 cisd_name = "Bearish CISD Confirmed"
@@ -2030,7 +2148,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
     if "name_vwap" not in st.session_state:
         st.session_state["name_vwap"] = "VWAP"
     if "name_yt" not in st.session_state:
-        st.session_state["name_yt"] = "🎯 YouTube Strategy Lines"
+        st.session_state["name_yt"] = "🎯 Reversal Lines"
 
     with st.expander("✏️ Customize Feature Names (वैशिष्ट्यांचे नाव बदला)", expanded=False):
         c_n1, c_n2, c_n3 = st.columns(3)
@@ -2042,7 +2160,7 @@ def render_tradingview_lightweight_chart(df, asset_title):
             st.session_state["name_choch"] = st.text_input("CHOCH Name", value=st.session_state["name_choch"])
         with c_n3:
             st.session_state["name_vwap"] = st.text_input("VWAP Name", value=st.session_state["name_vwap"])
-            st.session_state["name_yt"] = st.text_input("YouTube Lines Name", value=st.session_state["name_yt"])
+            st.session_state["name_yt"] = st.text_input("Reversal Lines Name", value=st.session_state["name_yt"])
 
     col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
     with col_t1:
@@ -2227,6 +2345,9 @@ with st.spinner("डेटा लोड होत आहे..."):
     else:
         daily_trend = get_daily_trend(ticker)
         df_ltf = fetch_and_resample_data(ticker, timeframe, is_indian_market)
+        # Yahoo WebSocket is a fallback/live-quote layer when Angel One is absent.
+        yahoo_live_stream = get_yahoo_live_stream(ticker)
+        df_ltf = _apply_yahoo_live_tick(df_ltf, yahoo_live_stream, timeframe, is_indian_market)
         df_ltf = build_market_flow_columns(df_ltf)
 
 base_price = (
@@ -2276,15 +2397,15 @@ st.markdown("---")
 
 # 🌟 TAB NAVIGATION
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-    "⚡ Live Dashboard & OI",
+    "⚡ Dashboard & OI",
     "📈 Real-Time Charts",
-    "🔮 3:00-3:20 Gap Predictor",
+    "🔮 Gap up/down Predictor",
     "🎯 Institutional Signals",
-    "📉 Premium Decay (StockMojo)",
-    "💎 Institutional SMC & Order Flow",
-    "🚀 Advanced Market Scanner & Alerts",
-    "🚀 FVG, CVD & CHOCH Scanner",
-    "🏛️ ICT CISD & Wyckoff PO3 Strategy"
+    "📉 Premium Decay",
+    "💎 SMC & Order Flow",
+    "🚀 Market Scanner & Alerts",
+    "🚀 FVG, CVD & CHOCH",
+    "🏛️ ICT CISD & Wyckoff"
 ])
 
 with tab1:
@@ -2296,7 +2417,7 @@ with tab1:
         st.info("ℹ️ OI Analytics available only for Indian Market Indices.")
 
 with tab2:
-    st.markdown(f"### ⚡ **TradingView Lightweight Candlestick Chart with SMC & VWAP ({display_name})**")
+    st.markdown(f"### ⚡ **Real-Time Charts — SMC & VWAP ({display_name})**")
     st.caption("मागील २० दिवसांचा कॅन्डलस्टिक डेटा, 1h/4h/1d टाईमफ्रेम्स आणि वैशिष्ट्यांचे नाव बदलण्याची सोय असलेला लाईव्ह चार्ट.")
     
     col_tf1, col_tf2 = st.columns([2, 5])
@@ -2427,7 +2548,7 @@ with tab2:
 
 with tab3:
     st.markdown(
-        f"<h2 style='text-align: left; margin-bottom: 0px;'>🎯 3:00 PM - 3:20 PM Market Gap-Up / Gap-Down Predictor ({display_name})</h2>",
+        f"<h2 style='text-align: left; margin-bottom: 0px;'>🔮 Gap up/down Predictor ({display_name})</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -2576,7 +2697,7 @@ with tab3:
 
 with tab4:
     st.subheader(
-        f"🎯 Live SMC PRO Institutional Signals on {timeframe} ({display_name})"
+        f"🎯 Institutional Signals on {timeframe} ({display_name})"
     )
 
     detected_signal = None
@@ -2655,7 +2776,7 @@ with tab5:
     if is_indian_market:
         render_stockmojo_premium_decay_tab(current_price)
     elif is_btc_market:
-        st.markdown(f"## 📉 **Binance Spot Flow / Decay Analytics ({display_name})**")
+        st.markdown(f"## 📉 **Premium Decay / Binance Spot Flow ({display_name})**")
         st.success("🟢 Binance @aggTrade + @bookTicker real-time source")
         st.caption("BTC Spot does not expose option premium/IV through @aggTrade + @bookTicker, so this tab uses the same real BTC price and executed-trade flow data rather than fabricated option values.")
         x=build_market_flow_columns(df_ltf)
@@ -2693,7 +2814,7 @@ with tab5:
             d.metric("Flow Delta",f"{z['delta']:,.2f}")
 
 with tab6:
-    st.markdown(f"## 💎 **Institutional Order Flow & SMC Suite ({display_name})**")
+    st.markdown(f"## 💎 **SMC & Order Flow ({display_name})**")
 
     if is_btc_market:
         st.success("🟢 Binance Spot WebSocket LIVE — @aggTrade + @bookTicker")
@@ -3004,7 +3125,7 @@ with tab6:
     st.info(bias_desc)
 
 with tab7:
-    st.markdown(f"## 🚀 **Advanced Market Scanner & AI Institutional Suite ({display_name})**")
+    st.markdown(f"## 🚀 **Market Scanner & Alerts ({display_name})**")
     st.caption("येथे सर्व सुचवलेले पर्याय (Pariyay 1 to 6) प्रत्यक्ष लाईव्ह मार्केट डेटा आणि रिअल-टाइम सिग्नल्सवर आधारित एकात्मिक स्वरूपात जोडण्यात आले आहेत.")
     st.markdown("---")
 
@@ -3109,7 +3230,7 @@ with tab7:
 
 # --- 🚀 TAB 8: DYNAMIC MULTI-ASSET CHOCH & BOS SCANNER ---
 with tab8:
-    st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
+    st.markdown("## 🚀 **FVG, CVD & CHOCH**")
     st.caption("FVG Heatmap, CVD Divergence Alert आणि Live Multi-Asset CHOCH Table.")
     st.markdown("---")
 
@@ -3247,7 +3368,7 @@ with tab8:
 
 # --- 🏛️ TAB 9: ICT CISD & WYCKOFF PO3 STRATEGY (DYNAMIC REAL-TIME MATRIX) ---
 with tab9:
-    st.markdown(f"## 🏛️ **ICT CISD & Wyckoff PO3 Analytics Engine ({display_name})**")
+    st.markdown(f"## 🏛️ **ICT CISD & Wyckoff ({display_name})**")
     st.caption("REAL rule-based chain: Liquidity Sweep → Wyckoff Spring/Upthrust → CISD → PO3 → Entry → SL → TP. BUY/SELL फक्त पूर्ण confirmation नंतर.")
     st.markdown("---")
 
@@ -3275,8 +3396,21 @@ with tab9:
     # We therefore evaluate the candles after the signal candle and determine the
     # first reached target/stop. A fresh signal automatically becomes the new latest
     # signal on the next rerun.
-    latest_signal = df_cisd_cisd.iloc[-1] if not df_cisd_cisd.empty else None
-    latest_sweep = df_wyckoff_po3.iloc[-1] if not df_wyckoff_po3.empty else None
+    # Only today's setups are eligible for the live FINAL SIGNAL box.
+    # This prevents yesterday's historical trade from being presented as today's active setup.
+    IST = timezone(timedelta(hours=5, minutes=30))
+    today_str = datetime.now(IST).strftime("%Y-%m-%d")
+    def _today_rows(frame):
+        if frame is None or frame.empty or "Time" not in frame.columns:
+            return pd.DataFrame()
+        tmp = frame.copy()
+        tmp["_date"] = pd.to_datetime(tmp["Time"], errors="coerce").dt.strftime("%Y-%m-%d")
+        return tmp[tmp["_date"] == today_str].drop(columns=["_date"], errors="ignore")
+
+    today_signals = _today_rows(df_cisd_cisd)
+    today_sweeps = _today_rows(df_wyckoff_po3)
+    latest_signal = today_signals.iloc[-1] if not today_signals.empty else None
+    latest_sweep = today_sweeps.iloc[-1] if not today_sweeps.empty else None
 
     def _trade_outcome(signal_row):
         """Return ACTIVE / SL HIT / TP HIT using candles after the signal candle."""
@@ -3373,7 +3507,7 @@ with tab9:
         cisd_status = "WAITING ⚪"
         po3_status = "WAITING ⚪"
         final_status = "⏳ NO TRADE / WAIT"
-        stage_note = "अजून valid Liquidity Sweep सापडलेला नाही; त्यामुळे पुढील stages evaluate झालेले नाहीत."
+        stage_note = f"आज ({today_str}) valid Liquidity Sweep सापडलेला नाही; त्यामुळे पुढील stages evaluate झालेले नाहीत. जुने historical signals FINAL SIGNAL मध्ये दाखवले जाणार नाहीत."
 
     # Streamlit metric cards become too narrow when 8 cards are placed in one row.
     # Use 4 + 4 responsive cards so every stage name/status is readable.
@@ -3399,6 +3533,20 @@ with tab9:
             """,
             unsafe_allow_html=True,
         )
+
+    # Live source/freshness banner so it is obvious whether Tab 9 has current-day data.
+    source_name = "Angel One" if st.session_state.get("smart_api_session") is not None else "Yahoo Finance REST + WebSocket fallback"
+    last_candle_text = "—"
+    current_day_count = 0
+    if df_ltf is not None and not df_ltf.empty and "timestamp" in df_ltf.columns:
+        ts_series = pd.to_datetime(df_ltf["timestamp"], errors="coerce")
+        valid_ts = ts_series.dropna()
+        if not valid_ts.empty:
+            last_candle_text = valid_ts.iloc[-1].strftime("%Y-%m-%d %H:%M IST")
+            current_day_count = int((valid_ts.dt.strftime("%Y-%m-%d") == today_str).sum())
+    ws_state = get_yahoo_live_stream(ticker).snapshot() if not is_btc_market else {}
+    ws_ok = bool(ws_state.get("price")) if ws_state else False
+    st.caption(f"📡 **Tab 9 Data Source:** {source_name} | Yahoo WebSocket: {'🟢 LIVE' if ws_ok else '🟡 waiting/fallback'} | Last candle: **{last_candle_text}** | Today's candles: **{current_day_count}**")
 
     st.markdown("#### 🔎 **Stage-wise Confirmation Status**")
     st.caption("प्रत्येक stage स्वतंत्र rule पूर्ण झाल्यावरच CONFIRMED होतो. 8 stages आता 4+4 layout मध्ये स्पष्ट दिसतील.")
