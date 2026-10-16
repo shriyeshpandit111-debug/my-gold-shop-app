@@ -2644,70 +2644,234 @@ with tab6:
     else:
         st.info(f"{display_name} साठी Yahoo Finance market data वापरला जात आहे.")
 
+    # Tab 6 आणि Tab 8 साठी OHLCV-only Volume-Price Action proxy.
+    # हे अनुमान आहे; Yahoo Finance / Angel One candle data मधून exchange aggressor-side delta थेट कळत नाही.
+    def _build_volume_price_proxy(dataframe, spike_multiple=1.5):
+        if dataframe is None or dataframe.empty:
+            return pd.DataFrame()
+
+        out = dataframe.copy().reset_index(drop=True)
+        out.columns = [str(c).lower() for c in out.columns]
+        required = ["open", "high", "low", "close"]
+        if not all(c in out.columns for c in required):
+            return pd.DataFrame()
+
+        for col in required:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+        if "volume" not in out.columns:
+            out["volume"] = 0.0
+        out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0.0).clip(lower=0.0)
+
+        candle_range = (out["high"] - out["low"]).clip(lower=0.0)
+        safe_range = candle_range.where(candle_range > 0.0, np.nan)
+        signed_body = out["close"] - out["open"]
+        body_ratio = (signed_body / safe_range).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(-1.0, 1.0)
+        close_location = (((out["close"] - out["low"]) - (out["high"] - out["close"])) / safe_range)
+        close_location = close_location.replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(-1.0, 1.0)
+
+        out["candle_range"] = candle_range
+        out["body"] = signed_body.abs()
+        out["body_ratio"] = body_ratio
+        out["upper_wick"] = (out["high"] - np.maximum(out["open"], out["close"])).clip(lower=0.0)
+        out["lower_wick"] = (np.minimum(out["open"], out["close"]) - out["low"]).clip(lower=0.0)
+        wick_bias = ((out["lower_wick"] - out["upper_wick"]) / safe_range).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(-1.0, 1.0)
+        out["wick_bias"] = wick_bias
+        out["pressure_score"] = (0.55 * body_ratio + 0.30 * close_location + 0.15 * wick_bias).clip(-1.0, 1.0)
+        out["proxy_delta"] = out["volume"] * out["pressure_score"]
+        out["proxy_buy_vol"] = ((out["volume"] + out["proxy_delta"]) / 2.0).clip(lower=0.0)
+        out["proxy_sell_vol"] = ((out["volume"] - out["proxy_delta"]) / 2.0).clip(lower=0.0)
+        out["proxy_cvd"] = out["proxy_delta"].cumsum()
+
+        # Current candle ची volume मागील 20 candles च्या average शी तुलना.
+        min_periods = min(5, max(1, len(out) - 1))
+        out["volume_sma20"] = out["volume"].shift(1).rolling(window=20, min_periods=min_periods).mean()
+        out["volume_ratio"] = (out["volume"] / out["volume_sma20"].replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        out["volume_spike"] = (out["volume_sma20"].notna() & (out["volume_sma20"] > 0) & (out["volume"] > out["volume_sma20"] * float(spike_multiple)))
+
+        # तीन-candle FVG: current Low > High two bars back (bullish),
+        # किंवा current High < Low two bars back (bearish).
+        out["bullish_fvg_low"] = np.nan
+        out["bullish_fvg_high"] = np.nan
+        out["bearish_fvg_low"] = np.nan
+        out["bearish_fvg_high"] = np.nan
+        out["fvg_type"] = "NONE"
+        out["fvg_gap_size"] = 0.0
+        for i in range(2, len(out)):
+            hi_two = out.at[i - 2, "high"]
+            lo_two = out.at[i - 2, "low"]
+            cur_low = out.at[i, "low"]
+            cur_high = out.at[i, "high"]
+            if pd.notna(cur_low) and pd.notna(hi_two) and float(cur_low) > float(hi_two):
+                out.at[i, "bullish_fvg_low"] = float(hi_two)
+                out.at[i, "bullish_fvg_high"] = float(cur_low)
+                out.at[i, "fvg_type"] = "BULLISH"
+                out.at[i, "fvg_gap_size"] = float(cur_low) - float(hi_two)
+            if pd.notna(cur_high) and pd.notna(lo_two) and float(cur_high) < float(lo_two):
+                out.at[i, "bearish_fvg_low"] = float(cur_high)
+                out.at[i, "bearish_fvg_high"] = float(lo_two)
+                out.at[i, "fvg_type"] = "BEARISH"
+                out.at[i, "fvg_gap_size"] = float(lo_two) - float(cur_high)
+        return out
+
+    def _prepare_tab_flow(dataframe):
+        out = _build_volume_price_proxy(dataframe)
+        if out.empty:
+            return out, "OHLCV Volume-Price Proxy"
+
+        # Binance BTC मध्ये आधीपासून उपलब्ध executed-trade delta कायम ठेवतो.
+        # बाकीच्या assets साठी OHLCV वरून proxy delta वापरतो.
+        has_direct_btc_flow = bool(
+            is_btc_market and all(c in out.columns for c in ["buy_vol", "sell_vol", "delta"])
+        )
+        if has_direct_btc_flow:
+            out["active_delta"] = pd.to_numeric(out["delta"], errors="coerce").fillna(0.0)
+            out["active_buy_vol"] = pd.to_numeric(out["buy_vol"], errors="coerce").fillna(0.0)
+            out["active_sell_vol"] = pd.to_numeric(out["sell_vol"], errors="coerce").fillna(0.0)
+            source_label = "Binance executed-trade delta"
+        else:
+            out["active_delta"] = out["proxy_delta"]
+            out["active_buy_vol"] = out["proxy_buy_vol"]
+            out["active_sell_vol"] = out["proxy_sell_vol"]
+            source_label = "OHLCV Volume-Price Proxy"
+        out["flow_cvd"] = out["active_delta"].cumsum()
+        return out, source_label
+
+    def _latest_fvg_zone(flow_dataframe, direction):
+        if flow_dataframe is None or flow_dataframe.empty:
+            return None
+        if direction == "bullish":
+            lo_col, hi_col = "bullish_fvg_low", "bullish_fvg_high"
+        else:
+            lo_col, hi_col = "bearish_fvg_low", "bearish_fvg_high"
+        if lo_col not in flow_dataframe.columns or hi_col not in flow_dataframe.columns:
+            return None
+        found = np.flatnonzero(flow_dataframe[lo_col].notna().to_numpy())
+        latest_mitigated = None
+        for pos in found[::-1]:
+            row = flow_dataframe.iloc[int(pos)]
+            zone_low, zone_high = float(row[lo_col]), float(row[hi_col])
+            future = flow_dataframe.iloc[int(pos) + 1:]
+            if direction == "bullish":
+                mitigated = (not future.empty) and bool((pd.to_numeric(future["low"], errors="coerce") <= zone_low).any())
+            else:
+                mitigated = (not future.empty) and bool((pd.to_numeric(future["high"], errors="coerce") >= zone_high).any())
+            ts = row.get("timestamp", pos)
+            ts_text = pd.to_datetime(ts, errors="coerce")
+            ts_text = ts_text.strftime("%Y-%m-%d %H:%M") if pd.notna(ts_text) else str(ts)
+            item = {
+                "low": zone_low,
+                "high": zone_high,
+                "time": ts_text,
+                "status": "MITIGATED" if mitigated else "ACTIVE",
+                "gap": abs(zone_high - zone_low),
+            }
+            if not mitigated:
+                return item
+            if latest_mitigated is None:
+                latest_mitigated = item
+        return latest_mitigated
+
     st.markdown("---")
 
     st.markdown("### 1️⃣ **Order Flow & Footprint Delta Analysis**")
+    df_tab6_flow, tab6_flow_source = _prepare_tab_flow(df_ltf)
+    df_of = df_tab6_flow.tail(30).copy() if df_tab6_flow is not None and not df_tab6_flow.empty else pd.DataFrame()
 
-    col_of1, col_of2 = st.columns([3,1])
+    col_of1, col_of2 = st.columns([3, 1])
     with col_of1:
-        if df_ltf is not None and not df_ltf.empty:
-            df_of=build_market_flow_columns(df_ltf).tail(30).copy()
-            df_of["delta"] = pd.to_numeric(df_of["delta"], errors="coerce").fillna(0.0)
-            max_abs_delta = float(df_of["delta"].abs().max()) if not df_of.empty else 0.0
-            delta_axis_top = max(200.0, max_abs_delta * 1.25)
-            delta_axis_bottom = -max(50.0, delta_axis_top * 0.25)
-
-            fig_footprint=make_subplots(rows=2,cols=1,shared_xaxes=True,vertical_spacing=0.04,row_heights=[0.72,0.28])
-            fig_footprint.add_trace(go.Candlestick(x=df_of["timestamp"],open=df_of["open"],high=df_of["high"],low=df_of["low"],close=df_of["close"],name=display_name),row=1,col=1)
+        if not df_of.empty:
+            fig_footprint = make_subplots(
+                rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.035,
+                row_heights=[0.58, 0.21, 0.21]
+            )
+            fig_footprint.add_trace(
+                go.Candlestick(
+                    x=df_of["timestamp"], open=df_of["open"], high=df_of["high"],
+                    low=df_of["low"], close=df_of["close"], name=display_name
+                ), row=1, col=1
+            )
+            spikes_chart = df_of[df_of["volume_spike"]]
+            if not spikes_chart.empty:
+                fig_footprint.add_trace(
+                    go.Scatter(
+                        x=spikes_chart["timestamp"], y=spikes_chart["high"],
+                        mode="markers", name="Volume Spike",
+                        marker=dict(symbol="star", size=10, color="#f59e0b", line=dict(width=1, color="#92400e")),
+                        text=[f"Volume ratio: {float(v):.2f}x" for v in spikes_chart["volume_ratio"]],
+                        hovertemplate="Volume spike<br>Time: %{x}<br>High: %{y:,.2f}<br>%{text}<extra></extra>"
+                    ), row=1, col=1
+                )
             fig_footprint.add_trace(
                 go.Bar(
-                    x=df_of["timestamp"],
-                    y=df_of["delta"],
-                    marker_color=["#22c55e" if float(v)>=0 else "#ef4444" for v in df_of["delta"]],
-                    name="Flow Delta",
+                    x=df_of["timestamp"], y=df_of["active_delta"],
+                    marker_color=["#22c55e" if float(v) >= 0 else "#ef4444" for v in df_of["active_delta"]],
+                    name=tab6_flow_source,
                     hovertemplate="Time: %{x}<br>Delta: %{y:,.4f}<extra></extra>",
-                ),
-                row=2,col=1,
+                ), row=2, col=1
             )
-            fig_footprint.update_yaxes(
-                range=[delta_axis_bottom, delta_axis_top],
-                zeroline=True,
-                zerolinewidth=1,
-                showgrid=True,
-                tickformat=",.0f",
-                row=2,
-                col=1,
+            fig_footprint.add_trace(
+                go.Scatter(
+                    x=df_of["timestamp"], y=df_of["flow_cvd"], mode="lines",
+                    line=dict(width=2, color="#8b5cf6"), name="Cumulative Delta (CVD)",
+                    hovertemplate="Time: %{x}<br>CVD: %{y:,.4f}<extra></extra>"
+                ), row=3, col=1
             )
+            fig_footprint.update_yaxes(title_text="Price", row=1, col=1, tickformat=",.2f")
+            fig_footprint.update_yaxes(title_text="Delta", row=2, col=1, zeroline=True, zerolinewidth=1, tickformat=",.0f")
+            fig_footprint.update_yaxes(title_text="CVD", row=3, col=1, zeroline=True, zerolinewidth=1, tickformat=",.0f")
             fig_footprint.update_layout(
-                height=520,
-                margin=dict(l=10,r=10,t=10,b=10),
-                showlegend=False,
-                hovermode="x unified",
-                bargap=0.12,
+                height=650, margin=dict(l=10, r=10, t=15, b=10),
+                hovermode="x unified", bargap=0.12, legend=dict(orientation="h", y=1.02, x=0)
             )
-            st.plotly_chart(fig_footprint,use_container_width=True,key="of_footprint_chart")
-            last=df_of.iloc[-1]
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Buy Flow",f"{last['buy_vol']:,.4f}")
-            c2.metric("Sell Flow",f"{last['sell_vol']:,.4f}")
-            c3.metric("Net Delta",f"{last['delta']:,.4f}")
-            c4.metric("Live Price",f"{current_price:,.2f}")
+            st.plotly_chart(fig_footprint, use_container_width=True, key="of_footprint_chart_proxy_cvd")
+
+            last = df_of.iloc[-1]
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Proxy Buy Est.", f"{last['proxy_buy_vol']:,.2f}")
+            c2.metric("Proxy Sell Est.", f"{last['proxy_sell_vol']:,.2f}")
+            c3.metric("Proxy Delta", f"{last['proxy_delta']:+,.2f}")
+            c4.metric("Active Flow CVD", f"{last['flow_cvd']:+,.2f}", help=tab6_flow_source)
+            c5.metric("Volume Ratio", f"{last['volume_ratio']:.2f}x", "🔥 SPIKE" if bool(last["volume_spike"]) else "Normal")
+            c6.metric("Live Price", f"{current_price:,.2f}")
         else:
-            df_of=pd.DataFrame()
-            st.info("Order Flow डेटा उपलब्ध होत आहे...")
+            df_of = pd.DataFrame()
+            st.info("Order Flow / OHLCV डेटा उपलब्ध होत आहे...")
 
     with col_of2:
         st.markdown("##### 🔍 Live Footprint Insights")
         if not df_of.empty:
-            last_buy=float(df_of['buy_vol'].iloc[-1])
-            last_sell=float(df_of['sell_vol'].iloc[-1])
-            last_delta=float(df_of['delta'].iloc[-1])
-            st.metric("Buyer Volume (Ask)",f"{last_buy:,.4f}")
-            st.metric("Seller Volume (Bid)",f"{last_sell:,.4f}")
-            st.metric("Net Delta Imbalance",f"{last_delta:,.4f}",delta_color="normal")
-            if last_delta>0: st.success("🟢 Positive buying flow")
-            elif last_delta<0: st.error("🔴 Negative selling flow")
-            else: st.info("Neutral flow")
+            last = df_of.iloc[-1]
+            st.metric("Estimated Buyer Volume", f"{float(last['proxy_buy_vol']):,.4f}")
+            st.metric("Estimated Seller Volume", f"{float(last['proxy_sell_vol']):,.4f}")
+            st.metric("Proxy Delta", f"{float(last['proxy_delta']):+,.4f}", delta_color="normal")
+            if float(last["proxy_delta"]) > 0:
+                st.success("🟢 Buyer pressure proxy")
+            elif float(last["proxy_delta"]) < 0:
+                st.error("🔴 Seller pressure proxy")
+            else:
+                st.info("⚪ Neutral candle pressure proxy")
+            st.caption("हा OHLCV वरून काढलेला अंदाज आहे; actual aggressor-side order flow नाही.")
+
+    st.markdown("### 2️⃣ **Volume Spike Detection (Previous 20-Candle SMA)**")
+    if df_tab6_flow is not None and not df_tab6_flow.empty:
+        if float(pd.to_numeric(df_tab6_flow["volume"], errors="coerce").fillna(0.0).sum()) <= 0:
+            st.warning("या asset/timeframe साठी source कडून usable volume उपलब्ध नाही. त्यामुळे Volume Spike आणि Delta Proxy विश्वसनीयरीत्या मोजता येत नाहीत; volume बनवून दाखवलेला नाही.")
+        spike_view = df_tab6_flow.tail(20).copy()
+        if "timestamp" in spike_view.columns:
+            spike_view["Time"] = pd.to_datetime(spike_view["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            spike_view["Time"] = spike_view.index.astype(str)
+        spike_view["Pressure"] = np.where(spike_view["proxy_delta"] > 0, "BUYERS 🟢 (proxy)", np.where(spike_view["proxy_delta"] < 0, "SELLERS 🔴 (proxy)", "NEUTRAL ⚪"))
+        spike_view["Spike Status"] = np.where(spike_view["volume_spike"], "🔥 VOLUME SPIKE", "Normal")
+        spike_view = spike_view[["Time", "volume", "volume_sma20", "volume_ratio", "body", "upper_wick", "lower_wick", "pressure_score", "proxy_delta", "Pressure", "Spike Status"]]
+        spike_view = spike_view.rename(columns={
+            "volume": "Volume", "volume_sma20": "Previous 20 Vol SMA",
+            "volume_ratio": "Volume / SMA", "body": "Body Size",
+            "upper_wick": "Upper Wick", "lower_wick": "Lower Wick",
+            "pressure_score": "Pressure Score", "proxy_delta": "Proxy Delta"
+        })
+        st.dataframe(spike_view.iloc[::-1], use_container_width=True, hide_index=True)
+        st.caption("Spike threshold: current volume > मागील candles च्या SMA(20) × 1.5. मोठा volume हा activity वाढल्याचा संकेत आहे; institutional participation ची पुष्टी नाही.")
 
     if is_btc_market and binance_btc is not None:
         st.markdown("### Live Best Bid / Ask")
@@ -2720,7 +2884,7 @@ with tab6:
         o4.metric("Ask Qty",f"{ask_qty:,.6f}" if ask_qty>0 else "Waiting…")
 
     st.markdown("---")
-    st.markdown("### 2️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
+    st.markdown("### 3️⃣ **Liquidity Heatmap & Stop-Loss Hunt Pools**")
     col_lh1,col_lh2=st.columns(2)
     with col_lh1:
         st.markdown("##### 🎯 **Buy-Side & Sell-Side Liquidity Zones**")
@@ -2742,7 +2906,7 @@ with tab6:
             st.dataframe(pd.DataFrame({"Price Level":dom_prices,"Pending Orders / Volume Proxy":dom_orders}),use_container_width=True,height=220)
 
     st.markdown("---")
-    st.markdown("### 3️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
+    st.markdown("### 4️⃣ **Volume Profile Analysis (POC, VAH, VAL)**")
     if df_ltf is not None and not df_ltf.empty:
         df_vp_data = build_market_flow_columns(df_ltf).copy()
         df_vp_data = df_vp_data.dropna(subset=["open", "high", "low", "close", "volume"]).tail(120)
@@ -2868,19 +3032,30 @@ with tab6:
                     st.plotly_chart(fig_vp, use_container_width=True, key="vp_horizontal_chart_fixed_v2")
 
     st.markdown("---")
-    st.markdown("### 4️⃣ **Automatic SMC Zones (Order Blocks & Fair Value Gaps)**")
-    if df_ltf is not None and len(df_ltf)>5:
-        last_low=df_ltf["low"].iloc[-3]; last_high=df_ltf["high"].iloc[-3]
-        col_smc1,col_smc2=st.columns(2)
+    st.markdown("### 5️⃣ **Automatic SMC Zones (Order Blocks & Dynamic Fair Value Gaps)**")
+    if df_ltf is not None and len(df_ltf) > 5:
+        last_low = float(df_ltf["low"].iloc[-3])
+        last_high = float(df_ltf["high"].iloc[-3])
+        bullish_zone = _latest_fvg_zone(df_tab6_flow, "bullish") if not df_tab6_flow.empty else None
+        bearish_zone = _latest_fvg_zone(df_tab6_flow, "bearish") if not df_tab6_flow.empty else None
+        col_smc1, col_smc2 = st.columns(2)
         with col_smc1:
-            st.markdown("##### 🟢 **Bullish Order Block & FVG**")
-            st.info(f"**Bullish Order Block Zone:** {round(last_low*0.998,2)} - {round(last_low,2)}\n\n**Bullish FVG (Imbalance Gap):** {round(last_low*1.001,2)} - {round(last_low*1.003,2)}")
+            st.markdown("##### 🟢 **Bullish Order Block & Dynamic FVG**")
+            st.info(f"**Approx. Bullish Order Block Zone:** {round(last_low * 0.998, 2)} - {round(last_low, 2)}")
+            if bullish_zone:
+                st.success(f"**Bullish FVG:** {bullish_zone['low']:,.2f} - {bullish_zone['high']:,.2f}\n\n**Status:** {bullish_zone['status']}\n\n**Formed:** {bullish_zone['time']}")
+            else:
+                st.caption("सध्याच्या loaded candles मध्ये bullish 3-candle FVG आढळलेला नाही.")
         with col_smc2:
-            st.markdown("##### 🔴 **Bearish Order Block & FVG**")
-            st.error(f"**Bearish Order Block Zone:** {round(last_high,2)} - {round(last_high*1.002,2)}\n\n**Bearish FVG (Imbalance Gap):** {round(last_high*0.997,2)} - {round(last_high*0.999,2)}")
+            st.markdown("##### 🔴 **Bearish Order Block & Dynamic FVG**")
+            st.error(f"**Approx. Bearish Order Block Zone:** {round(last_high, 2)} - {round(last_high * 1.002, 2)}")
+            if bearish_zone:
+                st.warning(f"**Bearish FVG:** {bearish_zone['low']:,.2f} - {bearish_zone['high']:,.2f}\n\n**Status:** {bearish_zone['status']}\n\n**Formed:** {bearish_zone['time']}")
+            else:
+                st.caption("सध्याच्या loaded candles मध्ये bearish 3-candle FVG आढळलेला नाही.")
 
     st.markdown("---")
-    st.markdown("### 5️⃣ **Open Interest (OI) & Options Writing Sentiment**")
+    st.markdown("### 6️⃣ **Open Interest (OI) & Options Writing Sentiment**")
 
     if is_btc_market:
         oi_status="Not available — Spot"
@@ -2891,7 +3066,7 @@ with tab6:
         source = "Angel One" if is_indian_market and st.session_state.get("smart_api_session") is not None else ("Yahoo Finance" if is_indian_market or is_gold_silver else "Selected market data")
         oi_status="Not provided by source"
         funding_rate="Not provided"
-        last_delta=float(df_of["delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
+        last_delta=float(df_of["active_delta"].iloc[-1]) if 'df_of' in locals() and not df_of.empty else 0.0
         if price_change>0 and last_delta>0:
             bias_text="Price + Flow positive"
         elif price_change<0 and last_delta<0:
@@ -3009,46 +3184,82 @@ with tab8:
     st.markdown("## 🚀 **Institutional Order Flow, FVG Heatmap & Multi-Asset CHOCH Scanner**")
     st.markdown("---")
 
-    st.markdown("### 1️⃣ **Institutional Order Flow 'Imbalance / Fair Value Gap (FVG) Heatmap'**")
-    if df_ltf is not None and len(df_ltf) > 5:
-        fvg_high = round(df_ltf['high'].iloc[-2], 2)
-        fvg_low = round(df_ltf['low'].iloc[-4], 2)
-        st.markdown(f"""
-        <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 15px; border-radius: 8px;">
-            <h4 style="color: #0f172a; margin-top: 0;">⚡ Active FVG Retracement Zones ({display_name})</h4>
-            <b>Bullish FVG Support Zone:</b> <span style="color: #16a34a; font-weight: bold;">{fvg_low} - {round(fvg_low * 1.002, 2)}</span><br>
-            <b>Bearish FVG Resistance Zone:</b> <span style="color: #dc2626; font-weight: bold;">{fvg_high} - {round(fvg_high * 1.002, 2)}</span><br>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("### 1️⃣ **Dynamic Fair Value Gap (FVG) Heatmap**")
+    flow_df, tab8_flow_source = _prepare_tab_flow(df_ltf)
+    bullish_fvg = _latest_fvg_zone(flow_df, "bullish") if not flow_df.empty else None
+    bearish_fvg = _latest_fvg_zone(flow_df, "bearish") if not flow_df.empty else None
+
+    fvg_col1, fvg_col2 = st.columns(2)
+    with fvg_col1:
+        st.markdown("##### 🟢 Bullish FVG — Support Imbalance")
+        if bullish_fvg:
+            st.success(f"**Zone:** {bullish_fvg['low']:,.2f} – {bullish_fvg['high']:,.2f}\n\n**Status:** {bullish_fvg['status']}\n\n**Formation:** {bullish_fvg['time']}")
+        else:
+            st.info("सध्याच्या loaded candles मध्ये bullish 3-candle FVG आढळलेला नाही.")
+    with fvg_col2:
+        st.markdown("##### 🔴 Bearish FVG — Resistance Imbalance")
+        if bearish_fvg:
+            st.warning(f"**Zone:** {bearish_fvg['low']:,.2f} – {bearish_fvg['high']:,.2f}\n\n**Status:** {bearish_fvg['status']}\n\n**Formation:** {bearish_fvg['time']}")
+        else:
+            st.info("सध्याच्या loaded candles मध्ये bearish 3-candle FVG आढळलेला नाही.")
+    st.caption("FVG हा three-candle price gap वर आधारित आहे. ACTIVE = पूर्णपणे invalidate/fill झालेला नाही; MITIGATED = gap च्या far edge पर्यंत price परत गेलेला आहे.")
+
+    st.markdown("### 2️⃣ **Volume Spikes & Candle Pressure Proxy**")
+    if flow_df is not None and not flow_df.empty:
+        latest_flow = flow_df.iloc[-1]
+        vol1, vol2, vol3, vol4 = st.columns(4)
+        vol1.metric("Current Volume", f"{float(latest_flow['volume']):,.2f}")
+        vol2.metric("Previous 20 Vol SMA", f"{float(latest_flow['volume_sma20']):,.2f}" if pd.notna(latest_flow["volume_sma20"]) else "Not enough history")
+        vol3.metric("Volume / SMA", f"{float(latest_flow['volume_ratio']):.2f}x")
+        vol4.metric("Volume Spike", "🔥 SPIKE" if bool(latest_flow["volume_spike"]) else "Normal")
+        if float(pd.to_numeric(flow_df["volume"], errors="coerce").fillna(0.0).sum()) <= 0:
+            st.warning("या asset/timeframe साठी source कडून usable volume उपलब्ध नाही. Volume Spike आणि Proxy Delta मोजण्यास volume नसल्यामुळे मर्यादा आहेत.")
+
+        spike_table = flow_df.tail(20).copy()
+        if "timestamp" in spike_table.columns:
+            spike_table["Time"] = pd.to_datetime(spike_table["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            spike_table["Time"] = spike_table.index.astype(str)
+        spike_table["Pressure"] = np.where(spike_table["proxy_delta"] > 0, "BUYERS 🟢 (proxy)", np.where(spike_table["proxy_delta"] < 0, "SELLERS 🔴 (proxy)", "NEUTRAL ⚪"))
+        spike_table["Spike Status"] = np.where(spike_table["volume_spike"], "🔥 VOLUME SPIKE", "Normal")
+        spike_table = spike_table[["Time", "volume", "volume_sma20", "volume_ratio", "body", "upper_wick", "lower_wick", "pressure_score", "proxy_delta", "Pressure", "Spike Status"]]
+        spike_table = spike_table.rename(columns={"volume": "Volume", "volume_sma20": "Previous 20 Vol SMA", "volume_ratio": "Volume / SMA", "body": "Body Size", "upper_wick": "Upper Wick", "lower_wick": "Lower Wick", "pressure_score": "Pressure Score", "proxy_delta": "Proxy Delta"})
+        st.dataframe(spike_table.iloc[::-1], use_container_width=True, hide_index=True)
+        st.caption("Spike threshold = current volume > मागील 20 candles चा SMA × 1.5. हा relative activity alert आहे; institution buying/selling ची थेट पुष्टी नाही.")
     else:
-        st.info("FVG डेटा लोड होत आहे...")
+        st.info("Volume-Price Proxy साठी पुरेसा OHLCV डेटा उपलब्ध होत आहे...")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 2️⃣ **Cumulative Volume Delta (CVD) Real-Time Divergence Alert**")
-    flow_df = build_market_flow_columns(df_ltf) if df_ltf is not None else None
-
+    st.markdown("### 3️⃣ **Cumulative Volume Delta (CVD) & Price Divergence Alert**")
     cvd_value = 0.0
     latest_delta = 0.0
+    proxy_delta_value = 0.0
     cvd_direction = "NEUTRAL ⚪"
     divergence = "NONE ➡️"
     divergence_detail = "No confirmed price-vs-CVD divergence"
 
     if flow_df is not None and not flow_df.empty:
         flow_df = flow_df.copy()
-        flow_df["delta"] = pd.to_numeric(flow_df["delta"], errors="coerce").fillna(0.0)
         flow_df["close"] = pd.to_numeric(flow_df["close"], errors="coerce")
+        flow_df["flow_cvd"] = pd.to_numeric(flow_df["flow_cvd"], errors="coerce").fillna(0.0)
+        flow_df["active_delta"] = pd.to_numeric(flow_df["active_delta"], errors="coerce").fillna(0.0)
+        flow_df["proxy_delta"] = pd.to_numeric(flow_df["proxy_delta"], errors="coerce").fillna(0.0)
         flow_df = flow_df.dropna(subset=["close"])
         if not flow_df.empty:
-            flow_df["cvd"] = flow_df["delta"].cumsum()
-            cvd_value = float(flow_df["cvd"].iloc[-1])
-            latest_delta = float(flow_df["delta"].iloc[-1])
+            cvd_value = float(flow_df["flow_cvd"].iloc[-1])
+            latest_delta = float(flow_df["active_delta"].iloc[-1])
+            proxy_delta_value = float(flow_df["proxy_delta"].iloc[-1])
 
-            if latest_delta > 0:
-                cvd_direction = "BULLISH 🟢"
-            elif latest_delta < 0:
-                cvd_direction = "BEARISH 🔴"
+            direction_lookback = min(5, len(flow_df) - 1)
+            if direction_lookback >= 1:
+                cvd_change = float(flow_df["flow_cvd"].iloc[-1] - flow_df["flow_cvd"].iloc[-1 - direction_lookback])
             else:
-                cvd_direction = "NEUTRAL ⚪"
+                cvd_change = latest_delta
+            if cvd_change > 0:
+                cvd_direction = "RISING / BULLISH 🟢"
+            elif cvd_change < 0:
+                cvd_direction = "FALLING / BEARISH 🔴"
+            else:
+                cvd_direction = "FLAT / NEUTRAL ⚪"
 
             n = len(flow_df)
             lookback = min(40, n)
@@ -3066,7 +3277,7 @@ with tab8:
                 if len(swing_highs) >= 2:
                     a, b = swing_highs[-2], swing_highs[-1]
                     price_a, price_b = float(d.loc[a, "close"]), float(d.loc[b, "close"])
-                    cvd_a, cvd_b = float(d.loc[a, "cvd"]), float(d.loc[b, "cvd"])
+                    cvd_a, cvd_b = float(d.loc[a, "flow_cvd"]), float(d.loc[b, "flow_cvd"])
                     if price_b > price_a and cvd_b < cvd_a:
                         divergence = "BEARISH 🔴"
                         divergence_detail = "Price made a Higher High while CVD made a Lower High"
@@ -3074,22 +3285,25 @@ with tab8:
                 if divergence == "NONE ➡️" and len(swing_lows) >= 2:
                     a, b = swing_lows[-2], swing_lows[-1]
                     price_a, price_b = float(d.loc[a, "close"]), float(d.loc[b, "close"])
-                    cvd_a, cvd_b = float(d.loc[a, "cvd"]), float(d.loc[b, "cvd"])
+                    cvd_a, cvd_b = float(d.loc[a, "flow_cvd"]), float(d.loc[b, "flow_cvd"])
                     if price_b < price_a and cvd_b > cvd_a:
                         divergence = "BULLISH 🟢"
                         divergence_detail = "Price made a Lower Low while CVD made a Higher Low"
 
-    cvd_source = "Binance executed-trade delta" if is_btc_market else "OHLCV flow proxy"
+    cvd_source = "Binance executed-trade delta" if is_btc_market else "OHLCV Volume-Price Proxy"
+    volume_spike_text = "🔥 SPIKE" if flow_df is not None and not flow_df.empty and bool(flow_df["volume_spike"].iloc[-1]) else "Normal"
     cvd_table = pd.DataFrame([{
         "CVD": f"{cvd_value:+,.2f}",
         "Latest Delta": f"{latest_delta:+,.2f}",
+        "Proxy Delta": f"{proxy_delta_value:+,.2f}",
         "CVD Direction": cvd_direction,
         "Divergence": divergence,
+        "Volume Spike": volume_spike_text,
     }])
     st.dataframe(cvd_table, use_container_width=True, hide_index=True)
+    st.caption(f"CVD source: {cvd_source}. {divergence_detail}. CVD loaded history मध्ये cumulative आहे; Yahoo Finance / Angel One साठी तो OHLCV-derived estimate आहे.")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 3️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
+    st.markdown("### 4️⃣ **Smart Money 'Change of Character (CHOCH) & BOS' Live Multi-Asset Scanner Table**")
     
     scanner_assets = [
         ("Nifty 50 (NSE)", "^NSEI"),
